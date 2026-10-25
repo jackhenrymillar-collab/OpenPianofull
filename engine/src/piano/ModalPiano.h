@@ -185,7 +185,7 @@ private:
     double sampleRate = 48000, Ts = 1.0 / 48000;
     Settings settings;
     double hardness = 1.0;
-    double trebleFirmness = 2.5;
+    double trebleFirmness = 1.8;
     double damperStrength = 1.0;
     bool sustain = false;
 

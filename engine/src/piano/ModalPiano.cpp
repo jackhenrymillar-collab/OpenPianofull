@@ -40,7 +40,7 @@ namespace
         const double octavesAboveA0 = std::log2 (std::max (f1, 27.5) / 27.5);
         const double b1 = 0.15 + 0.35 * octavesAboveA0 / 7.25;
         // Air and internal friction take the upper partials much faster (Bank 2000; Chaigne & Askenfelt 1994)
-        const double b2 = wound ? 1.0e-6 : 6.0e-7;
+        const double b2 = wound ? 4.0e-7 : 2.0e-7;
         // Above about 2 kHz the losses climb steeply, so treble overtones die within a second
         // while the fundamental sings on
         // (the top fundamentals are spared: their losses are mostly at the bridge)
