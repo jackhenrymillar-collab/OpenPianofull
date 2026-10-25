@@ -39,7 +39,8 @@ namespace
     {
         const double octavesAboveA0 = std::log2 (std::max (f1, 27.5) / 27.5);
         const double b1 = 0.15 + 0.35 * octavesAboveA0 / 7.25;
-        const double b2 = wound ? 2.5e-7 : 1.2e-7;
+        // Air and internal friction take the upper partials much faster (Bank 2000; Chaigne & Askenfelt 1994)
+        const double b2 = wound ? 1.0e-6 : 6.0e-7;
         return b1 + b2 * f * f;
     }
 
@@ -461,15 +462,57 @@ void ModalPiano::buildSoundboard()
         board.hr[i] = (float) gain.real();
         board.hi[i] = (float) gain.imag();
 
-        // Each mode radiates with its own strength and polarity towards each ear
-        const double l = (0.4 + 0.6 * rng.next()) * (rng.next() < 0.5 ? -1 : 1);
-        const double r = (0.4 + 0.6 * rng.next()) * (rng.next() < 0.5 ? -1 : 1);
+        // Direction. Below a few hundred Hz the board is small next to the wavelength and
+        // pushes air like one piston: both ears hear the same thing. Higher up, each mode
+        // splits the board into patches moving in opposite directions, so its sound comes out
+        // in lobes and differs from ear to ear. The bass end of the board is nearer the left
+        // ear, the treble end nearer the right (player's view).
+        const double spread = std::clamp ((f - 150.0) / 1200.0, 0.0, 1.0);
+        const double common = (0.7 + 0.3 * rng.next()) * (1.0 - spread);
+        const double sideL = (0.4 + 0.6 * rng.next()) * (rng.next() < 0.5 ? -1 : 1) * spread;
+        const double sideR = (0.4 + 0.6 * rng.next()) * (rng.next() < 0.5 ? -1 : 1) * spread;
+        const double tilt = 0.15 * std::clamp ((f - 100.0) / 2000.0, -1.0, 1.0);
+        const double l = (common + sideL) * (1.0 - tilt);
+        const double r = (common + sideR) * (1.0 + tilt);
         board.radLeft[i] = (float) (l * modes[i].radiation);
         board.radRight[i] = (float) (r * modes[i].radiation);
     }
 
     // Overall level: a mezzo-forte middle C peaks around -20 dBFS, fortissimo around -10
     outputGain = 27.0;
+    buildBody();
+}
+
+void ModalPiano::buildBody()
+{
+    // Air under a grand's board is boxed in by the rim and the floor and leaks out at the
+    // gap underneath: a few broad resonances between about 90 and 350 Hz that fill out the bass.
+    airModes.clear();
+    const double airF[] = { 92.0, 165.0, 238.0, 330.0 };
+    const double airQ[] = { 4.0, 5.0, 5.0, 6.0 };
+    const double airG[] = { 0.55, 0.4, 0.3, 0.2 };
+    for (int i = 0; i < 4; ++i)
+    {
+        const double w = 2.0 * M_PI * airF[i] / sampleRate;
+        const double alpha = std::sin (w) / (2.0 * airQ[i]);
+        const double a0 = 1.0 + alpha;
+        airModes.push_back ({ (float) (alpha / a0), (float) (-2.0 * std::cos (w) / a0), (float) ((1.0 - alpha) / a0),
+                              0, 0, 0, 0, (float) airG[i] });
+    }
+    airPressure = 0;
+
+    // Lid: a reflection off its underside reaches the listener 1 to 2 ms after the direct
+    // sound. The lid is about 1.5 m long, so it only reflects well above a few hundred Hz,
+    // and its felt-free lacquered wood loses a little of the very top.
+    const int maxDelay = (int) (0.004 * sampleRate) + 2;
+    lidBufLeft.assign ((size_t) maxDelay, 0.0f);
+    lidBufRight.assign ((size_t) maxDelay, 0.0f);
+    lidPos = 0;
+    lidDelayLeft = (int) (0.0021 * sampleRate);
+    lidDelayRight = (int) (0.0013 * sampleRate);
+    lidHpCoeff = std::exp (-2.0 * M_PI * 400.0 / sampleRate);
+    lidLpCoeff = std::exp (-2.0 * M_PI * 9000.0 / sampleRate);
+    lidHpLeft = lidHpRight = lidHpInLeft = lidHpInRight = lidLpLeft = lidLpRight = 0;
 }
 
 void ModalPiano::buildAction()
@@ -554,6 +597,7 @@ void ModalPiano::reset()
     lastBridgeVelocity = bridgeAcceleration = 0;
     lastHorizontalVelocity = horizontalAcceleration = 0;
     resistiveLpLeft = resistiveLpRight = 0;
+    buildBody();
     dcLeft = dcRight = dcInLeft = dcInRight = 0;
     sustain = false;
 
@@ -1047,6 +1091,9 @@ void ModalPiano::process (float* left, float* right, int numSamples)
 
         runAction (forceSum, forceLeft, forceRight);
 
+        // The air under the board pushes back on it
+        forceSum -= airLoad * airPressure;
+
         // Soundboard
         double boardVelocity = 0, radiatedLeft = 0, radiatedRight = 0;
         stepBoard (board.wr.data(), board.wi.data(), board.qr.data(), board.qi.data(), board.hr.data(),
@@ -1068,8 +1115,43 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         const double directRight = forceRight * bridgeResistance + sideRight * crossResistance;
         resistiveLpLeft = directLeft + lpCoeff * (resistiveLpLeft - directLeft);
         resistiveLpRight = directRight + lpCoeff * (resistiveLpRight - directRight);
-        const double outL = radiatedLeft + resistiveLpLeft;
-        const double outR = radiatedRight + resistiveLpRight;
+        // Air under the board: driven by what the board pushes out, heard in both ears,
+        // and pressing back on the board through the bridge on the next sample
+        double air = 0;
+        if (settings.air > 0)
+        {
+            const float drive = (float) (0.5 * (radiatedLeft + radiatedRight));
+            for (auto& a : airModes)
+            {
+                const float y = a.b0 * (drive - a.x2) - a.a1 * a.y1 - a.a2 * a.y2;
+                a.x2 = a.x1; a.x1 = drive; a.y2 = a.y1; a.y1 = y;
+                air += a.gain * y;
+            }
+            air *= settings.air;
+        }
+        airPressure = air;
+
+        double outL = radiatedLeft + resistiveLpLeft + air;
+        double outR = radiatedRight + resistiveLpRight + 0.9 * air;
+
+        // Lid reflection
+        if (settings.lid > 0)
+        {
+            const int size = (int) lidBufLeft.size();
+            lidBufLeft[(size_t) lidPos] = (float) outL;
+            lidBufRight[(size_t) lidPos] = (float) outR;
+            const float dl = lidBufLeft[(size_t) ((lidPos - lidDelayLeft + size) % size)];
+            const float dr = lidBufRight[(size_t) ((lidPos - lidDelayRight + size) % size)];
+            lidPos = (lidPos + 1) % size;
+            lidHpLeft = lidHpCoeff * (lidHpLeft + dl - lidHpInLeft); lidHpInLeft = dl;
+            lidHpRight = lidHpCoeff * (lidHpRight + dr - lidHpInRight); lidHpInRight = dr;
+            lidLpLeft = lidHpLeft + lidLpCoeff * (lidLpLeft - lidHpLeft);
+            lidLpRight = lidHpRight + lidLpCoeff * (lidLpRight - lidHpRight);
+            // The open lid sends the board's sound towards the listener: the reflection adds
+            // to the direct sound, more so on the open (right) side
+            outL += 0.35 * settings.lid * lidLpRight;
+            outR += 0.5 * settings.lid * lidLpLeft;
+        }
 
         // DC blocker
         dcLeft = outL - dcInLeft + dcCoeff * dcLeft;

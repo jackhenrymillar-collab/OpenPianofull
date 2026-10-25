@@ -65,6 +65,8 @@ public:
         double outerFeltScale = 1.0;        // scales how deep the outer felt is
         double tensionGlide = 1.0;          // loud notes start sharp as the tension spike stretches the string
         double tensionLoss = 0.07;          // and lose their high partials faster while it lasts
+        double air = 1.0;                   // air trapped under the board, between the rim and the floor
+        double lid = 1.0;                   // lid opening (0 = closed, 1 = fully open)
         double softLift = 0.35;             // lifts the volume of soft notes without changing their tone (0 = off)
     };
 
@@ -227,6 +229,17 @@ private:
         std::vector<float> wr, wi, qr, qi, hr, hi, omega, sigma, radLeft, radRight;
     } board;
 
+    // Air under the board: a few broad cavity resonances driven by the board's volume motion.
+    // They radiate (mostly the same into both ears) and press back on the board.
+    struct AirMode { float b0, a1, a2, x1, x2, y1, y2, gain; };
+    std::vector<AirMode> airModes;
+    double airPressure = 0;
+    // Lid: an early, treble-heavy reflection towards the listener, a little later on one side
+    std::vector<float> lidBufLeft, lidBufRight;
+    int lidPos = 0, lidDelayLeft = 0, lidDelayRight = 0;
+    double lidHpLeft = 0, lidHpRight = 0, lidHpInLeft = 0, lidHpInRight = 0, lidHpCoeff = 0, lidLpLeft = 0, lidLpRight = 0, lidLpCoeff = 0;
+    void buildBody();
+
     // Action noises: short knocks from the keys, hammers and dampers, ringing a small bank
     // of wooden resonances (key, keybed, hammer shank) and reaching the board through the frame
     struct ActionHit { int delay; int type; float amount, panLeft, panRight; };
@@ -249,6 +262,7 @@ private:
     double resistiveLpLeft = 0, resistiveLpRight = 0, lpCoeff = 0;
     double dcLeft = 0, dcRight = 0, dcInLeft = 0, dcInRight = 0, dcCoeff = 0;
     double outputGain = 1.0;
+    double airLoad = 5.0; // N per unit of air pressure on the board
 
     int activityCounter = 0;
     int activeStrings = 0;
