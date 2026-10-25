@@ -41,7 +41,11 @@ namespace
         const double b1 = 0.15 + 0.35 * octavesAboveA0 / 7.25;
         // Air and internal friction take the upper partials much faster (Bank 2000; Chaigne & Askenfelt 1994)
         const double b2 = wound ? 1.0e-6 : 6.0e-7;
-        return b1 + b2 * f * f;
+        // Above about 2 kHz the losses climb steeply, so treble overtones die within a second
+        // while the fundamental sings on
+        // (the top fundamentals are spared: their losses are mostly at the bridge)
+        const double overtone = std::clamp (f / f1 - 1.0, 0.0, 1.0);
+        return b1 + b2 * f * f + 4.0 * overtone * std::pow (f / 2000.0, 3);
     }
 
     // Extra decay with the felt damper resting on the string
@@ -192,7 +196,11 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
         m.prFree.push_back ((float) pole.real()); m.piFree.push_back ((float) pole.imag());
         m.prDamp.push_back (0); m.piDamp.push_back (0);
         m.gr.push_back ((float) gain.real()); m.gi.push_back ((float) gain.imag());
-        m.bgr.push_back ((float) (gain.real() * beta)); m.bgi.push_back ((float) (gain.imag() * beta));
+        // The bridge is heavy: at high frequencies it hardly moves, so strings there are
+        // only weakly driven by it. This mostly matters for the undamped top strings, which
+        // would otherwise pick up and sustain every matching overtone played below them.
+        const double bridgeMobility = 1.0 / (1.0 + std::pow (f / 2000.0, 2));
+        m.bgr.push_back ((float) (gain.real() * beta * bridgeMobility)); m.bgi.push_back ((float) (gain.imag() * beta * bridgeMobility));
         m.fk.push_back ((float) (spec.tension * sign * n * M_PI / L));
         m.beta.push_back ((float) beta);
         m.phi.push_back ((float) (std::sin (n * M_PI * strike) * width));
@@ -242,7 +250,9 @@ void ModalPiano::addLongitudinal (String& s, const StringSpec& spec)
     for (int order = 1; order <= 4 && order * f1 < fTop && partials > 1; ++order)
     {
         const double w = 2.0 * M_PI * order * f1;
-        const double sigma = 6.0;
+        // Free longitudinal ringing dies fast (end losses at the bridge pin and agraffe); what
+        // remains audible is mostly the forced, phantom part that follows the transverse motion
+        const double sigma = 40.0;
         const cd pole = std::exp (cd (-sigma, w) * Ts);
         const cd gain = pole * (Ts / w);
         lm.zr.push_back (0); lm.zi.push_back (0);
