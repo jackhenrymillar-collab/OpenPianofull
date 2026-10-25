@@ -50,7 +50,7 @@ class ModalPiano
 public:
     struct Settings
     {
-        double unisonSpreadCents = 0.45;    // how far each outer unison string sits from the centre
+        double unisonSpreadCents = 0.3;     // how far each outer unison string sits from the centre
         double hammerUnevenness = 0.04e-3;  // [m] how far apart a hammer meets a key's strings
         int oversampling = 8;               // during hammer contact
         bool horizontal = true;             // second (sideways) vibration direction
@@ -263,6 +263,12 @@ private:
     int lidPos = 0, lidDelayLeft = 0, lidDelayRight = 0;
     double lidHpLeft = 0, lidHpRight = 0, lidHpInLeft = 0, lidHpInRight = 0, lidHpCoeff = 0, lidLpLeft = 0, lidLpRight = 0, lidLpCoeff = 0;
     void buildBody();
+    // Above a few kHz the board is a dense tangle of overlapping modes: what the bridge
+    // pushes comes out smeared over a millisecond or two and differently in each ear,
+    // not as a click. Three allpass diffusers per ear model that.
+    struct Diffuser { std::vector<float> buf; int pos = 0; float g = 0.7f; float process (float x)
+        { const float d = buf[(size_t) pos]; const float y = -g * x + d; buf[(size_t) pos] = x + g * y; pos = (pos + 1) % (int) buf.size(); return y; } };
+    std::array<Diffuser, 3> diffLeft, diffRight;
 
     // Action noises: short knocks from the keys, hammers and dampers, ringing a small bank
     // of wooden resonances (key, keybed, hammer shank) and reaching the board through the frame

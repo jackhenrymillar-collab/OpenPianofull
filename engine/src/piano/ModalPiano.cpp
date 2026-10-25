@@ -138,7 +138,7 @@ void ModalPiano::prepare (double newSampleRate, const Settings& newSettings)
     buildAction();
 
     // Output filters: gentle top-end roll-off on the direct bridge path, and a DC blocker
-    lpCoeff = std::exp (-2.0 * M_PI * 7000.0 / sampleRate);
+    lpCoeff = std::exp (-2.0 * M_PI * 3500.0 / sampleRate);
     dcCoeff = std::exp (-2.0 * M_PI * 20.0 / sampleRate);
 
     fullList.reserve (strings.size());
@@ -159,7 +159,8 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     // No two strings are quite alike: small differences in where the hammer hits, in
     // stiffness and in losses keep the sound from being too regular.
     const double strike = strikeRatio * (1.0 + 0.02 * rng.symmetric());
-    const double B = spec.inharmonicity * (1.0 + 0.03 * rng.symmetric());
+    // Strings of one unison come off the same coil of wire: their stiffness is nearly identical
+    const double B = spec.inharmonicity * (1.0 + 0.005 * rng.symmetric());
     const double lossScale = (1.0 + 0.1 * rng.symmetric()) * (1.0 + 1.2 * ageFactor);
     const double fFlex = spec.fundamental / std::sqrt (1.0 + B);
     const double L = spec.length;
@@ -764,6 +765,14 @@ void ModalPiano::buildBody()
     lidHpCoeff = std::exp (-2.0 * M_PI * 400.0 / sampleRate);
     lidLpCoeff = std::exp (-2.0 * M_PI * 9000.0 / sampleRate);
     lidHpLeft = lidHpRight = lidHpInLeft = lidHpInRight = lidLpLeft = lidLpRight = 0;
+
+    const double msL[3] = { 0.53, 1.37, 2.71 }, msR[3] = { 0.61, 1.63, 3.07 };
+    for (int i = 0; i < 3; ++i)
+    {
+        diffLeft[(size_t) i].buf.assign ((size_t) std::max (1, (int) (msL[i] * 1e-3 * sampleRate)), 0.0f);
+        diffRight[(size_t) i].buf.assign ((size_t) std::max (1, (int) (msR[i] * 1e-3 * sampleRate)), 0.0f);
+        diffLeft[(size_t) i].pos = diffRight[(size_t) i].pos = 0;
+    }
 }
 
 void ModalPiano::buildAction()
@@ -1541,8 +1550,11 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         // Sound: soundboard modes plus the direct (dense high-frequency) bridge path
         const double directLeft = forceLeft * bridgeResistance + sideLeft * crossResistance;
         const double directRight = forceRight * bridgeResistance + sideRight * crossResistance;
-        resistiveLpLeft = directLeft + lpCoeff * (resistiveLpLeft - directLeft);
-        resistiveLpRight = directRight + lpCoeff * (resistiveLpRight - directRight);
+        float dl = (float) directLeft, dr = (float) directRight;
+        for (auto& d : diffLeft) dl = d.process (dl);
+        for (auto& d : diffRight) dr = d.process (dr);
+        resistiveLpLeft = dl + lpCoeff * (resistiveLpLeft - dl);
+        resistiveLpRight = dr + lpCoeff * (resistiveLpRight - dr);
         // Air under the board: driven by what the board pushes out, heard in both ears,
         // and pressing back on the board through the bridge on the next sample
         double air = 0;
