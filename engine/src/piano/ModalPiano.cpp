@@ -535,6 +535,13 @@ void ModalPiano::runAction (double& force, double& left, double& right)
 
 void ModalPiano::reset()
 {
+    for (auto& st : strings)
+    {
+        const float ratio = 1.0f / st.outScale;
+        forModes (st, st.count, [&] (size_t q) { m.fk[q] *= ratio; m.bgr[q] /= ratio; m.bgi[q] /= ratio; });
+        st.outScale = 1;
+    }
+
     action.zr.fill (0); action.zi.fill (0);
     actionHits.clear();
     std::fill (m.zr.begin(), m.zr.end(), 0.0f);
@@ -675,6 +682,19 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
         const double treble = (keys[(size_t) k].midiNote - kLowestKey) / double (kHighestKey - kLowestKey);
         queueAction (0, (int) (0.003 * sampleRate), 0.4 * v * (1.0 - 0.5 * treble), k);
         queueAction (1, 0, 0.06 * std::pow (v, 1.5) * (0.4 + 0.6 * treble), k);
+    }
+
+    // Soft notes are made a little louder without changing their tone: the key's strings push
+    // harder on the bridge and feel its motion less by the same factor, so their decay and
+    // coupling stay as they were. Fortissimo (5 m/s) is left unchanged.
+    {
+        const float lift = (float) std::pow (5.0 / std::clamp (hammerVelocity, 0.3, 5.0), settings.softLift);
+        forEachString (ks, [&] (String& s)
+        {
+            const float ratio = lift / s.outScale;
+            forModes (s, s.count, [&] (size_t j) { m.fk[j] *= ratio; m.bgr[j] /= ratio; m.bgi[j] /= ratio; });
+            s.outScale = lift;
+        });
     }
 
     ks.hammer.active = true;
@@ -848,7 +868,7 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
             touching = touching || f > 0;
 
             const float hammerAcc = (float) (f / s.mass);
-            const float bridgeAcc = (float) ub;
+            const float bridgeAcc = (float) ub / s.outScale;
             forModes (s, s.count, [&] (size_t j)
             {
                 const float acc = m.beta[j] * bridgeAcc + m.phi[j] * hammerAcc;
@@ -929,7 +949,7 @@ double ModalPiano::runLongitudinal (const String& s)
         lm.zi[j] = ni;
         force += lm.out[j] * (ni - drive * lm.invW2[j]);
     }
-    return force * settings.longitudinalCoupling * keys[(size_t) s.key].numStrings;
+    return force * settings.longitudinalCoupling * keys[(size_t) s.key].numStrings * s.outScale;
 }
 
 void ModalPiano::process (float* left, float* right, int numSamples)

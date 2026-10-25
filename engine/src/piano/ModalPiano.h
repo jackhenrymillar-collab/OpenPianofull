@@ -63,6 +63,7 @@ public:
         double actionNoise = 1.0;           // key, hammer and damper noises (0 = silent action)
         double outerFelt = 0.03;            // stiffness of the soft outer felt, relative to the core
         double outerFeltScale = 1.0;        // scales how deep the outer felt is
+        double softLift = 0.35;             // lifts the volume of soft notes without changing their tone (0 = off)
     };
 
     ModalPiano();
@@ -109,6 +110,7 @@ private:
         int horizontal = -1;      // vertical strings: index of the same string's horizontal motion
         int longFirst = 0, longCount = 0, longPartials = 0; // longitudinal modes
         float tensionCoef = 0;    // EA/4 (pi/L)^2, for the average tension change
+        float outScale = 1;       // loudness lift for soft notes (bridge force up, bridge input down)
         bool damped = true;
         Activity activity = Activity::Off;
     };
