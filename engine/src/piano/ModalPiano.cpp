@@ -346,6 +346,14 @@ void ModalPiano::buildModes()
             const int index = addString (spec, (int) k, Kind::Duplex, 0.0, 0.0, 6, std::min (fMax, 10000.0),
                                          (uint32_t) (k * 7 + 5000));
             keyState[k].duplexString = index;
+            // Real duplex lengths are partly damped by the cloth and the hitch-pin end
+            forModes (strings[(size_t) index], strings[(size_t) index].count, [&] (size_t j)
+            {
+                const float extra = (float) std::exp (-4.0 * Ts);
+                m.pr[j] *= extra; m.pi[j] *= extra; m.prFree[j] *= extra; m.piFree[j] *= extra;
+                m.bgr[j] *= 0.6f; m.bgi[j] *= 0.6f;
+                m.sigmaInternal[j] += 4.0f;
+            });
             alwaysOn.push_back (index);
         }
     }
@@ -387,7 +395,10 @@ void ModalPiano::buildModes()
             const int index = addString (spec, (int) k, Kind::Front, 0.0, 0.0, 4, std::min (fMax, 12000.0), (uint32_t) (k * 7 + 7000));
             auto& st = strings[(size_t) index];
             // Not on the bridge at all
-            forModes (st, st.count, [&] (size_t j) { m.bgr[j] = 0; m.bgi[j] = 0; m.fk[j] = 0; });
+            forModes (st, st.count, [&] (size_t j) { m.bgr[j] = 0; m.bgi[j] = 0; m.fk[j] = 0;
+                const float extra = (float) std::exp (-6.0 * Ts);
+                m.pr[j] *= extra; m.pi[j] *= extra; m.prFree[j] *= extra; m.piFree[j] *= extra;
+                m.sigmaInternal[j] += 6.0f; });
             alwaysOn.push_back (index);
         }
     }
@@ -507,7 +518,7 @@ void ModalPiano::buildSoundboard()
     const double fc = 48.0 * settings.crown * (1.0 - 0.7 * ageFactor);
     // Above about 3 kHz the modes overlap so much that the board acts as a plain resistance
     // (the direct bridge path below), so only the modes up to there are simulated one by one
-    const double fTop = std::min (3000.0, 0.45 * sampleRate);
+    const double fTop = std::min (4500.0, 0.45 * sampleRate);
     for (int mi = 1; mi < 120; ++mi)
         for (int ni = 1; ni < 120; ++ni)
         {
@@ -672,8 +683,8 @@ void ModalPiano::buildFrame()
     for (size_t i = 0; i < n; ++i)
     {
         const double f = fs[i] * (1.0 + 0.03 * rng.symmetric());
-        const double w = 2.0 * M_PI * f, sigma = M_PI * f * 0.003;
-        const double peak = 3e-5;
+        const double w = 2.0 * M_PI * f, sigma = M_PI * f * 0.006;
+        const double peak = 1.5e-5;
         const double mass = 1.0 / (2.0 * sigma * peak);
         const cd pole = std::exp (cd (-sigma, w) * Ts);
         const cd gain = pole * (Ts / (w * mass));
