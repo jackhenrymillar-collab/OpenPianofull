@@ -15,6 +15,7 @@ namespace params
     inline constexpr auto hardness = "hardness";
     inline constexpr auto damper = "damper";
     inline constexpr auto sustainLatch = "sustainLatch";
+    inline constexpr auto velocitySens = "velocitySens";
 
     juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 

@@ -19,6 +19,9 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    // For screenshots: light some keys as if just played
+    void previewGlow();
+
     static constexpr int kWidth = 1040;
     static constexpr int kHeight = 720;
 
@@ -26,26 +29,32 @@ private:
     void timerCallback() override;
     void refreshPreset();
     void refreshAB();
+    juce::Rectangle<float> deckBounds() const;
 
     OpenPianoAudioProcessor& processor;
-    widgets::NightLookAndFeel lookAndFeel;
+    widgets::SkyLookAndFeel lookAndFeel;
     juce::TooltipWindow tooltips { this, 600 };
 
-    juce::Image sky;
+    juce::Image skyImage;
 
+    // Top: instrument modes and the keyboard. Only Piano exists so far.
+    juce::TextButton pianoMode { "Piano" }, stringsMode { "Strings" }, rhodesMode { "Rhodes" };
+    widgets::GlassKeyboard keyboard;
+
+    // Bottom deck
     widgets::PresetBar presetBar;
     juce::TextButton abButton { "A / B" };
-
-    // Instrument modes. Only Piano exists so far.
-    juce::TextButton pianoMode { "Piano" }, stringsMode { "Strings" }, rhodesMode { "Rhodes" };
+    widgets::ButtonSlot saveSlot;
 
     widgets::Knob volume, dynamics, hardness, damper;
+    std::array<widgets::KnobSlot, 4> smallKnobSlots;
 
+    widgets::HorizontalControl velocity;
     juce::TextButton sustainButton { "Sustain" };
     juce::AudioProcessorValueTreeState::ButtonAttachment sustainAttachment;
-    widgets::StatusLine status;
+    std::array<widgets::ButtonSlot, 3> buttonSlots;
 
-    widgets::NightKeyboard keyboard;
+    widgets::StatusLine status;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (OpenPianoAudioProcessorEditor)
 };

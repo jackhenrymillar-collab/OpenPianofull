@@ -54,4 +54,19 @@ void drawGlow (juce::Graphics& g, juce::Rectangle<float> r, float cornerRadius, 
     }
 }
 
+void drawGlassPanel (juce::Graphics& g, juce::Rectangle<float> r, float cornerRadius, float opacity)
+{
+    // Soft shadow underneath
+    g.setColour (colours::ink.withAlpha (0.06f * opacity));
+    g.fillRoundedRectangle (r.translated (0, 3.0f).expanded (1.0f), cornerRadius + 1.0f);
+
+    juce::ColourGradient fill (juce::Colours::white.withAlpha (0.50f * opacity), r.getTopLeft(),
+                               juce::Colours::white.withAlpha (0.28f * opacity), r.getBottomLeft(), false);
+    g.setGradientFill (fill);
+    g.fillRoundedRectangle (r, cornerRadius);
+
+    g.setColour (colours::glassBorder.withMultipliedAlpha (opacity));
+    g.drawRoundedRectangle (r.reduced (0.5f), cornerRadius, 1.0f);
+}
+
 } // namespace theme

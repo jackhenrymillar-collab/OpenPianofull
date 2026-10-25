@@ -51,8 +51,8 @@ target_sources(OpenPianoPlugin PRIVATE
     Source/PluginEditor.cpp
     Source/ui/Theme.h
     Source/ui/Theme.cpp
-    Source/ui/NightSky.h
-    Source/ui/NightSky.cpp
+    Source/ui/Sky.h
+    Source/ui/Sky.cpp
     Source/ui/Widgets.h
     Source/ui/Widgets.cpp)
 
@@ -80,6 +80,7 @@ option(OPENPIANO_BUILD_SCREENSHOT "Build the window screenshot tool" OFF)
 if(OPENPIANO_BUILD_SCREENSHOT)
     juce_add_console_app(OpenPianoScreenshot PRODUCT_NAME "openpiano-screenshot")
     target_sources(OpenPianoScreenshot PRIVATE tools/Screenshot.cpp)
+    target_include_directories(OpenPianoScreenshot PRIVATE Source)
     target_compile_definitions(OpenPianoScreenshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
-    target_link_libraries(OpenPianoScreenshot PRIVATE OpenPianoPlugin juce::juce_gui_basics juce::juce_recommended_config_flags)
+    target_link_libraries(OpenPianoScreenshot PRIVATE OpenPianoPlugin openpiano_engine juce::juce_gui_basics juce::juce_audio_utils juce::juce_recommended_config_flags)
 endif()

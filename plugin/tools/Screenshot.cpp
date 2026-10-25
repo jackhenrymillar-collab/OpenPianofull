@@ -10,6 +10,8 @@ Licensed under the GNU Affero General Public License v3 or later (see LICENSE).
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "PluginEditor.h"
+
 
 int main (int argc, char** argv)
 {
@@ -23,6 +25,8 @@ int main (int argc, char** argv)
 
     std::unique_ptr<juce::AudioProcessorEditor> editor (processor->createEditor());
     editor->setVisible (true);
+    if (auto* e = dynamic_cast<OpenPianoAudioProcessorEditor*> (editor.get()))
+        e->previewGlow(); // show lit and fading keys
 
     juce::Image image (juce::Image::ARGB, juce::roundToInt (editor->getWidth() * scale),
                        juce::roundToInt (editor->getHeight() * scale), true);

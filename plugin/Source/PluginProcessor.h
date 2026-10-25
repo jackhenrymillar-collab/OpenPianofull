@@ -70,6 +70,7 @@ private:
     std::atomic<float>* hardnessParam = nullptr;
     std::atomic<float>* damperParam = nullptr;
     std::atomic<float>* latchParam = nullptr;
+    std::atomic<float>* velocitySensParam = nullptr;
 
     bool midiSustain = false;
     bool sustainApplied = false;

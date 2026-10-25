@@ -8,35 +8,39 @@ Licensed under the GNU Affero General Public License v3 or later (see LICENSE).
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-// Visual language shared with the Overcast plugin family: a night sky, serif display type,
-// spaced small caps, glassy navy controls and warm gold for anything selected.
+// Daylight variant of the Overcast family look: a bright sky with the sun rising from below,
+// frosted-glass panels, pearl knobs, serif display type, spaced small caps and warm
+// sunlight amber for anything selected or lit.
 namespace theme
 {
     namespace colours
     {
-        inline const juce::Colour skyTop      { 0xff0b1030 };
-        inline const juce::Colour skyMid      { 0xff1a2462 };
-        inline const juce::Colour skyLow      { 0xff2c3780 };
-        inline const juce::Colour moon        { 0xfff4ecc8 };
-        inline const juce::Colour moonShade   { 0xffd9cc98 };
-        inline const juce::Colour gold        { 0xffe9c46a };
-        inline const juce::Colour text        { 0xfff3f1ff };
-        inline const juce::Colour textDim     { 0xffa9add6 };
-        inline const juce::Colour panel       { 0x8c141a46 }; // translucent navy
-        inline const juce::Colour panelBorder { 0x33ffffff };
-        inline const juce::Colour knobLight   { 0xff3d4ba4 };
-        inline const juce::Colour knobDark    { 0xff161d58 };
+        inline const juce::Colour skyTop      { 0xff5f9fdc };
+        inline const juce::Colour skyMid      { 0xff9fcdf2 };
+        inline const juce::Colour horizon     { 0xffffe2b0 };
+        inline const juce::Colour sunCore     { 0xfffff8e2 };
+        inline const juce::Colour sunGlow     { 0xffffc46a };
+        inline const juce::Colour amber       { 0xffef9b2c }; // selected / lit
+        inline const juce::Colour ink         { 0xff1c2a52 }; // main text
+        inline const juce::Colour inkDim      { 0xff4f5f8c };
+        inline const juce::Colour glass       { 0x66ffffff }; // frosted panel fill
+        inline const juce::Colour glassBorder { 0xccffffff };
+        inline const juce::Colour pearlLight  { 0xffffffff };
+        inline const juce::Colour pearlDark   { 0xffcfd6e6 };
     }
 
-    // Cormorant Garamond: wordmark and titles
+    // Cormorant Garamond: wordmark
     juce::Font serif (float height, float tracking = 0.0f);
 
     // Jost: labels, values and buttons
     juce::Font sans (float height, float tracking = 0.0f);
 
-    // Spaced small caps label, e.g. "DECAY"
+    // Spaced small caps label, e.g. "VOLUME"
     juce::Font label (float height = 12.0f);
 
-    // Draws a soft glow around a rounded rectangle (for selected controls).
+    // A soft glow around a rounded rectangle (for selected controls).
     void drawGlow (juce::Graphics& g, juce::Rectangle<float> r, float cornerRadius, juce::Colour colour, float size = 8.0f);
+
+    // A frosted-glass panel: translucent white with a bright hairline edge.
+    void drawGlassPanel (juce::Graphics& g, juce::Rectangle<float> r, float cornerRadius, float opacity = 1.0f);
 }

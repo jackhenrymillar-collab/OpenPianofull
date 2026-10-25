@@ -17,6 +17,7 @@ OpenPianoAudioProcessor::OpenPianoAudioProcessor()
     hardnessParam = state.getRawParameterValue (params::hardness);
     damperParam = state.getRawParameterValue (params::damper);
     latchParam = state.getRawParameterValue (params::sustainLatch);
+    velocitySensParam = state.getRawParameterValue (params::velocitySens);
 }
 
 OpenPianoAudioProcessor::~OpenPianoAudioProcessor() = default;
@@ -73,7 +74,14 @@ void OpenPianoAudioProcessor::updateSustain()
 void OpenPianoAudioProcessor::applyEvent (const juce::MidiMessage& m)
 {
     if (m.isNoteOn())
-        piano.noteOn (m.getNoteNumber(), m.getVelocity());
+    {
+        // Velocity sensitivity pulls every velocity towards a fixed medium-loud touch
+        int velocity = m.getVelocity();
+        const float sens = velocitySensParam->load();
+        if (sens < 0.995f)
+            velocity = juce::jlimit (1, 127, juce::roundToInt (96.0f + (velocity - 96.0f) * sens));
+        piano.noteOn (m.getNoteNumber(), velocity);
+    }
     else if (m.isNoteOff())
         piano.noteOff (m.getNoteNumber());
     else if (m.isSustainPedalOn())

@@ -52,6 +52,11 @@ AudioProcessorValueTreeState::ParameterLayout createLayout()
 
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { sustainLatch, 1 }, "Sustain Latch", false));
 
+    // How much key velocity matters. 0% plays every note at the same strength.
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { velocitySens, 1 }, "Velocity Sensitivity", NormalisableRange<float> (0.0f, 1.0f, 0.01f), 1.0f,
+        AudioParameterFloatAttributes().withStringFromValueFunction (percent)));
+
     return layout;
 }
 
