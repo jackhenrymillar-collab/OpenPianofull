@@ -33,7 +33,7 @@ namespace openpiano::piano
 // Strings also stretch along their length (longitudinal waves): the stretch rises with the
 // square of the vibration, so loud notes gain "phantom" partials and a metallic attack.
 //
-// Hammers: a mass on a nonlinear, lossy felt spring, F = Q0 x^p (1 + lambda dx/dt), pressing
+// Hammers: a mass on a nonlinear felt spring with memory (Stulov), F = Q0 (x^p - e * relaxed part), pressing
 // on all of a key's strings. While a hammer touches the strings that key runs oversampled.
 //
 // Bridge and soundboard: every string pushes on the bridge, and the bridge's motion moves
@@ -58,8 +58,11 @@ public:
         bool duplex = true;                 // undamped string segments behind the treble bridge
         double longitudinalCoupling = 0.12; // share of the lengthwise force that reaches the board (via bridge tilt)
         double crown = 1.0;                 // soundboard crown and downbearing (0 = flat, unloaded board)
-        double feltLoss = 0.12;
-        double actionNoise = 1.0;           // key, hammer and damper noises (0 = silent action)             // [s/m] felt hysteresis (0 = perfectly elastic)
+        double feltMemory = 0.6;            // felt relaxation strength (0 = perfectly elastic)
+        double feltRelaxTime = 0.6e-3;      // [s] how quickly squeezed felt relaxes
+        double actionNoise = 1.0;           // key, hammer and damper noises (0 = silent action)
+        double outerFelt = 0.03;            // stiffness of the soft outer felt, relative to the core
+        double outerFeltScale = 1.0;        // scales how deep the outer felt is
     };
 
     ModalPiano();
@@ -117,6 +120,7 @@ private:
         int samplesSinceStrike = 0, samplesApart = 0;
         std::array<double, 3> gap {};          // hammer not perfectly level across the unison
         std::array<double, 3> lastCompression {};
+        std::array<double, 3> feltHistory {};  // relaxing part of the felt force, per string
         std::array<double, 3> forceSum {};     // per string, over the current sample
     };
 
@@ -170,6 +174,7 @@ private:
     double sampleRate = 48000, Ts = 1.0 / 48000;
     Settings settings;
     double hardness = 1.0;
+    double trebleFirmness = 2.5;
     double damperStrength = 1.0;
     bool sustain = false;
 

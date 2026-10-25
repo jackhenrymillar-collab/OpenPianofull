@@ -241,6 +241,7 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         key.hammerMass = (11.074 - 0.074 * n + 0.0001 * n * n) * 1e-3;
         key.feltStiffness = 183.0 * std::exp (0.045 * n);
         key.feltExponent = 3.7 + 0.015 * n;
+        key.outerFeltDepth = lerp (1.0e-3, 0.2e-3, std::pow ((k - 1) / 87.0, 0.7));
         key.strikeRatio = k <= 40 ? lerp (0.122, 0.115, (k - 1) / 39.0) : lerp (0.115, 0.08, (k - 40) / 48.0);
         key.hammerWidth = lerp (12e-3, 5e-3, (k - 1) / 87.0);
         key.hasDamper = key.midiNote <= kLastDamperMidi;

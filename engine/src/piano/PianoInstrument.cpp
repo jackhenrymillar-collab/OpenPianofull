@@ -53,10 +53,10 @@ void PianoInstrument::reset()
 
 double PianoInstrument::hammerVelocityFor (int velocity) const
 {
-    // Measured hammer speeds run from about 0.3 m/s (pianissimo) to 6 m/s (fortissimo).
-    // Equal velocity steps give roughly equal steps in loudness.
+    // Hammer speed from 0.8 m/s (pianissimo) to 5 m/s (fortissimo). A real piano spans a wider
+    // range; this keeps soft notes audible, and the two-layer felt makes the tone carry the dynamics.
     const double x = std::pow (std::clamp (velocity, 1, 127) / 127.0, (double) controls.dynamicsCurve);
-    return 0.3 * std::pow (20.0, x);
+    return 0.8 * std::pow (5.0 / 0.8, x);
 }
 
 void PianoInstrument::noteOn (int midiNote, int velocity)

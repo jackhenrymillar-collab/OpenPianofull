@@ -689,6 +689,7 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
         forModes (s, s.count, [&] (size_t j) { u += m.phi[j] * m.zi[j]; });
         ks.hammer.lastCompression[(size_t) i] = nearest - u - ks.hammer.gap[(size_t) i];
         ks.hammer.forceSum[(size_t) i] = 0;
+        ks.hammer.feltHistory[(size_t) i] = 0;
     }
     checkActivity();
 }
@@ -812,7 +813,14 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
     const double dt = Ts / os;
     const double q0 = key.feltStiffness * hardness;
     const double p = key.feltExponent;
-    const double lambda = settings.feltLoss;
+    // Felt has memory (Stulov 1995): squeezed quickly it is stiff; squeezed slowly it has
+    // time to relax and gives way. So a gentle touch makes a long, soft contact that only
+    // excites the low partials, and a hard blow a short, stiff one that brings out the top.
+    const double memory = settings.feltMemory;
+    const double coreDepth = key.outerFeltDepth * 1000.0 * settings.outerFeltScale; // [mm]
+    // Treble hammers are smaller and their outer felt firmer, or soft notes there would vanish
+    const double outer = settings.outerFelt * std::pow (10.0, std::max (0.0, (keyIndex - 39) / 48.0) * trebleFirmness);
+    const double relax = 1.0 - std::exp (-dt / std::max (1e-6, settings.feltRelaxTime));
 
     bool touching = false;
     for (int step = 0; step < os; ++step)
@@ -825,13 +833,16 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
             double u = 0;
             forModes (s, s.count, [&] (size_t j) { u += m.phi[j] * m.zi[j]; });
 
-            // Felt is lossy: it pushes harder while being squeezed than while recovering
-            // (Hunt-Crossley). Soft blows stay round; hard blows gain bite.
             const double compression = h.position - u - h.gap[(size_t) i];
-            const double rate = (compression - h.lastCompression[(size_t) i]) / dt;
             h.lastCompression[(size_t) i] = compression;
-            const double f = compression > 0 ? q0 * std::pow (compression * 1000.0, p) * std::max (0.0, 1.0 + lambda * rate)
-                                             : 0.0;
+            // Two layers: a soft outer felt, then the hard, dense core once the outer is squeezed through
+            const double xmm = compression * 1000.0;
+            const double elastic = compression > 0
+                ? outer * std::pow (xmm, p) + std::pow (std::max (0.0, xmm - coreDepth), p)
+                : 0.0;
+            auto& history = h.feltHistory[(size_t) i];
+            history += (elastic - history) * relax;
+            const double f = compression > 0 ? std::max (0.0, q0 * (elastic - memory * history)) : 0.0;
             hammerForce += f;
             h.forceSum[(size_t) i] += f;
             touching = touching || f > 0;

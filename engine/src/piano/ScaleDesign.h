@@ -34,6 +34,7 @@ struct KeySpec
     double stretchCents;             // Tuning relative to equal temperament (A4 = 440 Hz)
 
     double hammerMass;               // [kg]
+    double outerFeltDepth;           // [m] soft outer felt before the hard core
     double feltStiffness;            // Q0 in F = Q0 * (compression in mm)^p  [N]
     double feltExponent;             // p
     double strikeRatio;              // Striking point as a fraction of the speaking length
