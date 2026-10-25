@@ -1376,8 +1376,8 @@ void ModalPiano::process (float* left, float* right, int numSamples)
             lidLpRight = lidHpRight + lidLpCoeff * (lidLpRight - lidHpRight);
             // The open lid sends the board's sound towards the listener: the reflection adds
             // to the direct sound, more so on the open (right) side
-            outL += 0.35 * settings.lid * lidLpRight;
-            outR += 0.5 * settings.lid * lidLpLeft;
+            outL += 0.2 * settings.lid * lidLpRight;
+            outR += 0.28 * settings.lid * lidLpLeft;
         }
 
         // DC blocker
