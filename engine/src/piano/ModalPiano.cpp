@@ -777,6 +777,60 @@ void ModalPiano::buildBody()
     lidLpCoeff = std::exp (-2.0 * M_PI * 9000.0 / sampleRate);
     lidHpLeft = lidHpRight = lidHpInLeft = lidHpInRight = lidLpLeft = lidLpRight = 0;
 
+    // The bridge is a wooden beam with its own mass. Above a frequency set by that mass and
+    // the board's resistance, the strings see the bridge's inertia rather than the board, so
+    // they couple less. The bass bridge and the tenor are heavy; towards the top the bridge
+    // is narrower and lighter, so the corner rises.
+    for (int z = 0; z < kZones; ++z)
+    {
+        const double fc = std::min (2000.0 * std::pow (1.22, z), 0.4 * sampleRate);
+        bridgeMassCoeff[(size_t) z] = std::exp (-2.0 * M_PI * fc / sampleRate);
+        bridgeMassState[(size_t) z] = 0;
+    }
+
+    auto peaking = [this] (double f, double gainDb, double q)
+    {
+        Biquad b;
+        const double A = std::pow (10.0, gainDb / 40.0), w = 2.0 * M_PI * f / sampleRate;
+        const double alpha = std::sin (w) / (2.0 * q), a0 = 1.0 + alpha / A;
+        b.b0 = (float) ((1.0 + alpha * A) / a0); b.b1 = (float) (-2.0 * std::cos (w) / a0);
+        b.b2 = (float) ((1.0 - alpha * A) / a0); b.a1 = b.b1; b.a2 = (float) ((1.0 - alpha / A) / a0);
+        return b;
+    };
+    // Above the simulated modes the board is not perfectly smooth: overlapping groups of
+    // modes still leave broad peaks and dips of a few dB, different in each direction
+    highBoardLeft.clear(); highBoardRight.clear();
+    {
+        Rng rng (4242);
+        const double fs[] = { 5000.0, 6100.0, 7500.0, 9200.0, 11300.0 };
+        for (double f : fs)
+        {
+            if (f > 0.42 * sampleRate)
+                break;
+            const double g = (rng.next() < 0.5 ? -1.0 : 1.0) * (2.0 + 2.0 * rng.next());
+            highBoardLeft.push_back (peaking (f * (1.0 + 0.05 * rng.symmetric()), g, 2.5));
+            highBoardRight.push_back (peaking (f * (1.0 + 0.05 * rng.symmetric()), -0.6 * g + 1.5 * rng.symmetric(), 2.5));
+        }
+    }
+    // The lid is a large spruce panel that the sound hits; it rings faintly at its own modes
+    lidPanel.clear(); lidPanelGain.clear();
+    {
+        const double fs[] = { 68.0, 112.0, 171.0, 247.0, 352.0, 488.0 };
+        for (double f : fs)
+        {
+            const double w = 2.0 * M_PI * f / sampleRate, alpha = std::sin (w) / (2.0 * 18.0), a0 = 1.0 + alpha;
+            Biquad b;
+            b.b0 = (float) (alpha / a0); b.b1 = 0; b.b2 = (float) (-alpha / a0);
+            b.a1 = (float) (-2.0 * std::cos (w) / a0); b.a2 = (float) ((1.0 - alpha) / a0);
+            lidPanel.push_back (b);
+            lidPanelGain.push_back (0.05f);
+        }
+    }
+    // Sound from the board spreads evenly at low frequencies but beams above a couple of kHz,
+    // mostly out past the open lid (the right ear here)
+    beamCoeff = std::exp (-2.0 * M_PI * 2000.0 / sampleRate);
+    beamLpLeft = beamLpRight = 0;
+
     const double msL[3] = { 0.53, 1.37, 2.71 }, msR[3] = { 0.61, 1.63, 3.07 };
     for (int i = 0; i < 3; ++i)
     {
@@ -1549,8 +1603,11 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         // becomes audible.
         for (int z = 0; z < kZones; ++z)
         {
-            const double v = bridgeResistance * (0.5 * zoneForce[(size_t) z] + 0.5 * forceSum)
-                             + crossResistance * sideSum + zoneBoardVelocity[(size_t) z];
+            // The resistive part goes through the bridge's own mass (a one-pole roll-off)
+            const double res = bridgeResistance * (0.5 * zoneForce[(size_t) z] + 0.5 * forceSum);
+            auto& ms = bridgeMassState[(size_t) z];
+            ms = res + bridgeMassCoeff[(size_t) z] * (ms - res);
+            const double v = ms + crossResistance * sideSum + zoneBoardVelocity[(size_t) z];
             zoneAcceleration[(size_t) z] = (v - lastZoneVelocity[(size_t) z]) * sampleRate;
             lastZoneVelocity[(size_t) z] = v;
         }
@@ -1564,6 +1621,8 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         float dl = (float) directLeft, dr = (float) directRight;
         for (auto& d : diffLeft) dl = d.process (dl);
         for (auto& d : diffRight) dr = d.process (dr);
+        for (auto& b : highBoardLeft) dl = b.process (dl);
+        for (auto& b : highBoardRight) dr = b.process (dr);
         resistiveLpLeft = dl + lpCoeff * (resistiveLpLeft - dl);
         resistiveLpRight = dr + lpCoeff * (resistiveLpRight - dr);
         // Air under the board: driven by what the board pushes out, heard in both ears,
@@ -1585,6 +1644,12 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         double outL = radiatedLeft + resistiveLpLeft + air + frameLeft;
         double outR = radiatedRight + resistiveLpRight + 0.9 * air + frameRight;
 
+        // Directivity: the high part beams out past the open side
+        beamLpLeft = outL + beamCoeff * (beamLpLeft - outL);
+        beamLpRight = outR + beamCoeff * (beamLpRight - outR);
+        outL -= 0.2 * (outL - beamLpLeft);
+        outR += 0.25 * (outR - beamLpRight);
+
         // Lid reflection
         if (settings.lid > 0)
         {
@@ -1602,6 +1667,13 @@ void ModalPiano::process (float* left, float* right, int numSamples)
             // to the direct sound, more so on the open (right) side
             outL += 0.2 * settings.lid * lidLpRight;
             outR += 0.28 * settings.lid * lidLpLeft;
+            // The lid panel's own ringing, heard in both ears
+            const float drive = (float) (dl + dr);
+            float panel = 0;
+            for (size_t i = 0; i < lidPanel.size(); ++i)
+                panel += lidPanelGain[i] * lidPanel[i].process (drive);
+            outL += settings.lid * panel;
+            outR += 0.8 * settings.lid * panel;
         }
 
         // DC blocker

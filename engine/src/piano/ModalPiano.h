@@ -269,6 +269,14 @@ private:
     struct Diffuser { std::vector<float> buf; int pos = 0; float g = 0.7f; float process (float x)
         { const float d = buf[(size_t) pos]; const float y = -g * x + d; buf[(size_t) pos] = x + g * y; pos = (pos + 1) % (int) buf.size(); return y; } };
     std::array<Diffuser, 3> diffLeft, diffRight;
+    // Simple biquad for the body's colouring filters
+    struct Biquad { float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0, x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+        float process (float x) { const float y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+                                  x2 = x1; x1 = x; y2 = y1; y1 = y; return y; } };
+    std::vector<Biquad> highBoardLeft, highBoardRight; // board peaks and dips above the simulated modes
+    std::vector<Biquad> lidPanel;                     // the lid ringing as a wooden panel
+    std::vector<float> lidPanelGain;
+    double beamLpLeft = 0, beamLpRight = 0, beamCoeff = 0; // high frequencies beam towards the open side
 
     // Action noises: short knocks from the keys, hammers and dampers, ringing a small bank
     // of wooden resonances (key, keybed, hammer shank) and reaching the board through the frame
@@ -291,6 +299,7 @@ private:
     // zone, and every board mode moves each zone by its own amount
     static constexpr int kZones = 8;
     std::vector<int> keyZone;
+    std::array<double, kZones> bridgeMassCoeff {}, bridgeMassState {};
     std::array<double, kZones> zoneForce {}, zoneAcceleration {}, lastZoneVelocity {}, zoneBoardVelocity {};
     double lastBridgeVelocity = 0, bridgeAcceleration = 0;
     double lastHorizontalVelocity = 0, horizontalAcceleration = 0;
