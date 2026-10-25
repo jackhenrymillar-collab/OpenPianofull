@@ -63,7 +63,9 @@ public:
         double actionNoise = 1.0;           // key, hammer and damper noises (0 = silent action)
         double outerFelt = 0.03;            // stiffness of the soft outer felt, relative to the core
         double outerFeltScale = 1.0;        // scales how deep the outer felt is
-        double tensionGlide = 1.0;          // loud notes start sharp as the tension spike stretches the string
+        double farEnd = 1.0;                // agraffe / pressure-bar end moves with the iron frame
+        double nonlinear = 1.0;             // instantaneous tension feedback on every partial
+        double tensionGlide = 0.0;          // loud notes start sharp as the tension spike stretches the string
         double tensionLoss = 0.025;         // and lose their high partials faster while it lasts
         double air = 1.0;                   // air trapped under the board, between the rim and the floor
         double lid = 1.0;                   // lid opening (0 = closed, 1 = fully open)
@@ -100,7 +102,7 @@ public:
 
 private:
     enum class Activity : uint8_t { Off, Sympathetic, Full };
-    enum class Kind : uint8_t { Vertical, Horizontal, Duplex };
+    enum class Kind : uint8_t { Vertical, Horizontal, Duplex, Front };
 
     struct String
     {
@@ -143,6 +145,8 @@ private:
         int firstHorizontal = -1;            // their horizontal motion, same order
         int duplexString = -1;
         bool tensionApplied = false;
+        long long releasedAt = -1;   // sample clock when the key was let go
+        int damperPending = 0;       // samples until the rising key lets the damper land
         bool down = false;
         Hammer hammer;
     };
@@ -159,6 +163,7 @@ private:
     void checkActivity();
     void applyTension();
     int tensionCounter = 0;
+    long long sampleClock = 0;
 
     // Each string's modes are stored in two parts: the low ones it keeps while only
     // resonating sit in one region, back to back with every other string's, and the rest
@@ -177,6 +182,15 @@ private:
     }
     void relayoutModes();
 
+    template <typename Fn> void forEachStringConst (const KeyState& ks, Fn&& fn) const
+    {
+        for (int i = 0; i < ks.numStrings; ++i)
+        {
+            fn (strings[(size_t) (ks.firstString + i)]);
+            if (ks.firstHorizontal >= 0)
+                fn (strings[(size_t) (ks.firstHorizontal + i)]);
+        }
+    }
     template <typename Fn> void forEachString (const KeyState& ks, Fn&& fn)
     {
         for (int i = 0; i < ks.numStrings; ++i)
@@ -209,6 +223,7 @@ private:
         std::vector<float> gr, gi;          // acceleration input gain, one sample
         std::vector<float> bgr, bgi;        // bridge-acceleration input gain (gain * beta)
         std::vector<float> fk;              // contribution to the bridge force
+        std::vector<float> alt;             // (-1)^(n+1): turns bridge-end coupling into far-end coupling
         std::vector<float> beta;            // bridge coupling weight
         std::vector<float> phi;             // mode shape at the hammer (incl. hammer width)
         std::vector<float> prOs, piOs, gOsr, gOsi; // oversampled pole and input gain
@@ -281,6 +296,14 @@ private:
     int activityCounter = 0;
     int activeStrings = 0;
     std::vector<int> fullList, hammerList, longList, alwaysOn;
+    std::vector<int> frameList; // strings whose far end is worked by the frame this block
+
+    // The iron frame at the strings' far ends (agraffes, pressure bar): a stiff, heavy,
+    // barely damped structure. Its few modes are pushed by every sounding string's far end
+    // and move those ends back, coupling the strings a second way.
+    struct Frame { std::vector<float> wr, wi, qr, qi, hr, hi, omega, sigma, rad; double accel = 0, lastVel = 0; } frame;
+    void buildFrame();
+    void runFrame (double& left, double& right);
 
     // Neighbouring strings whose modes sit back to back are stepped in one go
     struct Run { int first, count; float panLeft, panRight; bool side; int zone; };

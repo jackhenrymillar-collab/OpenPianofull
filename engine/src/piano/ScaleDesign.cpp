@@ -244,6 +244,14 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         key.outerFeltDepth = lerp (1.0e-3, 0.2e-3, std::pow ((k - 1) / 87.0, 0.7));
         key.strikeRatio = k <= 40 ? lerp (0.122, 0.115, (k - 1) / 39.0) : lerp (0.115, 0.08, (k - 40) / 48.0);
         key.hammerWidth = lerp (12e-3, 5e-3, (k - 1) / 87.0);
+        // No two hammers are alike: felt density, shape and wear differ a little from note
+        // to note even on a well-voiced piano (which is what a voicer evens out by ear)
+        key.hammerMass *= 1.0 + 0.03 * keyNoise (k, 11);
+        key.feltStiffness *= 1.0 + 0.12 * keyNoise (k, 12);
+        key.feltExponent += 0.08 * keyNoise (k, 13);
+        key.outerFeltDepth *= 1.0 + 0.15 * keyNoise (k, 14);
+        key.strikeRatio *= 1.0 + 0.025 * keyNoise (k, 15);
+        key.hammerWidth *= 1.0 + 0.1 * keyNoise (k, 16);
         key.hasDamper = key.midiNote <= kLastDamperMidi;
         key.bassBridge = k <= kLastBassBridgeKey;
     }

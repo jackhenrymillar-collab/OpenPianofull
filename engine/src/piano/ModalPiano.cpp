@@ -86,7 +86,7 @@ namespace
 void ModalPiano::Modes::clear()
 {
     for (auto* v : { &zr, &zi, &pr, &pi, &prFree, &piFree, &prDamp, &piDamp, &gr, &gi, &bgr, &bgi, &fk, &beta,
-                     &phi, &prOs, &piOs, &gOsr, &gOsi, &sigmaInternal, &omega })
+                     &phi, &prOs, &piOs, &gOsr, &gOsi, &sigmaInternal, &omega, &alt })
         v->clear();
 }
 
@@ -134,6 +134,7 @@ void ModalPiano::prepare (double newSampleRate, const Settings& newSettings)
     for (auto& st : strings)
         st.zone = keyZone[(size_t) st.key];
     buildSoundboard();
+    buildFrame();
     buildAction();
 
     // Output filters: gentle top-end roll-off on the direct bridge path, and a DC blocker
@@ -208,6 +209,7 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
         m.bgr.push_back ((float) (gain.real() * beta)); m.bgi.push_back ((float) (gain.imag() * beta));
         m.fk.push_back ((float) (spec.tension * sign * n * M_PI / L));
         m.beta.push_back ((float) beta);
+        m.alt.push_back ((float) sign);
         m.phi.push_back ((float) (std::sin (n * M_PI * strike) * width));
         m.prOs.push_back ((float) poleOs.real()); m.piOs.push_back ((float) poleOs.imag());
         m.gOsr.push_back ((float) gainOs.real()); m.gOsi.push_back ((float) gainOs.imag());
@@ -221,8 +223,9 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
 
     // While only resonating, a string keeps its strongest low partials
     // (Undamped top strings have only a few modes and keep them all.)
-    const int sympatheticCap = kind == Kind::Duplex || ! key.hasDamper ? s.count : kind == Kind::Horizontal ? 6 : 16;
-    s.sympatheticCount = ! key.hasDamper || kind == Kind::Duplex ? s.count
+    const bool segment = kind == Kind::Duplex || kind == Kind::Front;
+    const int sympatheticCap = segment || ! key.hasDamper ? s.count : kind == Kind::Horizontal ? 6 : 16;
+    s.sympatheticCount = ! key.hasDamper || segment ? s.count
                                                                  : std::clamp (sympathetic, 1, std::min (s.count, sympatheticCap));
 
     strings.push_back (s);
@@ -346,6 +349,48 @@ void ModalPiano::buildModes()
         }
     }
 
+    // More free string lengths. Behind the bridge, every treble string continues to its hitch
+    // pin; above about C5 those rear lengths ring (the duplex above), below they are mostly
+    // muted with felt but still sound faintly. In front, between the agraffes or the pressure
+    // bar and the tuning pins, a short length rings too; it is fed by the far end of the string
+    // through the frame, not by the bridge.
+    for (size_t k = 0; k < keys.size(); ++k)
+    {
+        const auto& key = keys[k];
+        if (key.bassBridge)
+            continue;
+        Rng rng ((uint32_t) (k * 31 + 707));
+        // Muted rear lengths in the middle of the compass
+        if (settings.duplex && key.midiNote >= 40 && key.midiNote < 54)
+        {
+            auto spec = key.strings[0];
+            const double ratio = 3.3 * std::pow (2.0, 20.0 * rng.symmetric() / 1200.0);
+            spec.length /= ratio; spec.fundamental *= ratio; spec.inharmonicity *= ratio * ratio;
+            const int index = addString (spec, (int) k, Kind::Duplex, 0.0, 0.0, 4, std::min (fMax, 8000.0), (uint32_t) (k * 7 + 6000));
+            // felt-muted: they lose energy quickly
+            const float extra = (float) std::exp (-25.0 * Ts);
+            forModes (strings[(size_t) index], strings[(size_t) index].count, [&] (size_t j)
+            {
+                m.pr[j] *= extra; m.pi[j] *= extra; m.prFree[j] *= extra; m.piFree[j] *= extra;
+                m.sigmaInternal[j] += 25.0f;
+            });
+            alwaysOn.push_back (index);
+        }
+        // Front lengths, from about C4 up
+        if (settings.farEnd > 0 && key.midiNote >= 60)
+        {
+            auto spec = key.strings[0];
+            const double t = (key.midiNote - 60) / double (kHighestKey - 60);
+            const double ratio = (6.0 - 2.5 * t) * std::pow (2.0, 25.0 * rng.symmetric() / 1200.0);
+            spec.length /= ratio; spec.fundamental *= ratio; spec.inharmonicity *= ratio * ratio;
+            const int index = addString (spec, (int) k, Kind::Front, 0.0, 0.0, 4, std::min (fMax, 12000.0), (uint32_t) (k * 7 + 7000));
+            auto& st = strings[(size_t) index];
+            // Not on the bridge at all
+            forModes (st, st.count, [&] (size_t j) { m.bgr[j] = 0; m.bgi[j] = 0; m.fk[j] = 0; });
+            alwaysOn.push_back (index);
+        }
+    }
+
     relayoutModes();
 
     // The strings of a unison stretch almost identically, so one of them stands in for all
@@ -378,7 +423,7 @@ void ModalPiano::relayoutModes()
             order.push_back ((size_t) (strings[i].first + k));
     }
     for (auto* v : { &m.zr, &m.zi, &m.pr, &m.pi, &m.prFree, &m.piFree, &m.prDamp, &m.piDamp, &m.gr, &m.gi, &m.bgr,
-                     &m.bgi, &m.fk, &m.beta, &m.phi, &m.prOs, &m.piOs, &m.gOsr, &m.gOsi, &m.sigmaInternal, &m.omega })
+                     &m.bgi, &m.fk, &m.beta, &m.phi, &m.prOs, &m.piOs, &m.gOsr, &m.gOsi, &m.sigmaInternal, &m.omega, &m.alt })
     {
         std::vector<float> moved (order.size());
         for (size_t j = 0; j < order.size(); ++j)
@@ -614,6 +659,81 @@ void ModalPiano::buildSoundboard()
     buildBody();
 }
 
+void ModalPiano::buildFrame()
+{
+    // Cast-iron plate as seen from the agraffes and the pressure bar: much stiffer than the
+    // soundboard (admittance around 1e-5 m/s/N at its resonances), and lightly damped
+    Rng rng (99);
+    const double fs[] = { 96.0, 171.0, 263.0, 402.0, 611.0, 893.0, 1370.0, 2110.0 };
+    const size_t n = 8;
+    for (auto* v : { &frame.wr, &frame.wi, &frame.qr, &frame.qi, &frame.hr, &frame.hi, &frame.omega, &frame.sigma, &frame.rad })
+        v->assign (n, 0.0f);
+    for (size_t i = 0; i < n; ++i)
+    {
+        const double f = fs[i] * (1.0 + 0.03 * rng.symmetric());
+        const double w = 2.0 * M_PI * f, sigma = M_PI * f * 0.003;
+        const double peak = 3e-5;
+        const double mass = 1.0 / (2.0 * sigma * peak);
+        const cd pole = std::exp (cd (-sigma, w) * Ts);
+        const cd gain = pole * (Ts / (w * mass));
+        frame.omega[i] = (float) w; frame.sigma[i] = (float) sigma;
+        frame.qr[i] = (float) pole.real(); frame.qi[i] = (float) pole.imag();
+        frame.hr[i] = (float) gain.real(); frame.hi[i] = (float) gain.imag();
+        // The plate itself radiates only a little, but it is a large, ringing metal surface
+        frame.rad[i] = (float) ((0.5 + 0.5 * rng.next()) * (rng.next() < 0.5 ? -1 : 1) * 0.6);
+    }
+    frame.accel = frame.lastVel = 0;
+}
+
+void ModalPiano::runFrame (double& left, double& right)
+{
+    // Far-end force of every sounding string: T dy/dx at x = 0 is T n pi / L per unit of mode
+    // n, the bridge-end coupling without its alternating sign. The frame's motion moves that
+    // end back, which the modes feel as beta (-1)^(n+1) times its acceleration.
+    const float a = (float) (frame.accel * settings.farEnd);
+    double F = 0;
+    for (int index : frameList)
+    {
+        const auto& st = strings[(size_t) index];
+        // The frame's modes all lie below a few kHz: the lowest partials do the coupling
+        const int count = std::min (8, st.sympatheticCount);
+        const size_t j0 = (size_t) st.first;
+        float* __restrict zr = m.zr.data() + j0;
+        float* __restrict zi = m.zi.data() + j0;
+        const float* __restrict fk = m.fk.data() + j0;
+        const float* __restrict alt = m.alt.data() + j0;
+        const float* __restrict beta = m.beta.data() + j0;
+        const float* __restrict gr = m.gr.data() + j0;
+        const float* __restrict gi = m.gi.data() + j0;
+        float f = 0;
+        for (int j = 0; j < count; ++j)
+        {
+            f += fk[j] * alt[j] * zi[j];
+            const float g = beta[j] * alt[j] * a;
+            zr[j] += gr[j] * g;
+            zi[j] += gi[j] * g;
+        }
+        F += f;
+    }
+    F *= settings.farEnd;
+
+    double v = 3e-6 * F, out = 0;
+    for (size_t i = 0; i < frame.omega.size(); ++i)
+    {
+        const float x = frame.wr[i], y = frame.wi[i];
+        const float nr = frame.qr[i] * x - frame.qi[i] * y + frame.hr[i] * (float) F;
+        const float ni = frame.qr[i] * y + frame.qi[i] * x + frame.hi[i] * (float) F;
+        frame.wr[i] = nr; frame.wi[i] = ni;
+        const float vel = frame.omega[i] * nr - frame.sigma[i] * ni;
+        v += vel;
+        out += frame.rad[i] * vel;
+    }
+    frame.accel = (v - frame.lastVel) * sampleRate;
+    frame.lastVel = v;
+    left += out;
+    right += 0.9 * out;
+}
+
 void ModalPiano::buildBody()
 {
     // Air under a grand's board is boxed in by the rim and the floor and leaks out at the
@@ -730,6 +850,7 @@ void ModalPiano::reset()
     lastHorizontalVelocity = horizontalAcceleration = 0;
     resistiveLpLeft = resistiveLpRight = 0;
     buildBody();
+    buildFrame();
     dcLeft = dcRight = dcInLeft = dcInRight = 0;
     sustain = false;
 
@@ -783,7 +904,7 @@ void ModalPiano::updateDamping (int keyIndex)
 {
     const auto& key = keys[(size_t) keyIndex];
     auto& ks = keyState[(size_t) keyIndex];
-    const bool damped = key.hasDamper && ! ks.down && ! sustain;
+    const bool damped = key.hasDamper && ! ks.down && ks.damperPending <= 0 && ! sustain;
 
     forEachString (ks, [&] (String& s)
     {
@@ -809,10 +930,18 @@ void ModalPiano::setKeyDown (int midiNote, bool down)
     const int k = midiNote - kLowestKey;
     if (k < 0 || k >= (int) keys.size())
         return;
-    // Releasing a key: the damper drops back onto the strings (if it was off them)
-    if (! down && keyState[(size_t) k].down && keys[(size_t) k].hasDamper && ! sustain)
-        queueAction (2, (int) (0.01 * sampleRate), 0.3, k);
-    keyState[(size_t) k].down = down;
+    auto& ks = keyState[(size_t) k];
+    if (! down && ks.down)
+    {
+        // The key takes a moment to rise far enough for the damper to reach the strings.
+        // Re-press it before then (a fast repeat or a half-stroke) and the damper never lands.
+        ks.releasedAt = sampleClock;
+        ks.damperPending = std::max (1, (int) (0.02 * sampleRate));
+        ks.down = false;
+        return;
+    }
+    ks.down = down;
+    ks.damperPending = 0;
     updateDamping (k);
     checkActivity();
 }
@@ -834,6 +963,16 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
         return;
 
     auto& ks = keyState[(size_t) k];
+    // Repetition. A grand's double escapement lets a key be struck again before it has risen
+    // all the way, but from a partly lifted key the hammer has less travel to gather speed.
+    // Fully lifted after about 90 ms.
+    if (! ks.down && ks.releasedAt >= 0)
+    {
+        const double lift = std::clamp ((sampleClock - ks.releasedAt) / (0.09 * sampleRate), 0.0, 1.0);
+        hammerVelocity *= 0.55 + 0.45 * std::sqrt (lift);
+    }
+    ks.releasedAt = -1;
+    ks.damperPending = 0;
     ks.down = true;
     updateDamping (k);
     forEachString (ks, [&] (String& s) { setActivity (s, Activity::Full); });
@@ -914,6 +1053,7 @@ void ModalPiano::checkActivity()
     fullList.clear();
     hammerList.clear();
     longList.clear();
+    frameList.clear();
     activeStrings = 0;
 
     auto visit = [&] (int index, bool hammerActive)
@@ -948,6 +1088,8 @@ void ModalPiano::checkActivity()
             ++activeStrings;
         if (s.activity == Activity::Full && s.longCount > 0)
             longList.push_back (index);
+        if (s.activity == Activity::Full && s.kind == Kind::Vertical)
+            frameList.push_back (index);
         // Vertical strings under a hammer are stepped by the hammer code instead
         if (s.activity != Activity::Off && ! (hammerActive && s.kind == Kind::Vertical))
             fullList.push_back (index);
@@ -966,7 +1108,11 @@ void ModalPiano::checkActivity()
         }
     }
     for (int i : alwaysOn)
+    {
         fullList.push_back (i);
+        if (strings[(size_t) i].kind == Kind::Front)
+            frameList.push_back (i);
+    }
 
     // Merge the computed mode ranges into runs where they sit back to back, at most 12
     // strings (about 4 keys) each, so their pan barely differs
@@ -1190,6 +1336,24 @@ double ModalPiano::runLongitudinal (const String& s)
 
 void ModalPiano::process (float* left, float* right, int numSamples)
 {
+    // Dampers of released keys land once the key has risen far enough
+    for (size_t k = 0; k < keyState.size(); ++k)
+    {
+        auto& ks = keyState[k];
+        if (ks.damperPending <= 0)
+            continue;
+        ks.damperPending -= numSamples;
+        if (ks.damperPending <= 0)
+        {
+            ks.damperPending = 0;
+            if (keys[k].hasDamper && ! sustain)
+                queueAction (2, 0, 0.3, (int) k);
+            updateDamping ((int) k);
+            checkActivity();
+        }
+    }
+    sampleClock += numSamples;
+
     float* __restrict zr = m.zr.data();
     float* __restrict zi = m.zi.data();
     const float* __restrict pr = m.pr.data();
@@ -1250,9 +1414,46 @@ void ModalPiano::process (float* left, float* right, int numSamples)
             const double f = runLongitudinal (s);
             forceSum += f;
             zoneForce[(size_t) s.zone] += f;
+
+            // Large-motion nonlinearity (Kirchhoff-Carrier): the stretch raises the tension
+            // instant by instant, and every partial feels it as a stiffer spring,
+            // a_n = -w_n^2 (dT/T) y_n. Because dT itself swings at the sum and difference
+            // of the partials' frequencies, this mixes them: loud notes gain a faint halo of
+            // intermodulation and their pitch rises and settles as the stretch decays.
+            // Updated every other sample (its effect is a slow modulation), and only while the
+            // note is loud enough for it to matter
+            const double rise = 4.0 * settings.nonlinear * s.tensionRise;
+            if ((sampleClock + n) % 4 == 0 && rise > 4e-6)
+            {
+                const auto& ks = keyState[(size_t) s.key];
+                const float r = (float) rise;
+                const float* __restrict om = m.omega.data();
+                const float* __restrict gr = m.gr.data();
+                const float* __restrict gi = m.gi.data();
+                auto apply = [&] (int first, int count)
+                {
+                    for (int j = first; j < first + count; ++j)
+                    {
+                        const float acc = -om[j] * om[j] * r * zi[j];
+                        zr[j] += gr[j] * acc;
+                        zi[j] += gi[j] * acc;
+                    }
+                };
+                forEachStringConst (ks, [&] (const String& st)
+                {
+                    apply (st.first, st.sympatheticCount);
+                    if (st.activity == Activity::Full)
+                        apply (st.highFirst, st.count - st.sympatheticCount);
+                });
+            }
             forceLeft += f * s.panLeft;
             forceRight += f * s.panRight;
         }
+
+        // The far ends of the strings, on the iron frame
+        double frameLeft = 0, frameRight = 0;
+        if (settings.farEnd > 0)
+            runFrame (frameLeft, frameRight);
 
         // Forces that reach the board through the frame rather than one spot on the bridge:
         // the action's knocks, and the air under the board pushing back on it
@@ -1358,8 +1559,8 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         }
         airPressure = air;
 
-        double outL = radiatedLeft + resistiveLpLeft + air;
-        double outR = radiatedRight + resistiveLpRight + 0.9 * air;
+        double outL = radiatedLeft + resistiveLpLeft + air + frameLeft;
+        double outR = radiatedRight + resistiveLpRight + 0.9 * air + frameRight;
 
         // Lid reflection
         if (settings.lid > 0)
