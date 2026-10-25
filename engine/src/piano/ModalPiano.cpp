@@ -121,6 +121,7 @@ void ModalPiano::prepare (double newSampleRate, const Settings& newSettings)
 
     buildModes();
     buildSoundboard();
+    buildAction();
 
     // Output filters: gentle top-end roll-off on the direct bridge path, and a DC blocker
     lpCoeff = std::exp (-2.0 * M_PI * 7000.0 / sampleRate);
@@ -470,8 +471,72 @@ void ModalPiano::buildSoundboard()
     outputGain = 27.0;
 }
 
+void ModalPiano::buildAction()
+{
+    // Wooden action parts ring briefly at a few hundred Hz to a few kHz (Askenfelt 1993,
+    // "Observations on the transient components of the piano tone"). Three kinds of hit:
+    //   0 key bottom: the key lands on the keybed felt, a dull low thump
+    //   1 hammer knock: shank and hammer flex at the strike, a brighter click
+    //   2 damper return: the felt lands back on the strings, soft and muffled
+    const double freqs[8] = { 95, 160, 270, 430, 690, 1100, 1750, 2800 };
+    const double q[8] = { 6, 7, 8, 9, 10, 10, 11, 12 };
+    const double shapes[3][8] = {
+        { 1.0, 0.9, 0.7, 0.45, 0.25, 0.12, 0.05, 0.02 },
+        { 0.15, 0.25, 0.4, 0.6, 0.8, 0.9, 0.7, 0.5 },
+        { 0.4, 0.5, 0.45, 0.3, 0.15, 0.06, 0.02, 0.01 },
+    };
+    for (int i = 0; i < 8; ++i)
+    {
+        const double w = 2.0 * M_PI * freqs[i];
+        const cd pole = std::exp (cd (-w / (2.0 * q[i]), w) * Ts);
+        action.pr[(size_t) i] = (float) pole.real();
+        action.pi[(size_t) i] = (float) pole.imag();
+        for (int t = 0; t < 3; ++t)
+            action.weight[(size_t) t][(size_t) i] = (float) shapes[t][i];
+    }
+    actionHits.clear();
+    actionHits.reserve (512);
+}
+
+void ModalPiano::queueAction (int type, int delaySamples, double amount, int keyIndex)
+{
+    if (settings.actionNoise <= 0 || actionHits.size() >= actionHits.capacity())
+        return;
+    const auto& s = strings[(size_t) keyState[(size_t) keyIndex].firstString];
+    actionHits.push_back ({ std::max (0, delaySamples), type, (float) (amount * settings.actionNoise), s.panLeft, s.panRight });
+}
+
+void ModalPiano::runAction (double& force, double& left, double& right)
+{
+    for (size_t i = 0; i < actionHits.size();)
+    {
+        auto& h = actionHits[i];
+        if (h.delay-- > 0) { ++i; continue; }
+        for (size_t j = 0; j < 8; ++j)
+            action.zr[j] += h.amount * action.weight[(size_t) h.type][j];
+        // The bank radiates from roughly where the keys were hit
+        action.panLeft += 0.5f * (h.panLeft - action.panLeft);
+        action.panRight += 0.5f * (h.panRight - action.panRight);
+        h = actionHits.back();
+        actionHits.pop_back();
+    }
+    float f = 0;
+    for (size_t j = 0; j < 8; ++j)
+    {
+        const float r = action.zr[j], im = action.zi[j];
+        action.zr[j] = action.pr[j] * r - action.pi[j] * im;
+        action.zi[j] = action.pr[j] * im + action.pi[j] * r;
+        f += action.zi[j];
+    }
+    force += f;
+    left += f * action.panLeft;
+    right += f * action.panRight;
+}
+
 void ModalPiano::reset()
 {
+    action.zr.fill (0); action.zi.fill (0);
+    actionHits.clear();
     std::fill (m.zr.begin(), m.zr.end(), 0.0f);
     std::fill (m.zi.begin(), m.zi.end(), 0.0f);
     std::fill (lm.zr.begin(), lm.zr.end(), 0.0f);
@@ -560,6 +625,9 @@ void ModalPiano::setKeyDown (int midiNote, bool down)
     const int k = midiNote - kLowestKey;
     if (k < 0 || k >= (int) keys.size())
         return;
+    // Releasing a key: the damper drops back onto the strings (if it was off them)
+    if (! down && keyState[(size_t) k].down && keys[(size_t) k].hasDamper && ! sustain)
+        queueAction (2, (int) (0.01 * sampleRate), 0.3, k);
     keyState[(size_t) k].down = down;
     updateDamping (k);
     checkActivity();
@@ -597,6 +665,16 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
         double u = 0;
         forModes (s, s.count, [&] (size_t j) { u += m.phi[j] * m.zi[j]; });
         nearest = std::min (nearest, u + ks.hammer.gap[(size_t) i]);
+    }
+
+    // Action noises scale with how hard the key is played. The key lands on the keybed a
+    // few milliseconds after the hammer reaches the strings; the knock is louder in the
+    // treble, where hammers are smaller and the strings shorter.
+    {
+        const double v = std::max (0.05, hammerVelocity);
+        const double treble = (keys[(size_t) k].midiNote - kLowestKey) / double (kHighestKey - kLowestKey);
+        queueAction (0, (int) (0.003 * sampleRate), 0.4 * v * (1.0 - 0.5 * treble), k);
+        queueAction (1, 0, 0.06 * std::pow (v, 1.5) * (0.4 + 0.6 * treble), k);
     }
 
     ks.hammer.active = true;
@@ -894,6 +972,8 @@ void ModalPiano::process (float* left, float* right, int numSamples)
             forceLeft += f * s.panLeft;
             forceRight += f * s.panRight;
         }
+
+        runAction (forceSum, forceLeft, forceRight);
 
         // Soundboard
         double boardVelocity = 0, radiatedLeft = 0, radiatedRight = 0;

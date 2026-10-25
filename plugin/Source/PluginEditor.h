@@ -47,6 +47,7 @@ private:
     widgets::ButtonSlot saveSlot;
 
     widgets::Knob volume, dynamics, hardness, damper;
+    widgets::Knob action; // first of the smaller knobs
     std::array<widgets::KnobSlot, 4> smallKnobSlots;
 
     widgets::HorizontalControl velocity;

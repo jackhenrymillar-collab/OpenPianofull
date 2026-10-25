@@ -39,6 +39,7 @@ void PianoInstrument::prepare (double sampleRate, int maxBlockSize)
     piano->prepare (sampleRate, {});
     piano->setHammerHardness (controls.hammerHardness);
     piano->setDamperStrength (controls.damperStrength);
+    piano->setActionNoise (controls.actionNoise);
     scratch.assign ((size_t) std::max (1, maxBlockSize), 0.0f);
     keyHeld.fill (false);
     activeStrings = 0;
@@ -98,6 +99,7 @@ void PianoInstrument::setControls (const PianoControls& c)
         piano->setHammerHardness (c.hammerHardness);
     if (c.damperStrength != controls.damperStrength)
         piano->setDamperStrength (c.damperStrength);
+    piano->setActionNoise (c.actionNoise);
     controls = c;
 }
 

@@ -135,6 +135,24 @@ std::vector<Scenario> standardScenarios (int sr)
         list.push_back (sc);
     }
 
+    // The pedalled arpeggio at four touches, for comparing dynamics
+    for (int velocity : { 30, 60, 90, 127 })
+    {
+        Scenario sc { "pedal_arpeggio_v" + std::to_string (velocity),
+                      "Sustain down, C2 G2 C3 E3 G3 C4 arpeggio at velocity " + std::to_string (velocity) + ", pedal up at 4 s",
+                      5.5, {} };
+        sc.events.push_back ({ at (0.0), Event::PedalDown });
+        const int notes[] = { 36, 43, 48, 52, 55, 60 };
+        for (int i = 0; i < 6; ++i)
+        {
+            sc.events.push_back ({ at (0.01 + 0.25 * i), Event::NoteOn, notes[i], velocity });
+            sc.events.push_back ({ at (0.21 + 0.25 * i), Event::NoteOff, notes[i] });
+        }
+        sc.events.push_back ({ at (4.0), Event::PedalUp });
+        sc.fullRangeOnly = true;
+        list.push_back (sc);
+    }
+
     {
         Scenario sc { "stress_all_88", "All 88 keys struck at once with the pedal down (CPU benchmark)", 4.0, {} };
         sc.events.push_back ({ at (0.0), Event::PedalDown });

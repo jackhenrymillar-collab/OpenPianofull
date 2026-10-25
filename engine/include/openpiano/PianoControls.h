@@ -16,6 +16,7 @@ struct PianoControls
     float dynamicsCurve = 1.0f;   // Velocity -> hammer speed exponent (1 = linear, >1 = softer touch)
     float hammerHardness = 1.0f;  // Scales felt stiffness (brighter above 1)
     float damperStrength = 1.0f;  // Scales how quickly released notes are damped
+    float actionNoise = 1.0f;     // Level of key, hammer and damper noises (0 = off)
 };
 
 } // namespace openpiano

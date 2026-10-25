@@ -58,7 +58,8 @@ public:
         bool duplex = true;                 // undamped string segments behind the treble bridge
         double longitudinalCoupling = 0.12; // share of the lengthwise force that reaches the board (via bridge tilt)
         double crown = 1.0;                 // soundboard crown and downbearing (0 = flat, unloaded board)
-        double feltLoss = 0.12;             // [s/m] felt hysteresis (0 = perfectly elastic)
+        double feltLoss = 0.12;
+        double actionNoise = 1.0;           // key, hammer and damper noises (0 = silent action)             // [s/m] felt hysteresis (0 = perfectly elastic)
     };
 
     ModalPiano();
@@ -73,6 +74,7 @@ public:
 
     void setHammerHardness (double scale) { hardness = scale; }
     void setDamperStrength (double scale);
+    void setActionNoise (double level) { settings.actionNoise = level; }
 
     // Adds nothing: overwrites left and right
     void process (float* left, float* right, int numSamples);
@@ -210,6 +212,20 @@ private:
     {
         std::vector<float> wr, wi, qr, qi, hr, hi, omega, sigma, radLeft, radRight;
     } board;
+
+    // Action noises: short knocks from the keys, hammers and dampers, ringing a small bank
+    // of wooden resonances (key, keybed, hammer shank) and reaching the board through the frame
+    struct ActionHit { int delay; int type; float amount, panLeft, panRight; };
+    std::vector<ActionHit> actionHits;
+    struct ActionBank
+    {
+        std::array<float, 8> zr {}, zi {}, pr {}, pi {};
+        std::array<std::array<float, 8>, 3> weight {}; // per hit type
+        float panLeft = 0.7f, panRight = 0.7f;
+    } action;
+    void buildAction();
+    void queueAction (int type, int delaySamples, double amount, int keyIndex);
+    void runAction (double& force, double& left, double& right);
 
     double bridgeResistance = 1.5e-4;      // m/s per N: the dense high-frequency part of the soundboard
     double horizontalResistance = 1.0e-4;  // the bridge moves less easily sideways
