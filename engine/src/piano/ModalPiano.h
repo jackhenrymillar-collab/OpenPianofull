@@ -204,7 +204,7 @@ private:
     double sampleRate = 48000, Ts = 1.0 / 48000;
     Settings settings;
     double hardness = 1.0;
-    double trebleFirmness = 2.2;
+    double trebleFirmness = 1.7;
     double ageFactor = 0;
     double damperStrength = 1.0;
     bool sustain = false;
@@ -300,6 +300,9 @@ private:
     static constexpr int kZones = 8;
     std::vector<int> keyZone;
     std::array<double, kZones> bridgeMassCoeff {}, bridgeMassState {};
+    // Towards the top the bridge runs near the stiff edge of the board, so the board moves
+    // less there: the strings couple more weakly and ring on longer
+    static constexpr std::array<double, kZones> zoneCoupling { 1.0, 1.0, 1.0, 0.95, 0.86, 0.75, 0.63, 0.52 };
     std::array<double, kZones> zoneForce {}, zoneAcceleration {}, lastZoneVelocity {}, zoneBoardVelocity {};
     double lastBridgeVelocity = 0, bridgeAcceleration = 0;
     double lastHorizontalVelocity = 0, horizontalAcceleration = 0;

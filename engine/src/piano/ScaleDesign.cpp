@@ -244,7 +244,7 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         key.hammerMass = (11.074 - 0.074 * n + 0.0001 * n * n) * 1e-3;
         key.feltStiffness = 183.0 * std::exp (0.045 * n);
         key.feltExponent = 2.5 + 1.5 * (n - 1) / 87.0; // softer-curving felt: 2.5 in the bass to 4 in the treble
-        key.outerFeltDepth = lerp (1.0e-3, 0.2e-3, std::pow ((k - 1) / 87.0, 0.7));
+        key.outerFeltDepth = lerp (1.0e-3, 0.3e-3, std::pow ((k - 1) / 87.0, 0.7));
         key.strikeRatio = k <= 40 ? lerp (0.122, 0.115, (k - 1) / 39.0) : lerp (0.115, 0.08, (k - 40) / 48.0);
         key.hammerWidth = lerp (12e-3, 5e-3, (k - 1) / 87.0);
         // No two hammers are alike: felt density, shape and wear differ a little from note

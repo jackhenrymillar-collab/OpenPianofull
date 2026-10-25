@@ -174,8 +174,11 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     // Pan with the keyboard, as heard from the player's seat
     const double position = (key.midiNote - kLowestKey) / double (kHighestKey - kLowestKey);
     const double angle = M_PI / 4 + (position - 0.5) * 0.9 + 0.03 * rng.symmetric();
-    s.panLeft = (float) std::cos (angle);
-    s.panRight = (float) std::sin (angle);
+    // The direct (resistive) radiation makes up for the weaker board coupling at the top,
+    // so the treble rings longer without getting quieter
+    const double boost = 1.0 / zoneCoupling[(size_t) keyZone[(size_t) keyIndex]];
+    s.panLeft = (float) (std::cos (angle) * boost);
+    s.panRight = (float) (std::sin (angle) * boost);
 
     int sympathetic = 0;
     for (int n = 1; n <= maxModes; ++n)
@@ -648,8 +651,13 @@ void ModalPiano::buildSoundboard()
         board.qi[i] = (float) pole.imag();
         board.hr[i] = (float) gain.real();
         board.hi[i] = (float) gain.imag();
+        // The bridge's own mass (see buildBody) also shields the strings from board modes
+        // above its corner, most in the heavy bass and tenor
         for (int z = 0; z < Z; ++z)
-            board.phi[(size_t) z * n + i] = (float) modes[i].phi[(size_t) z];
+        {
+            const double fc = 2000.0 * std::pow (1.22, z), ratio = modes[i].f / fc;
+            board.phi[(size_t) z * n + i] = (float) (zoneCoupling[(size_t) z] * modes[i].phi[(size_t) z] / std::sqrt (1.0 + ratio * ratio));
+        }
 
         if (modes[i].m > 0)
         {
@@ -1071,7 +1079,10 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
         const double v = std::max (0.05, hammerVelocity);
         const double treble = (keys[(size_t) k].midiNote - kLowestKey) / double (kHighestKey - kLowestKey);
         queueAction (0, (int) (0.003 * sampleRate), 0.4 * v * (1.0 - 0.5 * treble), k);
-        queueAction (1, 0, 0.06 * std::pow (v, 1.5) * (0.4 + 0.6 * treble), k);
+        // In the top octaves the knock is a large part of what you hear: a woody thud that
+        // tells a piano from a harp or a glockenspiel
+        const double top = std::pow (std::max (0.0, (treble - 0.6) / 0.4), 2.0);
+        queueAction (1, 0, 0.06 * std::pow (v, 1.5) * (0.4 + 0.6 * treble + 1.2 * top), k);
     }
 
     // Soft notes are made a little louder without changing their tone: the key's strings push
@@ -1601,10 +1612,14 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         // part of the board answers half locally (the zone's own force) and half as a whole.
         // Vertical and sideways motion are linked, which is how the slow sideways vibration
         // becomes audible.
+        double weightedForce = 0;
+        for (int z = 0; z < kZones; ++z)
+            weightedForce += zoneCoupling[(size_t) z] * zoneForce[(size_t) z];
         for (int z = 0; z < kZones; ++z)
         {
             // The resistive part goes through the bridge's own mass (a one-pole roll-off)
-            const double res = bridgeResistance * (0.5 * zoneForce[(size_t) z] + 0.5 * forceSum);
+            const double c = zoneCoupling[(size_t) z];
+            const double res = bridgeResistance * c * (0.5 * c * zoneForce[(size_t) z] + 0.5 * weightedForce);
             auto& ms = bridgeMassState[(size_t) z];
             ms = res + bridgeMassCoeff[(size_t) z] * (ms - res);
             const double v = ms + crossResistance * sideSum + zoneBoardVelocity[(size_t) z];
