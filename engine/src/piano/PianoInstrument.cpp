@@ -36,10 +36,13 @@ int PianoInstrument::highestNote() const { return piano::kHighestKey; }
 
 void PianoInstrument::prepare (double sampleRate, int maxBlockSize)
 {
-    piano->prepare (sampleRate, {});
-    piano->setHammerHardness (controls.hammerHardness);
-    piano->setDamperStrength (controls.damperStrength);
-    piano->setActionNoise (controls.actionNoise);
+    this->sampleRate = sampleRate;
+    piano::ModalPiano::Settings settings;
+    settings.age = controls.age;
+    piano->prepare (sampleRate, settings);
+    builtAge = controls.age;
+    ageSettleSamples = 0;
+    applyLiveControls();
     scratch.assign ((size_t) std::max (1, maxBlockSize), 0.0f);
     keyHeld.fill (false);
     activeStrings = 0;
@@ -90,23 +93,51 @@ void PianoInstrument::noteOff (int midiNote)
 
 void PianoInstrument::setSustain (bool pedalDown)
 {
+    pedal = pedalDown;
     piano->setSustain (pedalDown);
+}
+
+void PianoInstrument::applyLiveControls()
+{
+    // An old piano's dampers are worn and let notes ring on; its action knocks and rattles more
+    piano->setHammerHardness (controls.hammerHardness);
+    piano->setDamperStrength (controls.damperStrength * (1.0 - 0.5 * controls.age));
+    piano->setActionNoise (controls.actionNoise * (1.0 + 1.5 * controls.age));
 }
 
 void PianoInstrument::setControls (const PianoControls& c)
 {
-    if (c.hammerHardness != controls.hammerHardness)
-        piano->setHammerHardness (c.hammerHardness);
-    if (c.damperStrength != controls.damperStrength)
-        piano->setDamperStrength (c.damperStrength);
-    piano->setActionNoise (c.actionNoise);
+    const bool changed = c.hammerHardness != controls.hammerHardness || c.damperStrength != controls.damperStrength
+                         || c.actionNoise != controls.actionNoise || c.age != controls.age;
+    if (c.age != controls.age)
+        ageSettleSamples = (int) (0.25 * sampleRate);
     controls = c;
+    if (changed)
+        applyLiveControls();
 }
 
 void PianoInstrument::process (float* const* outputs, int numChannels, int numSamples)
 {
     if (numChannels <= 0 || numSamples <= 0)
         return;
+
+    if (ageSettleSamples > 0)
+    {
+        ageSettleSamples -= numSamples;
+        if (ageSettleSamples <= 0 && controls.age != builtAge)
+        {
+            // Rebuild with the new age. Sounding notes stop; held keys and the pedal carry over.
+            piano::ModalPiano::Settings settings;
+            settings.age = controls.age;
+            piano->prepare (sampleRate, settings);
+            builtAge = controls.age;
+            applyLiveControls();
+            for (int note = 0; note < 128; ++note)
+                if (keyHeld[(size_t) note])
+                    piano->setKeyDown (note, true);
+            piano->setSustain (pedal);
+        }
+    }
 
     for (int offset = 0; offset < numSamples;)
     {

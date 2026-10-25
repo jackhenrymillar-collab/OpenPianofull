@@ -17,6 +17,7 @@ struct PianoControls
     float hammerHardness = 1.0f;  // Scales felt stiffness (brighter above 1)
     float damperStrength = 1.0f;  // Scales how quickly released notes are damped
     float actionNoise = 1.0f;     // Level of key, hammer and damper noises (0 = off)
+    float age = 0.0f;             // 0 = new piano, 1 = old and worn
 };
 
 } // namespace openpiano

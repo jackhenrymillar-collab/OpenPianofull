@@ -61,6 +61,14 @@ private:
     PianoControls controls;
     std::array<bool, 128> keyHeld {};
     std::atomic<int> activeStrings { 0 };
+
+    // Age changes the piano's build (tuning, strings, board), so it is applied by rebuilding
+    // the model once the knob has rested for a moment
+    double sampleRate = 48000;
+    float builtAge = 0.0f;
+    bool pedal = false;
+    int ageSettleSamples = 0;
+    void applyLiveControls();
 };
 
 } // namespace openpiano

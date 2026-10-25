@@ -22,6 +22,7 @@ OpenPianoAudioProcessorEditor::OpenPianoAudioProcessorEditor (OpenPianoAudioProc
       hardness (p.getState(), params::hardness, "Hammer"),
       damper (p.getState(), params::damper, "Damper"),
       action (p.getState(), params::actionNoise, "Action"),
+      age (p.getState(), params::age, "Age"),
       velocity (p.getState(), params::velocitySens, "Velocity"),
       sustainAttachment (p.getState(), params::sustainLatch, sustainButton)
 {
@@ -71,7 +72,9 @@ OpenPianoAudioProcessorEditor::OpenPianoAudioProcessorEditor (OpenPianoAudioProc
     for (auto& s : smallKnobSlots)
         addAndMakeVisible (s);
     smallKnobSlots[0].setVisible (false);
+    smallKnobSlots[1].setVisible (false);
     addAndMakeVisible (action);
+    addAndMakeVisible (age);
 
     // Bottom row
     addAndMakeVisible (velocity);
@@ -237,6 +240,7 @@ void OpenPianoAudioProcessorEditor::resized()
         cx += smallW;
     }
     action.setBounds (smallKnobSlots[0].getBounds());
+    age.setBounds (smallKnobSlots[1].getBounds());
 
     // Row 3: velocity slider, sustain and reserved buttons
     const int row3 = deck.getY() + 268;

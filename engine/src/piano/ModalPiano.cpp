@@ -99,6 +99,26 @@ void ModalPiano::prepare (double newSampleRate, const Settings& newSettings)
     settings = newSettings;
     keys = buildConcertGrandScale (settings.unisonSpreadCents);
 
+    // Age. An old piano drifts out of tune, key by key and string by string within each
+    // unison; its strings lose energy faster (corrosion, fatigue, worn bearings), its
+    // overtones scatter slightly off their ideal places, its hammers are packed hard and
+    // grooved, its soundboard has lost much of its crown and some stiffness, and its
+    // dampers and action are worn (those two are set by PianoInstrument).
+    ageFactor = std::clamp (settings.age, 0.0, 1.0);
+    if (ageFactor > 0)
+    {
+        Rng rng (4242);
+        for (auto& key : keys)
+        {
+            const double keyDrift = 7.0 * ageFactor * rng.symmetric();
+            for (int i = 0; i < key.numStrings; ++i)
+            {
+                const double cents = keyDrift + 3.0 * ageFactor * rng.symmetric();
+                key.strings[(size_t) i].fundamental *= std::pow (2.0, cents / 1200.0);
+            }
+        }
+    }
+
     // Bridge zones: two along the short bass bridge, six along the long treble bridge
     keyZone.assign (keys.size(), 0);
     {
@@ -139,7 +159,7 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     // stiffness and in losses keep the sound from being too regular.
     const double strike = strikeRatio * (1.0 + 0.02 * rng.symmetric());
     const double B = spec.inharmonicity * (1.0 + 0.03 * rng.symmetric());
-    const double lossScale = 1.0 + 0.1 * rng.symmetric();
+    const double lossScale = (1.0 + 0.1 * rng.symmetric()) * (1.0 + 1.2 * ageFactor);
     const double fFlex = spec.fundamental / std::sqrt (1.0 + B);
     const double L = spec.length;
 
@@ -158,7 +178,8 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     int sympathetic = 0;
     for (int n = 1; n <= maxModes; ++n)
     {
-        const double f = n * fFlex * std::sqrt (1.0 + B * n * n);
+        const double f = n * fFlex * std::sqrt (1.0 + B * n * n)
+                         * (n > 1 ? std::pow (2.0, 2.0 * ageFactor * rng.symmetric() / 1200.0) : 1.0);
         if (f > maxFrequency && n > 1)
             break;
         const double w = 2.0 * M_PI * f;
@@ -434,10 +455,10 @@ void ModalPiano::buildSoundboard()
         }
     }
 
-    const double lossFactor = 0.02;
+    const double lossFactor = 0.02 * (1.0 + 0.8 * ageFactor);
     const double meanBoardAdmittance = 0.9e-4;
     const double meanSpacing = 2.0 * M_PI * 18.0; // rad/s between modes
-    const double fc = 48.0 * settings.crown;
+    const double fc = 48.0 * settings.crown * (1.0 - 0.7 * ageFactor);
     // Above about 3 kHz the modes overlap so much that the board acts as a plain resistance
     // (the direct bridge path below), so only the modes up to there are simulated one by one
     const double fTop = std::min (3000.0, 0.45 * sampleRate);
@@ -989,13 +1010,13 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
     const auto& key = keys[(size_t) keyIndex];
     const int os = std::max (1, settings.oversampling);
     const double dt = Ts / os;
-    const double q0 = key.feltStiffness * hardness;
+    const double q0 = key.feltStiffness * hardness * (1.0 + 1.5 * ageFactor);
     const double p = key.feltExponent;
     // Felt has memory (Stulov 1995): squeezed quickly it is stiff; squeezed slowly it has
     // time to relax and gives way. So a gentle touch makes a long, soft contact that only
     // excites the low partials, and a hard blow a short, stiff one that brings out the top.
     const double memory = settings.feltMemory;
-    const double coreDepth = key.outerFeltDepth * 1000.0 * settings.outerFeltScale; // [mm]
+    const double coreDepth = key.outerFeltDepth * 1000.0 * settings.outerFeltScale * (1.0 - 0.6 * ageFactor); // [mm]
     // Treble hammers are smaller and their outer felt firmer, or soft notes there would vanish
     const double outer = settings.outerFelt * std::pow (10.0, std::max (0.0, (keyIndex - 39) / 48.0) * trebleFirmness);
     const double relax = 1.0 - std::exp (-dt / std::max (1e-6, settings.feltRelaxTime));

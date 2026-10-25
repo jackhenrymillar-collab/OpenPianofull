@@ -55,6 +55,11 @@ AudioProcessorValueTreeState::ParameterLayout createLayout()
         ParameterID { actionNoise, 1 }, "Action Noise", NormalisableRange<float> (0.0f, 2.0f, 0.01f), 1.0f,
         AudioParameterFloatAttributes().withStringFromValueFunction (percent)));
 
+    // How old and worn the piano is: tuning drift, hard hammers, dull strings, a tired board
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { age, 1 }, "Age", NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.0f,
+        AudioParameterFloatAttributes().withStringFromValueFunction (percent)));
+
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { sustainLatch, 1 }, "Sustain Latch", false));
 
     // How much key velocity matters. 0% plays every note at the same strength.
