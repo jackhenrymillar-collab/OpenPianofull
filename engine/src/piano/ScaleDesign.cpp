@@ -23,7 +23,7 @@ namespace openpiano::piano
 // Hammers (key number n = 1..88), from J. O. Smith, "Physical Audio Signal Processing",
 //   after Conklin, Hall and Stulov:
 //   mass m = 11.074 - 0.074 n + 0.0001 n^2 grams
-//   felt force F = Q0 * x^p, x = felt compression in mm, Q0 = 183 e^(0.045 n), p = 3.7 + 0.015 n
+//   felt force F = Q0 * x^p, x = felt compression in mm, Q0 = 183 e^(0.045 n), p = 2.5 to 4 from bass to treble
 // Wire: steel E = 2.0e11 Pa, density 7850 kg/m^3; copper winding 8960 kg/m^3.
 //   Plain strings use standard piano-wire gauges in 0.025 mm steps, chosen for a tension near
 //   800 N falling to 700 N in the top octave, which reproduces published diameters
@@ -240,7 +240,7 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         const double n = k;
         key.hammerMass = (11.074 - 0.074 * n + 0.0001 * n * n) * 1e-3;
         key.feltStiffness = 183.0 * std::exp (0.045 * n);
-        key.feltExponent = 3.7 + 0.015 * n;
+        key.feltExponent = 2.5 + 1.5 * (n - 1) / 87.0; // softer-curving felt: 2.5 in the bass to 4 in the treble
         key.outerFeltDepth = lerp (1.0e-3, 0.2e-3, std::pow ((k - 1) / 87.0, 0.7));
         key.strikeRatio = k <= 40 ? lerp (0.122, 0.115, (k - 1) / 39.0) : lerp (0.115, 0.08, (k - 40) / 48.0);
         key.hammerWidth = lerp (12e-3, 5e-3, (k - 1) / 87.0);
