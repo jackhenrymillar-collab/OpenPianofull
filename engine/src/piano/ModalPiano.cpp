@@ -81,31 +81,6 @@ namespace
         return s;
     }
 
-    // One sample of the soundboard modes driven by force F. Returns their summed velocity
-    // and the velocity weighted towards each ear.
-    void stepBoard (float* __restrict wr, float* __restrict wi, const float* __restrict qr,
-                    const float* __restrict qi, const float* __restrict hr, const float* __restrict hi,
-                    const float* __restrict omega, const float* __restrict sigma,
-                    const float* __restrict radL, const float* __restrict radR, int n, float F,
-                    double& velocity, double& left, double& right)
-    {
-        float v = 0, l = 0, r = 0;
-        for (int i = 0; i < n; ++i)
-        {
-            const float a = wr[i], b = wi[i];
-            const float nr = qr[i] * a - qi[i] * b + hr[i] * F;
-            const float ni = qr[i] * b + qi[i] * a + hi[i] * F;
-            wr[i] = nr;
-            wi[i] = ni;
-            const float vel = omega[i] * nr - sigma[i] * ni;
-            v += vel;
-            l += radL[i] * vel;
-            r += radR[i] * vel;
-        }
-        velocity = v;
-        left = l;
-        right = r;
-    }
 }
 
 void ModalPiano::Modes::clear()
@@ -124,7 +99,20 @@ void ModalPiano::prepare (double newSampleRate, const Settings& newSettings)
     settings = newSettings;
     keys = buildConcertGrandScale (settings.unisonSpreadCents);
 
+    // Bridge zones: two along the short bass bridge, six along the long treble bridge
+    keyZone.assign (keys.size(), 0);
+    {
+        int firstTreble = 0;
+        while (firstTreble < (int) keys.size() && keys[(size_t) firstTreble].bassBridge)
+            ++firstTreble;
+        for (int k = 0; k < (int) keys.size(); ++k)
+            keyZone[(size_t) k] = k < firstTreble ? (2 * k) / std::max (1, firstTreble)
+                                                   : 2 + (6 * (k - firstTreble)) / std::max (1, (int) keys.size() - firstTreble);
+    }
+
     buildModes();
+    for (auto& st : strings)
+        st.zone = keyZone[(size_t) st.key];
     buildSoundboard();
     buildAction();
 
@@ -409,55 +397,170 @@ void ModalPiano::setDamperStrength (double scale)
 
 void ModalPiano::buildSoundboard()
 {
-    // A grand soundboard has a roughly constant modal density (about one mode every 30 Hz).
-    // Each mode is a damped resonator driven by the total bridge force. Mode masses are set
-    // so that, averaged over frequency, the modes add about 1.5e-4 m/s/N to the bridge's
-    // admittance (with the resistive part, about 3e-4 in all), in line with measured bridge
-    // admittances (Wogram 1980; Conklin 1996; Giordano 1998). The low modes are sparse and
-    // stand out as resonances, up to 1.5e-3 m/s/N. The crown and the strings' downbearing
-    // stiffen the board (below).
+    // The soundboard as a ribbed, orthotropic spruce plate (modal synthesis, as in
+    // Chabassier, Chaigne & Joly 2013 and Bank 2010). Spruce is about 15 times stiffer along
+    // the grain than across it; the ribs, glued across the grain, make up much of that.
+    // Treated as a 1.45 x 1.25 m plate with simply supported edges, its modes are
+    //   f_mn = (pi/2) sqrt(1/(rho h)) sqrt(Dx (m/a)^4 + 2H (m/a)^2 (n/b)^2 + Dy (n/b)^4)
+    // with shapes sin(m pi x/a) sin(n pi y/b). That gives about one mode every 18 Hz.
+    //   x: across the board, from the treble side (0) to the bass side (a)
+    //   y: along the strings, from the keyboard (0) to the tail (b)
+    // The crown and the strings' downbearing stiffen it further (below). Each mode's mass is
+    // set so that its average admittance across the bridge matches measured bridge
+    // admittances (Wogram 1980; Conklin 1996; Giordano 1998).
     Rng rng (1234);
-    struct Mode { double f, loss, peak, radiation; };
+    constexpr int Z = kZones;
+    struct Mode { double f, loss, peak, radiation; int m, n; std::array<double, Z> phi; };
     std::vector<Mode> modes;
+
+    const double a = 1.45, b = 1.25, h = 0.012;
+    const double rhoH = 420.0 * 1.25 * h;                 // spruce plus ribs [kg/m^2]
+    const double Dx = 11e9 * h * h * h / 12.0 * 1.3;      // along the grain
+    const double Dy = 0.75e9 * h * h * h / 12.0 * 20.0;   // across the grain, ribs included
+    const double H = (0.03 * 0.75e9 + 2.0 * 0.7e9) * h * h * h / 12.0;
+
+    // Where each zone sits on the board: the long treble bridge runs from near the treble
+    // corner back towards the middle, the short bass bridge sits further back on the bass side
+    std::array<double, Z> zx {}, zy {};
+    for (int z = 0; z < Z; ++z)
+    {
+        if (z < 2) { const double t = (z + 0.5) / 2.0; zx[(size_t) z] = 1.22 - 0.10 * t; zy[(size_t) z] = 0.62 + 0.30 * t; }
+        else
+        {
+            // zone 2 is the low end of the treble bridge, zone 7 the top
+            const double t = (z - 2 + 0.5) / 6.0;
+            zx[(size_t) z] = 0.95 - 0.77 * t + 0.08 * std::sin (M_PI * t); // a gentle curve
+            zy[(size_t) z] = 0.95 - 0.77 * t;
+        }
+    }
 
     const double lossFactor = 0.02;
     const double meanBoardAdmittance = 0.9e-4;
-    const double meanSpacing = 2.0 * M_PI * 33.0; // rad/s between modes
-    // Crown and downbearing: the arched board, pressed down by the strings, is stiffer than
-    // a flat panel. Stiffness adds to the mode's spring, so each frequency becomes
-    // sqrt(f_flat^2 + f_c^2). Low modes rise a lot (the lowest from about 32 Hz to about 58 Hz,
-    // as measured on crowned grand boards), upper ones hardly move, and the low modes spread
-    // further apart.
+    const double meanSpacing = 2.0 * M_PI * 18.0; // rad/s between modes
     const double fc = 48.0 * settings.crown;
-    for (double f = 32.0; f < std::min (7000.0, 0.45 * sampleRate);)
-    {
-        const double flat = f * (1.0 + 0.12 * (rng.next() - 0.5));
-        const double fm = std::sqrt (flat * flat + fc * fc);
-        f += 33.0 * (0.6 + 0.8 * rng.next());
-        if (fm > 0.45 * sampleRate)
-            break;
-        // Same mass, stiffer spring: the mode answers a push less readily, by flat / fm
-        const double sigmaFlat = M_PI * flat * lossFactor;
-        const double peak = std::min (0.9e-3, meanBoardAdmittance * meanSpacing / (M_PI * sigmaFlat)) * flat / fm;
-        modes.push_back ({ fm, lossFactor, peak, 1.0 });
-    }
+    // Above about 3 kHz the modes overlap so much that the board acts as a plain resistance
+    // (the direct bridge path below), so only the modes up to there are simulated one by one
+    const double fTop = std::min (3000.0, 0.45 * sampleRate);
+    for (int mi = 1; mi < 120; ++mi)
+        for (int ni = 1; ni < 120; ++ni)
+        {
+            const double kx = mi / a, ky = ni / b;
+            const double flat0 = 0.5 * M_PI / std::sqrt (rhoH) * std::sqrt (Dx * std::pow (kx, 4) + 2.0 * H * kx * kx * ky * ky + Dy * std::pow (ky, 4));
+            if (flat0 > fTop)
+                continue;
+            // Real boards are not perfectly uniform: a few percent of scatter
+            const double flat = flat0 * (1.0 + 0.04 * rng.symmetric());
+            const double fm = std::sqrt (flat * flat + fc * fc);
+            if (fm > fTop)
+                continue;
+            Mode md { fm, lossFactor, 0, 1.0, mi, ni, {} };
+            const double sigmaFlat = M_PI * flat * lossFactor;
+            md.peak = std::min (0.9e-3, meanBoardAdmittance * meanSpacing / (M_PI * sigmaFlat)) * flat / fm;
+            for (int z = 0; z < Z; ++z)
+                md.phi[(size_t) z] = std::sin (mi * M_PI * zx[(size_t) z] / a) * std::sin (ni * M_PI * zy[(size_t) z] / b);
+            modes.push_back (md);
+        }
 
-    // The rim and frame: a few heavy, lightly damped low resonances that the bridge
-    // barely moves, but which keep humming under the sound
+    // The rim: a few heavy, lightly damped low resonances that move the whole board edge
     for (double f : { 68.0, 104.0, 151.0, 207.0, 286.0, 410.0 })
-        modes.push_back ({ f * (1.0 + 0.05 * rng.symmetric()), 0.008, 0.9e-4, 0.5 });
+    {
+        Mode md { f * (1.0 + 0.05 * rng.symmetric()), 0.008, 0.9e-4, 0.5, 0, 0, {} };
+        md.phi.fill (1.0);
+        modes.push_back (md);
+    }
+    // The cast-iron plate: stiff and barely damped. It carries the strings' far ends (the
+    // agraffes and hitch pins), so it rings faintly under everything; its bending shapes
+    // move the bass and treble ends in opposite directions.
+    {
+        const double plateF[] = { 122.0, 187.0, 324.0, 517.0, 768.0, 1130.0 };
+        for (int k = 0; k < 6; ++k)
+        {
+            Mode md { plateF[k] * (1.0 + 0.03 * rng.symmetric()), 0.002, 2.5e-5, 0.3, -1, k, {} };
+            for (int z = 0; z < Z; ++z)
+                md.phi[(size_t) z] = std::cos (M_PI * (k + 1) * (z + 0.5) / Z);
+            modes.push_back (md);
+        }
+    }
 
     const size_t n = modes.size();
     for (auto* v : { &board.wr, &board.wi, &board.qr, &board.qi, &board.hr, &board.hi, &board.omega, &board.sigma,
-                     &board.radLeft, &board.radRight })
+                     &board.radLeft, &board.radRight, &board.volume })
         v->assign (n, 0.0f);
+    board.phi.assign (n * Z, 0.0f);
+    board.scratchF.assign (n, 0.0f);
+    board.scratchV.assign (n, 0.0f);
+
+    // Sound radiated towards two listening points, from each mode's shape: the far-field
+    // (Rayleigh) integral over the board in each direction. Low modes with an odd number of
+    // half-waves in both directions push air like a piston; others mostly cancel, until the
+    // bending waves get shorter than the sound waves. The two points sit above the keyboard,
+    // one towards the bass, one towards the treble, as from the player's seat.
+    const double dirL[2] = { 0.35, -0.5 }, dirR[2] = { -0.35, -0.5 }; // in-plane parts of the directions
+    constexpr int GX = 36, GY = 30;
+    std::vector<double> rawL (n), rawR (n), rawV (n);
+    for (size_t i = 0; i < n; ++i)
+    {
+        const auto& md = modes[i];
+        if (md.m <= 0)
+            continue; // rim and plate modes: set below
+        const double k = 2.0 * M_PI * md.f / 343.0;
+        double lr = 0, li = 0, rr = 0, ri = 0, vol = 0;
+        for (int gx = 0; gx < GX; ++gx)
+            for (int gy = 0; gy < GY; ++gy)
+            {
+                const double x = (gx + 0.5) / GX * a, y = (gy + 0.5) / GY * b;
+                const double shape = std::sin (md.m * M_PI * x / a) * std::sin (md.n * M_PI * y / b);
+                const double pl = k * (dirL[0] * x + dirL[1] * y), prr = k * (dirR[0] * x + dirR[1] * y);
+                lr += shape * std::cos (pl); li += shape * std::sin (pl);
+                rr += shape * std::cos (prr); ri += shape * std::sin (prr);
+                vol += shape;
+            }
+        const double cells = GX * GY;
+        // Keep the strength and the sign of the in-phase part
+        rawL[i] = std::hypot (lr, li) / cells * (lr < 0 ? -1.0 : 1.0);
+        rawR[i] = std::hypot (rr, ri) / cells * (rr < 0 ? -1.0 : 1.0);
+        rawV[i] = vol / cells;
+    }
+
+    // Keep the overall tonal balance the earlier, tuned board had: within each octave, scale
+    // the radiation so its average strength matches; the differences between modes and
+    // between the ears (the directivity) are what the shapes add.
+    auto normaliseBands = [&] (std::vector<double>& w, double target)
+    {
+        for (double lo = 20.0; lo < 20000.0; lo *= 2.0)
+        {
+            double sum = 0; int count = 0;
+            for (size_t i = 0; i < n; ++i)
+                if (modes[i].m > 0 && modes[i].f >= lo && modes[i].f < 2.0 * lo) { sum += w[i] * w[i]; ++count; }
+            if (count == 0 || sum <= 0) continue;
+            const double scale = target / std::sqrt (sum / count);
+            for (size_t i = 0; i < n; ++i)
+                if (modes[i].m > 0 && modes[i].f >= lo && modes[i].f < 2.0 * lo) w[i] *= scale;
+        }
+    };
+    normaliseBands (rawL, 0.85);
+    normaliseBands (rawR, 0.85);
+    // The air under the board is driven by the net volume a mode pushes: strong for the
+    // lowest piston-like modes, small for the rest
+    {
+        double sum = 0; int count = 0;
+        for (size_t i = 0; i < n; ++i)
+            if (modes[i].m > 0 && modes[i].f < 400.0) { sum += rawV[i] * rawV[i]; ++count; }
+        const double scale = count > 0 && sum > 0 ? 0.85 / std::sqrt (sum / count) : 0.0;
+        for (auto& v : rawV) v *= scale;
+    }
 
     for (size_t i = 0; i < n; ++i)
     {
         const double f = modes[i].f;
         const double w = 2.0 * M_PI * f;
         const double sigma = M_PI * f * modes[i].loss;
-        const double modalMass = 1.0 / (2.0 * sigma * modes[i].peak);
+        // Mass from the admittance this mode should add, averaged over the bridge
+        double meanPhi2 = 0;
+        for (int z = 0; z < Z; ++z)
+            meanPhi2 += modes[i].phi[(size_t) z] * modes[i].phi[(size_t) z];
+        meanPhi2 = std::max (0.05, meanPhi2 / Z);
+        const double modalMass = meanPhi2 / (2.0 * sigma * modes[i].peak);
 
         const cd pole = std::exp (cd (-sigma, w) * Ts);
         const cd gain = pole * (Ts / (w * modalMass));
@@ -467,25 +570,26 @@ void ModalPiano::buildSoundboard()
         board.qi[i] = (float) pole.imag();
         board.hr[i] = (float) gain.real();
         board.hi[i] = (float) gain.imag();
+        for (int z = 0; z < Z; ++z)
+            board.phi[(size_t) z * n + i] = (float) modes[i].phi[(size_t) z];
 
-        // Direction. Below a few hundred Hz the board is small next to the wavelength and
-        // pushes air like one piston: both ears hear the same thing. Higher up, each mode
-        // splits the board into patches moving in opposite directions, so its sound comes out
-        // in lobes and differs from ear to ear. The bass end of the board is nearer the left
-        // ear, the treble end nearer the right (player's view).
-        const double spread = std::clamp ((f - 150.0) / 1200.0, 0.0, 1.0);
-        const double common = (0.7 + 0.3 * rng.next()) * (1.0 - spread);
-        const double sideL = (0.4 + 0.6 * rng.next()) * (rng.next() < 0.5 ? -1 : 1) * spread;
-        const double sideR = (0.4 + 0.6 * rng.next()) * (rng.next() < 0.5 ? -1 : 1) * spread;
-        const double tilt = 0.15 * std::clamp ((f - 100.0) / 2000.0, -1.0, 1.0);
-        const double l = (common + sideL) * (1.0 - tilt);
-        const double r = (common + sideR) * (1.0 + tilt);
-        board.radLeft[i] = (float) (l * modes[i].radiation);
-        board.radRight[i] = (float) (r * modes[i].radiation);
+        if (modes[i].m > 0)
+        {
+            board.radLeft[i] = (float) rawL[i];
+            board.radRight[i] = (float) rawR[i];
+            board.volume[i] = (float) rawV[i];
+        }
+        else
+        {
+            // Rim and plate: small radiators, much the same in both ears
+            const double l = (0.6 + 0.4 * rng.next()) * (rng.next() < 0.5 ? -1 : 1);
+            board.radLeft[i] = (float) (l * modes[i].radiation);
+            board.radRight[i] = (float) (l * (0.8 + 0.2 * rng.next()) * modes[i].radiation);
+        }
     }
 
     // Overall level: a mezzo-forte middle C peaks around -20 dBFS, fortissimo around -10
-    outputGain = 50.0;
+    outputGain = 30.0;
     buildBody();
 }
 
@@ -601,6 +705,7 @@ void ModalPiano::reset()
     std::fill (board.wr.begin(), board.wr.end(), 0.0f);
     std::fill (board.wi.begin(), board.wi.end(), 0.0f);
     lastBridgeVelocity = bridgeAcceleration = 0;
+    zoneForce.fill (0); zoneAcceleration.fill (0); lastZoneVelocity.fill (0); zoneBoardVelocity.fill (0);
     lastHorizontalVelocity = horizontalAcceleration = 0;
     resistiveLpLeft = resistiveLpRight = 0;
     buildBody();
@@ -850,9 +955,9 @@ void ModalPiano::checkActivity()
     {
         const auto& s = strings[(size_t) index];
         const bool side = s.kind == Kind::Horizontal;
-        segments.push_back ({ s.first, s.sympatheticCount, s.panLeft, s.panRight, side });
+        segments.push_back ({ s.first, s.sympatheticCount, s.panLeft, s.panRight, side, s.zone });
         if (s.activity == Activity::Full && s.count > s.sympatheticCount)
-            segments.push_back ({ s.highFirst, s.count - s.sympatheticCount, s.panLeft, s.panRight, side });
+            segments.push_back ({ s.highFirst, s.count - s.sympatheticCount, s.panLeft, s.panRight, side, s.zone });
     }
     std::sort (segments.begin(), segments.end(), [] (const Segment& a, const Segment& b) { return a.first < b.first; });
 
@@ -861,7 +966,7 @@ void ModalPiano::checkActivity()
     for (const auto& g : segments)
     {
         if (! runs.empty() && runs.back().first + runs.back().count == g.first && runs.back().side == g.side
-            && runSegments < 12)
+            && runs.back().zone == g.zone && runSegments < 12)
         {
             auto& r = runs.back();
             r.count += g.count;
@@ -871,7 +976,7 @@ void ModalPiano::checkActivity()
         }
         else
         {
-            runs.push_back ({ g.first, g.count, g.panLeft, g.panRight, g.side });
+            runs.push_back ({ g.first, g.count, g.panLeft, g.panRight, g.side, g.zone });
             runSegments = 1;
         }
     }
@@ -1076,8 +1181,8 @@ void ModalPiano::process (float* left, float* right, int numSamples)
 
     for (int n = 0; n < numSamples; ++n)
     {
-        const float av = (float) bridgeAcceleration;
         const float ah = (float) horizontalAcceleration;
+        zoneForce.fill (0);
         double forceSum = 0, forceLeft = 0, forceRight = 0;  // vertical
         double sideSum = 0, sideLeft = 0, sideRight = 0;     // horizontal
 
@@ -1085,7 +1190,8 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         for (const auto& r : runs)
         {
             const int j = r.first;
-            const float f = stepModes (zr + j, zi + j, pr + j, pi + j, bgr + j, bgi + j, fk + j, r.count, r.side ? ah : av);
+            const float f = stepModes (zr + j, zi + j, pr + j, pi + j, bgr + j, bgi + j, fk + j, r.count,
+                                       r.side ? ah : (float) zoneAcceleration[(size_t) r.zone]);
             if (r.side)
             {
                 sideSum += f;
@@ -1097,12 +1203,18 @@ void ModalPiano::process (float* left, float* right, int numSamples)
                 forceSum += f;
                 forceLeft += f * r.panLeft;
                 forceRight += f * r.panRight;
+                zoneForce[(size_t) r.zone] += f;
             }
         }
 
         // Strings under a hammer: oversampled
         for (size_t i = 0; i < hammerList.size(); ++i)
-            runHammerKey (hammerList[i], bridgeAcceleration, forceSum, forceLeft, forceRight);
+        {
+            const int z = keyZone[(size_t) hammerList[i]];
+            const double before = forceSum;
+            runHammerKey (hammerList[i], zoneAcceleration[(size_t) z], forceSum, forceLeft, forceRight);
+            zoneForce[(size_t) z] += forceSum - before;
+        }
 
         if (++tensionCounter >= 16)
         {
@@ -1116,29 +1228,92 @@ void ModalPiano::process (float* left, float* right, int numSamples)
             const auto& s = strings[(size_t) index];
             const double f = runLongitudinal (s);
             forceSum += f;
+            zoneForce[(size_t) s.zone] += f;
             forceLeft += f * s.panLeft;
             forceRight += f * s.panRight;
         }
 
-        runAction (forceSum, forceLeft, forceRight);
+        // Forces that reach the board through the frame rather than one spot on the bridge:
+        // the action's knocks, and the air under the board pushing back on it
+        {
+            const double before = forceSum;
+            runAction (forceSum, forceLeft, forceRight);
+            forceSum -= airLoad * airPressure;
+            const double spread = (forceSum - before) / kZones;
+            for (auto& z : zoneForce)
+                z += spread;
+        }
 
-        // The air under the board pushes back on it
-        forceSum -= airLoad * airPressure;
+        // Soundboard and frame modes. Each mode is pushed by every zone's force times its
+        // shape there, and moves every zone by the same shape.
+        double radiatedLeft = 0, radiatedRight = 0, volumeVelocity = 0;
+        zoneBoardVelocity.fill (0);
+        {
+            // Laid out zone by zone (phi[z * modes + i]) so each loop runs over the modes
+            const int nb = (int) boardModes;
+            float* __restrict F = board.scratchF.data();
+            float* __restrict V = board.scratchV.data();
+            const float* __restrict phi = board.phi.data();
+            for (int i = 0; i < nb; ++i)
+                F[i] = 0;
+            for (int z = 0; z < kZones; ++z)
+            {
+                const float fz = (float) zoneForce[(size_t) z];
+                const float* __restrict ph = phi + (size_t) z * (size_t) nb;
+                for (int i = 0; i < nb; ++i)
+                    F[i] += ph[i] * fz;
+            }
+            float* __restrict wr = board.wr.data();
+            float* __restrict wi = board.wi.data();
+            const float* __restrict qr = board.qr.data();
+            const float* __restrict qi = board.qi.data();
+            const float* __restrict hr = board.hr.data();
+            const float* __restrict hi = board.hi.data();
+            const float* __restrict om = board.omega.data();
+            const float* __restrict sg = board.sigma.data();
+            const float* __restrict rl = board.radLeft.data();
+            const float* __restrict rrt = board.radRight.data();
+            const float* __restrict bv = board.volume.data();
+            float l = 0, r = 0, vol = 0;
+            for (int i = 0; i < nb; ++i)
+            {
+                const float x = wr[i], y = wi[i];
+                const float nr = qr[i] * x - qi[i] * y + hr[i] * F[i];
+                const float ni = qr[i] * y + qi[i] * x + hi[i] * F[i];
+                wr[i] = nr;
+                wi[i] = ni;
+                const float vel = om[i] * nr - sg[i] * ni;
+                V[i] = vel;
+                l += rl[i] * vel;
+                r += rrt[i] * vel;
+                vol += bv[i] * vel;
+            }
+            for (int z = 0; z < kZones; ++z)
+            {
+                const float* __restrict ph = phi + (size_t) z * (size_t) nb;
+                float acc = 0;
+                for (int i = 0; i < nb; ++i)
+                    acc += ph[i] * V[i];
+                zoneBoardVelocity[(size_t) z] = acc;
+            }
+            radiatedLeft = l;
+            radiatedRight = r;
+            volumeVelocity = vol;
+        }
 
-        // Soundboard
-        double boardVelocity = 0, radiatedLeft = 0, radiatedRight = 0;
-        stepBoard (board.wr.data(), board.wi.data(), board.qr.data(), board.qi.data(), board.hr.data(),
-                   board.hi.data(), board.omega.data(), board.sigma.data(), board.radLeft.data(),
-                   board.radRight.data(), (int) boardModes, (float) forceSum, boardVelocity, radiatedLeft,
-                   radiatedRight);
-
-        // Bridge motion, fed back to every string on the next sample. Vertical and sideways
-        // motion are linked, which is how the slow sideways vibration becomes audible.
-        const double bridgeVelocity = bridgeResistance * forceSum + crossResistance * sideSum + boardVelocity;
+        // Bridge motion, fed back to every string on the next sample. The dense, resistive
+        // part of the board answers half locally (the zone's own force) and half as a whole.
+        // Vertical and sideways motion are linked, which is how the slow sideways vibration
+        // becomes audible.
+        for (int z = 0; z < kZones; ++z)
+        {
+            const double v = bridgeResistance * (0.5 * zoneForce[(size_t) z] + 0.5 * forceSum)
+                             + crossResistance * sideSum + zoneBoardVelocity[(size_t) z];
+            zoneAcceleration[(size_t) z] = (v - lastZoneVelocity[(size_t) z]) * sampleRate;
+            lastZoneVelocity[(size_t) z] = v;
+        }
         const double sideVelocity = horizontalResistance * sideSum + crossResistance * forceSum;
-        bridgeAcceleration = (bridgeVelocity - lastBridgeVelocity) * sampleRate;
         horizontalAcceleration = (sideVelocity - lastHorizontalVelocity) * sampleRate;
-        lastBridgeVelocity = bridgeVelocity;
         lastHorizontalVelocity = sideVelocity;
 
         // Sound: soundboard modes plus the direct (dense high-frequency) bridge path
@@ -1151,7 +1326,7 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         double air = 0;
         if (settings.air > 0)
         {
-            const float drive = (float) (0.5 * (radiatedLeft + radiatedRight));
+            const float drive = (float) volumeVelocity;
             for (auto& a : airModes)
             {
                 const float y = a.b0 * (drive - a.x2) - a.a1 * a.y1 - a.a2 * a.y2;

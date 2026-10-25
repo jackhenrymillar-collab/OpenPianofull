@@ -118,6 +118,7 @@ private:
         mutable float tensionRise = 0; // latest tension rise / rest tension
         float restTension = 1;
         float outScale = 1;       // loudness lift for soft notes (bridge force up, bridge input down)
+        int zone = 0;             // bridge zone the string presses on
         bool damped = true;
         Activity activity = Activity::Off;
     };
@@ -230,6 +231,9 @@ private:
     struct Board
     {
         std::vector<float> wr, wi, qr, qi, hr, hi, omega, sigma, radLeft, radRight;
+        std::vector<float> phi;    // mode shape at each bridge zone, zone by zone
+        std::vector<float> scratchF, scratchV;
+        std::vector<float> volume; // net volume each mode pushes (drives the air under the board)
     } board;
 
     // Air under the board: a few broad cavity resonances driven by the board's volume motion.
@@ -260,6 +264,11 @@ private:
     double bridgeResistance = 0.9e-4;      // m/s per N: the dense high-frequency part of the soundboard
     double horizontalResistance = 0.6e-4;  // the bridge moves less easily sideways
     double crossResistance = 0.36e-4;      // vertical force -> sideways motion, and back
+    // The bridge is split into zones along its length; each key's strings press on their own
+    // zone, and every board mode moves each zone by its own amount
+    static constexpr int kZones = 8;
+    std::vector<int> keyZone;
+    std::array<double, kZones> zoneForce {}, zoneAcceleration {}, lastZoneVelocity {}, zoneBoardVelocity {};
     double lastBridgeVelocity = 0, bridgeAcceleration = 0;
     double lastHorizontalVelocity = 0, horizontalAcceleration = 0;
     double resistiveLpLeft = 0, resistiveLpRight = 0, lpCoeff = 0;
@@ -272,9 +281,9 @@ private:
     std::vector<int> fullList, hammerList, longList, alwaysOn;
 
     // Neighbouring strings whose modes sit back to back are stepped in one go
-    struct Run { int first, count; float panLeft, panRight; bool side; };
+    struct Run { int first, count; float panLeft, panRight; bool side; int zone; };
     std::vector<Run> runs;
-    struct Segment { int first, count; float panLeft, panRight; bool side; };
+    struct Segment { int first, count; float panLeft, panRight; bool side; int zone; };
     std::vector<Segment> segmentScratch;
 };
 
