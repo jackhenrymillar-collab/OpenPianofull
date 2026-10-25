@@ -57,6 +57,7 @@ public:
         bool longitudinal = true;           // lengthwise waves and phantom partials
         bool duplex = true;                 // undamped string segments behind the treble bridge
         double longitudinalCoupling = 0.12; // share of the lengthwise force that reaches the board (via bridge tilt)
+        double crown = 1.0;                 // soundboard crown and downbearing (0 = flat, unloaded board)
         double feltLoss = 0.12;             // [s/m] felt hysteresis (0 = perfectly elastic)
     };
 

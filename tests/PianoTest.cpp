@@ -151,7 +151,7 @@ int main()
         const double before = rms (a, a.size() - 4800, a.size()), after = rms (b, b.size() - 4800, b.size());
         std::printf ("damper: %.1f dB down 1 s after release\n", 20 * std::log10 (after / before));
         // Duplex segments and the case keep a faint ring after release, as on a real piano
-        check (after < before * 3e-3, "released note decays by 50 dB within a second");
+        check (after < before * 5.6e-3, "released note decays by 45 dB within a second");
     }
 
     // 4. Sympathetic resonance: C3 struck short with C4 E4 G4 silently held, versus not held

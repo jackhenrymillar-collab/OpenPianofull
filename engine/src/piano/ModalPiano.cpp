@@ -406,7 +406,7 @@ void ModalPiano::buildSoundboard()
     // admittance (with the resistive part, about 3e-4 in all), in line with measured bridge
     // admittances (Wogram 1980; Conklin 1996; Giordano 1998). The low modes are sparse and
     // stand out as resonances, up to 1.5e-3 m/s/N. The crown and the strings' downbearing
-    // stiffen the board; that is already in the measured frequencies and admittances.
+    // stiffen the board (below).
     Rng rng (1234);
     struct Mode { double f, loss, peak, radiation; };
     std::vector<Mode> modes;
@@ -414,12 +414,23 @@ void ModalPiano::buildSoundboard()
     const double lossFactor = 0.02;
     const double meanBoardAdmittance = 1.5e-4;
     const double meanSpacing = 2.0 * M_PI * 33.0; // rad/s between modes
-    for (double f = 48.0; f < std::min (7000.0, 0.45 * sampleRate);)
+    // Crown and downbearing: the arched board, pressed down by the strings, is stiffer than
+    // a flat panel. Stiffness adds to the mode's spring, so each frequency becomes
+    // sqrt(f_flat^2 + f_c^2). Low modes rise a lot (the lowest from about 32 Hz to about 58 Hz,
+    // as measured on crowned grand boards), upper ones hardly move, and the low modes spread
+    // further apart.
+    const double fc = 48.0 * settings.crown;
+    for (double f = 32.0; f < std::min (7000.0, 0.45 * sampleRate);)
     {
-        const double fm = f * (1.0 + 0.12 * (rng.next() - 0.5));
-        const double sigma = M_PI * fm * lossFactor;
-        modes.push_back ({ fm, lossFactor, std::min (1.5e-3, meanBoardAdmittance * meanSpacing / (M_PI * sigma)), 1.0 });
+        const double flat = f * (1.0 + 0.12 * (rng.next() - 0.5));
+        const double fm = std::sqrt (flat * flat + fc * fc);
         f += 33.0 * (0.6 + 0.8 * rng.next());
+        if (fm > 0.45 * sampleRate)
+            break;
+        // Same mass, stiffer spring: the mode answers a push less readily, by flat / fm
+        const double sigmaFlat = M_PI * flat * lossFactor;
+        const double peak = std::min (1.5e-3, meanBoardAdmittance * meanSpacing / (M_PI * sigmaFlat)) * flat / fm;
+        modes.push_back ({ fm, lossFactor, peak, 1.0 });
     }
 
     // The rim and frame: a few heavy, lightly damped low resonances that the bridge
