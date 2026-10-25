@@ -302,7 +302,7 @@ private:
     std::array<double, kZones> bridgeMassCoeff {}, bridgeMassState {};
     // Towards the top the bridge runs near the stiff edge of the board, so the board moves
     // less there: the strings couple more weakly and ring on longer
-    static constexpr std::array<double, kZones> zoneCoupling { 1.0, 1.0, 1.0, 0.95, 0.86, 0.75, 0.63, 0.52 };
+    static constexpr std::array<double, kZones> zoneCoupling { 1.15, 1.15, 1.15, 1.08, 0.92, 0.78, 0.64, 0.52 };
     std::array<double, kZones> zoneForce {}, zoneAcceleration {}, lastZoneVelocity {}, zoneBoardVelocity {};
     double lastBridgeVelocity = 0, bridgeAcceleration = 0;
     double lastHorizontalVelocity = 0, horizontalAcceleration = 0;
