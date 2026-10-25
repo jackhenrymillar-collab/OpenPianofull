@@ -254,9 +254,9 @@ private:
     void queueAction (int type, int delaySamples, double amount, int keyIndex);
     void runAction (double& force, double& left, double& right);
 
-    double bridgeResistance = 1.5e-4;      // m/s per N: the dense high-frequency part of the soundboard
-    double horizontalResistance = 1.0e-4;  // the bridge moves less easily sideways
-    double crossResistance = 0.6e-4;       // vertical force -> sideways motion, and back
+    double bridgeResistance = 0.9e-4;      // m/s per N: the dense high-frequency part of the soundboard
+    double horizontalResistance = 0.6e-4;  // the bridge moves less easily sideways
+    double crossResistance = 0.36e-4;      // vertical force -> sideways motion, and back
     double lastBridgeVelocity = 0, bridgeAcceleration = 0;
     double lastHorizontalVelocity = 0, horizontalAcceleration = 0;
     double resistiveLpLeft = 0, resistiveLpRight = 0, lpCoeff = 0;

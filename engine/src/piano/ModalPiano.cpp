@@ -425,7 +425,7 @@ void ModalPiano::buildSoundboard()
     std::vector<Mode> modes;
 
     const double lossFactor = 0.02;
-    const double meanBoardAdmittance = 1.5e-4;
+    const double meanBoardAdmittance = 0.9e-4;
     const double meanSpacing = 2.0 * M_PI * 33.0; // rad/s between modes
     // Crown and downbearing: the arched board, pressed down by the strings, is stiffer than
     // a flat panel. Stiffness adds to the mode's spring, so each frequency becomes
@@ -442,14 +442,14 @@ void ModalPiano::buildSoundboard()
             break;
         // Same mass, stiffer spring: the mode answers a push less readily, by flat / fm
         const double sigmaFlat = M_PI * flat * lossFactor;
-        const double peak = std::min (1.5e-3, meanBoardAdmittance * meanSpacing / (M_PI * sigmaFlat)) * flat / fm;
+        const double peak = std::min (0.9e-3, meanBoardAdmittance * meanSpacing / (M_PI * sigmaFlat)) * flat / fm;
         modes.push_back ({ fm, lossFactor, peak, 1.0 });
     }
 
     // The rim and frame: a few heavy, lightly damped low resonances that the bridge
     // barely moves, but which keep humming under the sound
     for (double f : { 68.0, 104.0, 151.0, 207.0, 286.0, 410.0 })
-        modes.push_back ({ f * (1.0 + 0.05 * rng.symmetric()), 0.008, 1.5e-4, 0.5 });
+        modes.push_back ({ f * (1.0 + 0.05 * rng.symmetric()), 0.008, 0.9e-4, 0.5 });
 
     const size_t n = modes.size();
     for (auto* v : { &board.wr, &board.wi, &board.qr, &board.qi, &board.hr, &board.hi, &board.omega, &board.sigma,
@@ -489,7 +489,7 @@ void ModalPiano::buildSoundboard()
     }
 
     // Overall level: a mezzo-forte middle C peaks around -20 dBFS, fortissimo around -10
-    outputGain = 27.0;
+    outputGain = 42.0;
     buildBody();
 }
 
