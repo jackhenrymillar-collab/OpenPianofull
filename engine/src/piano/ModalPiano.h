@@ -67,6 +67,7 @@ public:
         double tensionLoss = 0.025;         // and lose their high partials faster while it lasts
         double air = 1.0;                   // air trapped under the board, between the rim and the floor
         double lid = 1.0;                   // lid opening (0 = closed, 1 = fully open)
+        double shankFlex = 1.0;             // hammer shank bending and head rocking (0 = rigid hammer)
         double softLift = 0.35;             // lifts the volume of soft notes without changing their tone (0 = off)
     };
 
@@ -124,7 +125,9 @@ private:
     struct Hammer
     {
         bool active = false;
-        double position = 0, velocity = 0; // moving towards the strings is positive
+        double position = 0, velocity = 0; // felt tip, moving towards the strings is positive
+        double headPos = 0, headVel = 0;   // the head's wooden core, which rocks against the tip
+        double shankPos = 0, shankVel = 0; // the shank, which bends under the head
         int samplesSinceStrike = 0, samplesApart = 0;
         std::array<double, 3> gap {};          // hammer not perfectly level across the unison
         std::array<double, 3> lastCompression {};
@@ -185,7 +188,7 @@ private:
     double sampleRate = 48000, Ts = 1.0 / 48000;
     Settings settings;
     double hardness = 1.0;
-    double trebleFirmness = 1.8;
+    double trebleFirmness = 2.2;
     double damperStrength = 1.0;
     bool sustain = false;
 

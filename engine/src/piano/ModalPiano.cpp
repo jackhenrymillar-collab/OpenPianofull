@@ -45,7 +45,7 @@ namespace
         // while the fundamental sings on
         // (the top fundamentals are spared: their losses are mostly at the bridge)
         const double overtone = std::clamp (f / f1 - 1.0, 0.0, 1.0);
-        return b1 + b2 * f * f + 1.2 * overtone * std::pow (f / 2000.0, 3);
+        return b1 + b2 * f * f + 0.6 * overtone * std::pow (f / 2000.0, 3);
     }
 
     // Extra decay with the felt damper resting on the string
@@ -196,11 +196,7 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
         m.prFree.push_back ((float) pole.real()); m.piFree.push_back ((float) pole.imag());
         m.prDamp.push_back (0); m.piDamp.push_back (0);
         m.gr.push_back ((float) gain.real()); m.gi.push_back ((float) gain.imag());
-        // The bridge is heavy: at high frequencies it hardly moves, so strings there are
-        // only weakly driven by it. This mostly matters for the undamped top strings, which
-        // would otherwise pick up and sustain every matching overtone played below them.
-        const double bridgeMobility = 1.0 / (1.0 + std::pow (f / 2000.0, 2));
-        m.bgr.push_back ((float) (gain.real() * beta * bridgeMobility)); m.bgi.push_back ((float) (gain.imag() * beta * bridgeMobility));
+        m.bgr.push_back ((float) (gain.real() * beta)); m.bgi.push_back ((float) (gain.imag() * beta));
         m.fk.push_back ((float) (spec.tension * sign * n * M_PI / L));
         m.beta.push_back ((float) beta);
         m.phi.push_back ((float) (std::sin (n * M_PI * strike) * width));
@@ -489,7 +485,7 @@ void ModalPiano::buildSoundboard()
     }
 
     // Overall level: a mezzo-forte middle C peaks around -20 dBFS, fortissimo around -10
-    outputGain = 42.0;
+    outputGain = 50.0;
     buildBody();
 }
 
@@ -755,6 +751,8 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
     ks.hammer.active = true;
     ks.hammer.position = nearest; // touching the first string
     ks.hammer.velocity = std::max (0.05, hammerVelocity);
+    ks.hammer.headPos = ks.hammer.shankPos = nearest;
+    ks.hammer.headVel = ks.hammer.shankVel = ks.hammer.velocity;
     ks.hammer.samplesSinceStrike = 0;
     ks.hammer.samplesApart = 0;
     for (int i = 0; i < ks.numStrings; ++i)
@@ -933,9 +931,32 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
             });
         }
 
-        // Hammer flight (symplectic Euler)
-        h.velocity -= hammerForce / key.hammerMass * dt;
-        h.position += h.velocity * dt;
+        // Hammer flight (symplectic Euler). The hammer is not rigid: its felt tip sits on a
+        // wooden head that rocks on the shank (about 1.5 kHz), and the shank bends (about
+        // 400 Hz). During the first instants of contact only the tip and head push on the
+        // string; the rest of the mass arrives through the flexing shank a little later,
+        // which rounds off the force pulse (Askenfelt & Jansson 1991; Giordano & Millis 2004).
+        if (settings.shankFlex > 0)
+        {
+            const double mt = 0.3 * key.hammerMass, mh = 0.45 * key.hammerMass, ms = 0.25 * key.hammerMass;
+            const double fr = 1500.0 / std::sqrt (settings.shankFlex), fb = 400.0 / std::sqrt (settings.shankFlex);
+            const double mr = mt * mh / (mt + mh), mb = mh * ms / (mh + ms);
+            const double kr = std::pow (2.0 * M_PI * fr, 2) * mr, kb = std::pow (2.0 * M_PI * fb, 2) * mb;
+            const double cr = 2.0 * 0.4 * std::sqrt (kr * mr), cb = 2.0 * 0.1 * std::sqrt (kb * mb);
+            const double fRock = kr * (h.headPos - h.position) + cr * (h.headVel - h.velocity);
+            const double fBend = kb * (h.shankPos - h.headPos) + cb * (h.shankVel - h.headVel);
+            h.velocity += (fRock - hammerForce) / mt * dt;
+            h.headVel += (fBend - fRock) / mh * dt;
+            h.shankVel += (-fBend) / ms * dt;
+            h.position += h.velocity * dt;
+            h.headPos += h.headVel * dt;
+            h.shankPos += h.shankVel * dt;
+        }
+        else
+        {
+            h.velocity -= hammerForce / key.hammerMass * dt;
+            h.position += h.velocity * dt;
+        }
     }
 
     // Force on the bridge from this key's strings, and the small sideways push the hammer
