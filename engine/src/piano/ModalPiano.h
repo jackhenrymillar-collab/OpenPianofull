@@ -63,6 +63,8 @@ public:
         double actionNoise = 1.0;           // key, hammer and damper noises (0 = silent action)
         double outerFelt = 0.03;            // stiffness of the soft outer felt, relative to the core
         double outerFeltScale = 1.0;        // scales how deep the outer felt is
+        double tensionGlide = 1.0;          // loud notes start sharp as the tension spike stretches the string
+        double tensionLoss = 0.07;          // and lose their high partials faster while it lasts
         double softLift = 0.35;             // lifts the volume of soft notes without changing their tone (0 = off)
     };
 
@@ -110,6 +112,8 @@ private:
         int horizontal = -1;      // vertical strings: index of the same string's horizontal motion
         int longFirst = 0, longCount = 0, longPartials = 0; // longitudinal modes
         float tensionCoef = 0;    // EA/4 (pi/L)^2, for the average tension change
+        mutable float tensionRise = 0; // latest tension rise / rest tension
+        float restTension = 1;
         float outScale = 1;       // loudness lift for soft notes (bridge force up, bridge input down)
         bool damped = true;
         Activity activity = Activity::Off;
@@ -131,6 +135,7 @@ private:
         int firstString = 0, numStrings = 0; // vertical strings
         int firstHorizontal = -1;            // their horizontal motion, same order
         int duplexString = -1;
+        bool tensionApplied = false;
         bool down = false;
         Hammer hammer;
     };
@@ -145,6 +150,8 @@ private:
     void runHammerKey (int keyIndex, double bridgeAcceleration, double& forceSum, double& forceLeft, double& forceRight);
     double runLongitudinal (const String& s);
     void checkActivity();
+    void applyTension();
+    int tensionCounter = 0;
 
     // Each string's modes are stored in two parts: the low ones it keeps while only
     // resonating sit in one region, back to back with every other string's, and the rest

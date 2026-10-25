@@ -236,6 +236,7 @@ void ModalPiano::addLongitudinal (String& s, const StringSpec& spec)
     s.longCount = 0;
     s.longPartials = partials;
     s.tensionCoef = (float) (EA / 4.0 * std::pow (M_PI / L, 2));
+    s.restTension = (float) spec.tension;
 
     for (int order = 1; order <= 4 && order * f1 < fTop && partials > 1; ++order)
     {
@@ -917,6 +918,39 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
     }
 }
 
+// While a loud note rings, the string is stretched and its tension raised. Every partial
+// rises in pitch by half the relative tension rise (f ~ sqrt(T)), so a hard strike starts a
+// little sharp and glides down. The stretched string also sheds its high partials faster.
+void ModalPiano::applyTension()
+{
+    const double glide = settings.tensionGlide;
+    const double loss = settings.tensionLoss;
+    for (int index : longList)
+    {
+        const auto& head = strings[(size_t) index];
+        auto& ks = keyState[(size_t) head.key];
+        const double rise = settings.longitudinal ? head.tensionRise : 0.0;
+        if (rise < 1e-6 && ! ks.tensionApplied)
+            continue;
+        ks.tensionApplied = rise >= 1e-6;
+        const float shift = (float) (0.5 * rise * glide * Ts);
+        const float decay = (float) (rise * loss * Ts);
+        forEachString (ks, [&] (String& s)
+        {
+            const auto& prSrc = s.damped ? m.prDamp : m.prFree;
+            const auto& piSrc = s.damped ? m.piDamp : m.piFree;
+            forModes (s, s.count, [&] (size_t j)
+            {
+                const float w = m.omega[j];
+                const float y = w * shift;
+                const float a = 1.0f - w * decay - 0.5f * y * y;
+                m.pr[j] = a * prSrc[j] - y * piSrc[j];
+                m.pi[j] = a * piSrc[j] + y * prSrc[j];
+            });
+        });
+    }
+}
+
 double ModalPiano::runLongitudinal (const String& s)
 {
     // u_k = k y_k, so the string's squared slope is a sum of products u_k u_n
@@ -931,6 +965,7 @@ double ModalPiano::runLongitudinal (const String& s)
 
     // Slowly varying part: the average tension rise, the same all along the string
     double force = s.tensionCoef * squares;
+    s.tensionRise = (float) (force / s.restTension);
 
     // Resonant part: each longitudinal mode m is driven by partial pairs whose numbers
     // differ by m (and by pairs that add up to m)
@@ -993,6 +1028,12 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         // Strings under a hammer: oversampled
         for (size_t i = 0; i < hammerList.size(); ++i)
             runHammerKey (hammerList[i], bridgeAcceleration, forceSum, forceLeft, forceRight);
+
+        if (++tensionCounter >= 16)
+        {
+            tensionCounter = 0;
+            applyTension();
+        }
 
         // Lengthwise force, through the bridge
         for (int index : longList)
