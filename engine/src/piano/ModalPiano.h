@@ -64,7 +64,7 @@ public:
         double outerFelt = 0.03;            // stiffness of the soft outer felt, relative to the core
         double outerFeltScale = 1.0;        // scales how deep the outer felt is
         double tensionGlide = 1.0;          // loud notes start sharp as the tension spike stretches the string
-        double tensionLoss = 0.07;          // and lose their high partials faster while it lasts
+        double tensionLoss = 0.025;         // and lose their high partials faster while it lasts
         double air = 1.0;                   // air trapped under the board, between the rim and the floor
         double lid = 1.0;                   // lid opening (0 = closed, 1 = fully open)
         double softLift = 0.35;             // lifts the volume of soft notes without changing their tone (0 = off)

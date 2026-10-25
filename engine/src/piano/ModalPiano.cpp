@@ -45,7 +45,7 @@ namespace
         // while the fundamental sings on
         // (the top fundamentals are spared: their losses are mostly at the bridge)
         const double overtone = std::clamp (f / f1 - 1.0, 0.0, 1.0);
-        return b1 + b2 * f * f + 4.0 * overtone * std::pow (f / 2000.0, 3);
+        return b1 + b2 * f * f + 1.2 * overtone * std::pow (f / 2000.0, 3);
     }
 
     // Extra decay with the felt damper resting on the string
