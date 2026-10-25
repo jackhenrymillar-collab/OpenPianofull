@@ -74,3 +74,12 @@ target_link_libraries(OpenPianoPlugin
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+
+# Optional: a command-line tool that saves a PNG of the plugin window
+option(OPENPIANO_BUILD_SCREENSHOT "Build the window screenshot tool" OFF)
+if(OPENPIANO_BUILD_SCREENSHOT)
+    juce_add_console_app(OpenPianoScreenshot PRODUCT_NAME "openpiano-screenshot")
+    target_sources(OpenPianoScreenshot PRIVATE tools/Screenshot.cpp)
+    target_compile_definitions(OpenPianoScreenshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries(OpenPianoScreenshot PRIVATE OpenPianoPlugin juce::juce_gui_basics juce::juce_recommended_config_flags)
+endif()

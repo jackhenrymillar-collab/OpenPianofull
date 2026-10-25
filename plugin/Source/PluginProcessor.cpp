@@ -1,228 +1,214 @@
 /*
 OpenPiano: an open source piano engine based on physical modeling
-Copyright (C) 2021-2022 Michele Perrone
-Github: https://github.com/michele-perrone/OpenPiano
-Author e-mail: perrone(dot)michele(at)outlook(dot)com
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as published
-by the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License
-along with this program.  If not, see <https://www.gnu.org/licenses/>.
+Copyright (C) 2021-2022 Michele Perrone, and contributors
+Licensed under the GNU Affero General Public License v3 or later (see LICENSE).
 */
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "Parameters.h"
 
-//==============================================================================
 OpenPianoAudioProcessor::OpenPianoAudioProcessor()
-#ifndef JucePlugin_PreferredChannelConfigurations
-     : AudioProcessor (BusesProperties()
-                     #if ! JucePlugin_IsMidiEffect
-                      #if ! JucePlugin_IsSynth
-                       .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
-                      #endif
-                       .withOutput ("Output", juce::AudioChannelSet::mono(), true)
-                     #endif
-                       )
-#endif
+    : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+      state (*this, nullptr, "OpenPiano", params::createLayout())
 {
-    pedal_down_current = false;
+    volumeParam = state.getRawParameterValue (params::volume);
+    dynamicsParam = state.getRawParameterValue (params::dynamics);
+    hardnessParam = state.getRawParameterValue (params::hardness);
+    damperParam = state.getRawParameterValue (params::damper);
+    latchParam = state.getRawParameterValue (params::sustainLatch);
 }
 
-OpenPianoAudioProcessor::~OpenPianoAudioProcessor()
-{
-}
+OpenPianoAudioProcessor::~OpenPianoAudioProcessor() = default;
 
-//==============================================================================
-const juce::String OpenPianoAudioProcessor::getName() const
-{
-    return JucePlugin_Name;
-}
-
-bool OpenPianoAudioProcessor::acceptsMidi() const
-{
-   #if JucePlugin_WantsMidiInput
-    return true;
-   #else
-    return false;
-   #endif
-}
-
-bool OpenPianoAudioProcessor::producesMidi() const
-{
-   #if JucePlugin_ProducesMidiOutput
-    return true;
-   #else
-    return false;
-   #endif
-}
-
-bool OpenPianoAudioProcessor::isMidiEffect() const
-{
-   #if JucePlugin_IsMidiEffect
-    return true;
-   #else
-    return false;
-   #endif
-}
-
-double OpenPianoAudioProcessor::getTailLengthSeconds() const
-{
-    return 0.0;
-}
-
-int OpenPianoAudioProcessor::getNumPrograms()
-{
-    return 1;   // NB: some hosts don't cope very well if you tell them there are 0 programs,
-                // so this should be at least 1, even if you're not really implementing programs.
-}
-
-int OpenPianoAudioProcessor::getCurrentProgram()
-{
-    return 0;
-}
-
-void OpenPianoAudioProcessor::setCurrentProgram (int index)
-{
-}
-
-const juce::String OpenPianoAudioProcessor::getProgramName (int index)
-{
-    return {};
-}
-
-void OpenPianoAudioProcessor::changeProgramName (int index, const juce::String& newName)
-{
-}
-
-//==============================================================================
 void OpenPianoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    // Use this method as the place to do any pre-playback
-    // initialisation that you need..
-
-    // Initialize the piano and the output buffer
-    piano = new Piano(sampleRate, samplesPerBlock, std::thread::hardware_concurrency());
+    piano.prepare (sampleRate, samplesPerBlock);
+    keyboardState.reset();
+    midiSustain = false;
+    sustainApplied = false;
+    currentSampleRate = sampleRate;
+    prepared = true;
 }
 
 void OpenPianoAudioProcessor::releaseResources()
 {
-    // When playback stops, you can use this as an opportunity to free up any
-    // spare memory, etc.
-    delete piano;
+    piano.reset();
 }
 
-#ifndef JucePlugin_PreferredChannelConfigurations
 bool OpenPianoAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
-  #if JucePlugin_IsMidiEffect
-    juce::ignoreUnused (layouts);
-    return true;
-  #else
-    // This is the place where you check if the layout is supported.
-    // In this template code we only support mono or stereo.
-    // Some plugin hosts, such as certain GarageBand versions, will only
-    // load plugins that support stereo bus layouts.
-    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::mono()
-     && layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
-        return false;
-
-    // This checks if the input layout matches the output layout
-   #if ! JucePlugin_IsSynth
-    if (layouts.getMainOutputChannelSet() != layouts.getMainInputChannelSet())
-        return false;
-   #endif
-
-    return true;
-  #endif
+    const auto out = layouts.getMainOutputChannelSet();
+    return out == juce::AudioChannelSet::mono() || out == juce::AudioChannelSet::stereo();
 }
-#endif
 
-void OpenPianoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+void OpenPianoAudioProcessor::updateControls()
+{
+    openpiano::PianoControls c;
+    c.outputGain = juce::Decibels::decibelsToGain (volumeParam->load(), -100.0f);
+    c.dynamicsCurve = dynamicsParam->load();
+    c.hammerHardness = hardnessParam->load();
+    c.damperStrength = damperParam->load();
+
+    // Snap the defaults exactly, so the default sound matches the regression-tested engine
+    if (std::abs (c.dynamicsCurve - 1.0f) < 0.005f) c.dynamicsCurve = 1.0f;
+    if (std::abs (c.hammerHardness - 1.0f) < 0.005f) c.hammerHardness = 1.0f;
+    if (std::abs (c.damperStrength - 1.0f) < 0.005f) c.damperStrength = 1.0f;
+    if (std::abs (volumeParam->load()) < 0.05f) c.outputGain = 1.0f;
+
+    piano.setControls (c);
+}
+
+void OpenPianoAudioProcessor::updateSustain()
+{
+    const bool down = midiSustain || latchParam->load() > 0.5f;
+    if (down != sustainApplied)
+    {
+        piano.setSustain (down);
+        sustainApplied = down;
+    }
+    sustainShown.store (down, std::memory_order_relaxed);
+}
+
+void OpenPianoAudioProcessor::applyEvent (const juce::MidiMessage& m)
+{
+    if (m.isNoteOn())
+        piano.noteOn (m.getNoteNumber(), m.getVelocity());
+    else if (m.isNoteOff())
+        piano.noteOff (m.getNoteNumber());
+    else if (m.isSustainPedalOn())
+        midiSustain = true;
+    else if (m.isSustainPedalOff())
+        midiSustain = false;
+    else if (m.isAllNotesOff() || m.isAllSoundOff() || m.isResetAllControllers())
+    {
+        if (m.isAllSoundOff())
+            piano.reset();
+        for (int n = 0; n < 128; ++n)
+            piano.noteOff (n);
+        midiSustain = false;
+    }
+    updateSustain();
+}
+
+void OpenPianoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
-    auto totalNumInputChannels  = getTotalNumInputChannels();
-    auto totalNumOutputChannels = getTotalNumOutputChannels();
+    const auto startTicks = juce::Time::getHighResolutionTicks();
+    const int numSamples = buffer.getNumSamples();
+    const int numChannels = buffer.getNumChannels();
 
-    // In case we have more outputs than inputs, this code clears any output
-    // channels that didn't contain input data, (because these aren't
-    // guaranteed to be empty - they may contain garbage).
-    // This is here to avoid people getting screaming feedback
-    // when they first compile a plugin, but obviously you don't need to keep
-    // this code if your algorithm always overwrites all the output channels.
-    for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
-        buffer.clear (i, 0, buffer.getNumSamples());
-
-
-    // This is the place where you'd normally do the guts of your plugin's
-    // audio processing...
-    // Make sure to reset the state if your inner loop is processing
-    // the samples and the outer loop is handling the channels.
-    // Alternatively, you can process the samples with the channels
-    // interleaved by keeping the same state.
-    keyboardState.processNextMidiBuffer (midiMessages, 0, buffer.getNumSamples(), true);
-
-    for (const auto metadata : midiMessages)
+    if (! prepared || numChannels == 0)
     {
-        juce::MidiMessage message = metadata.getMessage();
-
-        // To correctly deal with the pedal, we have to consider that some pedals send
-        // continuous messages. Right now, damping is implemented on a simple on/off
-        // basis, so we're only interested when the pedal goes up and down, nothing
-        // in between. To do so, we compare the current state of the pedal with the
-        // previous one. We damp the strings only when the pedal changes from down
-        // to up, otherwise we end up with a mess of messages to deal with.
-        if (message.isSustainPedalOn())
-        {
-            pedal_down_previous = pedal_down_current;
-            pedal_down_current = true;
-        }
-        else if (message.isSustainPedalOff())
-        {
-            pedal_down_previous = pedal_down_current;
-            pedal_down_current = false;
-            if(pedal_down_previous != pedal_down_current)
-            {
-                for (int i = 0; i < N_STRINGS; i++)
-                {
-                    // Damp only those strings which are not currently held down on the keyboard
-                    if(!keyboardState.isNoteOn(1, i+MIDI_NOTE_OFFSET))
-                        piano->strings[i]->damp();
-                }
-            }
-        }
-        else if (message.isNoteOn() &&
-                 message.getNoteNumber()-MIDI_NOTE_OFFSET >= 0 &&
-                 message.getNoteNumber()-MIDI_NOTE_OFFSET < N_STRINGS)
-        {
-            piano->strings[message.getNoteNumber()-MIDI_NOTE_OFFSET]->hit(message.getVelocity()/30.0);
-        }
-        // Strings are damped only if pedal is not down
-        else if (message.isNoteOff() && !pedal_down_current &&
-                 message.getNoteNumber()-MIDI_NOTE_OFFSET >= 0 &&
-                 message.getNoteNumber()-MIDI_NOTE_OFFSET < N_STRINGS)
-        {
-            piano->strings[message.getNoteNumber()-MIDI_NOTE_OFFSET]->damp();
-        }
+        buffer.clear();
+        return;
     }
 
-    int samplesPerBlock = buffer.getNumSamples();
-    float* outputChannelData = buffer.getWritePointer(0);
-    float gain = 150;
-    piano->get_next_block_multithreaded(outputChannelData, samplesPerBlock, gain);
+    // Add notes played on the on-screen keyboard
+    keyboardState.processNextMidiBuffer (midi, 0, numSamples, true);
+
+    updateControls();
+    updateSustain();
+
+    // Render up to each MIDI event, then apply it (sample-accurate timing)
+    std::array<float*, 2> channels {};
+    int pos = 0;
+    auto renderTo = [&] (int end)
+    {
+        if (end <= pos)
+            return;
+        for (int ch = 0; ch < std::min (numChannels, 2); ++ch)
+            channels[(size_t) ch] = buffer.getWritePointer (ch, pos);
+        piano.process (channels.data(), std::min (numChannels, 2), end - pos);
+        pos = end;
+    };
+
+    for (const auto metadata : midi)
+    {
+        renderTo (juce::jlimit (0, numSamples, metadata.samplePosition));
+        applyEvent (metadata.getMessage());
+    }
+    renderTo (numSamples);
+
+    for (int ch = 2; ch < numChannels; ++ch)
+        buffer.clear (ch, 0, numSamples);
+
+    // CPU load: time spent here relative to the block's duration, smoothed
+    const double seconds = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - startTicks);
+    const double blockSeconds = numSamples / juce::jmax (1.0, getSampleRate());
+    const float load = (float) (seconds / blockSeconds);
+    cpuLoad.store (cpuLoad.load (std::memory_order_relaxed) * 0.9f + load * 0.1f, std::memory_order_relaxed);
 }
 
 //==============================================================================
-bool OpenPianoAudioProcessor::hasEditor() const
+int OpenPianoAudioProcessor::getNumPrograms()
 {
-    return true; // (change this to false if you choose to not supply an editor)
+    return (int) params::factoryPresets().size();
+}
+
+const juce::String OpenPianoAudioProcessor::getProgramName (int index)
+{
+    const auto& presets = params::factoryPresets();
+    return juce::isPositiveAndBelow (index, (int) presets.size()) ? juce::String (presets[(size_t) index].name) : juce::String();
+}
+
+void OpenPianoAudioProcessor::setCurrentProgram (int index)
+{
+    const auto& presets = params::factoryPresets();
+    if (! juce::isPositiveAndBelow (index, (int) presets.size()))
+        return;
+
+    currentProgram = index;
+    const auto& p = presets[(size_t) index];
+    auto set = [this] (const char* id, float value)
+    {
+        if (auto* param = state.getParameter (id))
+            param->setValueNotifyingHost (param->convertTo0to1 (value));
+    };
+    set (params::volume, p.volumeDb);
+    set (params::dynamics, p.dynamics);
+    set (params::hardness, p.hardness);
+    set (params::damper, p.damper);
+}
+
+void OpenPianoAudioProcessor::switchToSlot (int slot)
+{
+    if (slot == activeSlot || ! juce::isPositiveAndBelow (slot, 2))
+        return;
+
+    auto current = state.copyState();
+    current.setProperty ("program", currentProgram, nullptr);
+    slots[(size_t) activeSlot] = current;
+
+    // First switch to an empty slot starts it as a copy of the current sound
+    if (slots[(size_t) slot].isValid())
+    {
+        state.replaceState (slots[(size_t) slot]);
+        currentProgram = slots[(size_t) slot].getProperty ("program", currentProgram);
+    }
+
+    activeSlot = slot;
+}
+
+void OpenPianoAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    auto tree = state.copyState();
+    tree.setProperty ("program", currentProgram, nullptr);
+    if (auto xml = tree.createXml())
+        copyXmlToBinary (*xml, destData);
+}
+
+void OpenPianoAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
+{
+    if (auto xml = getXmlFromBinary (data, sizeInBytes))
+    {
+        if (xml->hasTagName (state.state.getType()))
+        {
+            auto tree = juce::ValueTree::fromXml (*xml);
+            currentProgram = tree.getProperty ("program", 0);
+            state.replaceState (tree);
+        }
+    }
 }
 
 juce::AudioProcessorEditor* OpenPianoAudioProcessor::createEditor()
@@ -230,22 +216,6 @@ juce::AudioProcessorEditor* OpenPianoAudioProcessor::createEditor()
     return new OpenPianoAudioProcessorEditor (*this);
 }
 
-//==============================================================================
-void OpenPianoAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
-{
-    // You should use this method to store your parameters in the memory block.
-    // You could do that either as raw data, or use the XML or ValueTree classes
-    // as intermediaries to make it easy to save and load complex data.
-}
-
-void OpenPianoAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
-{
-    // You should use this method to restore your parameters from this memory block,
-    // whose contents will have been created by the getStateInformation() call.
-}
-
-//==============================================================================
-// This creates new instances of the plugin..
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new OpenPianoAudioProcessor();

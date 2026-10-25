@@ -1,80 +1,86 @@
 /*
 OpenPiano: an open source piano engine based on physical modeling
-Copyright (C) 2021-2022 Michele Perrone
-Github: https://github.com/michele-perrone/OpenPiano
-Author e-mail: perrone(dot)michele(at)outlook(dot)com
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as published
-by the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License
-along with this program.  If not, see <https://www.gnu.org/licenses/>.
+Copyright (C) 2021-2022 Michele Perrone, and contributors
+Licensed under the GNU Affero General Public License v3 or later (see LICENSE).
 */
 
 #pragma once
 
-#include <JuceHeader.h>
-#include "piano.h"
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_audio_utils/juce_audio_utils.h>
 
+#include "openpiano/PianoInstrument.h"
 
-
-//==============================================================================
-/**
-*/
-class OpenPianoAudioProcessor  : public juce::AudioProcessor
+class OpenPianoAudioProcessor final : public juce::AudioProcessor
 {
 public:
-    //==============================================================================
     OpenPianoAudioProcessor();
     ~OpenPianoAudioProcessor() override;
 
-    //==============================================================================
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
-
-   #ifndef JucePlugin_PreferredChannelConfigurations
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
-   #endif
-
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    using AudioProcessor::processBlock;
 
-    //==============================================================================
     juce::AudioProcessorEditor* createEditor() override;
-    bool hasEditor() const override;
+    bool hasEditor() const override { return true; }
 
-    //==============================================================================
-    const juce::String getName() const override;
+    const juce::String getName() const override { return JucePlugin_Name; }
+    bool acceptsMidi() const override { return true; }
+    bool producesMidi() const override { return false; }
+    bool isMidiEffect() const override { return false; }
+    double getTailLengthSeconds() const override { return 0.0; }
 
-    bool acceptsMidi() const override;
-    bool producesMidi() const override;
-    bool isMidiEffect() const override;
-    double getTailLengthSeconds() const override;
-
-    //==============================================================================
+    // Factory presets
     int getNumPrograms() override;
-    int getCurrentProgram() override;
+    int getCurrentProgram() override { return currentProgram; }
     void setCurrentProgram (int index) override;
     const juce::String getProgramName (int index) override;
-    void changeProgramName (int index, const juce::String& newName) override;
+    void changeProgramName (int, const juce::String&) override {}
 
-    //==============================================================================
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    //==============================================================================
-    juce::MidiKeyboardState keyboardState;
-    bool pedal_down_previous;
-    bool pedal_down_current;
+    // A/B comparison: two parameter snapshots. Message thread only.
+    int getActiveSlot() const { return activeSlot; }
+    void switchToSlot (int slot);
+
+    // For the UI
+    juce::AudioProcessorValueTreeState& getState() { return state; }
+    juce::MidiKeyboardState& getKeyboardState() { return keyboardState; }
+    const openpiano::Instrument& getInstrument() const { return piano; }
+    float getCpuLoad() const { return cpuLoad.load (std::memory_order_relaxed); }
+    bool isSustainDown() const { return sustainShown.load (std::memory_order_relaxed); }
+    double getCurrentSampleRate() const { return currentSampleRate.load (std::memory_order_relaxed); }
 
 private:
-    //==============================================================================
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (OpenPianoAudioProcessor)
+    void applyEvent (const juce::MidiMessage& message);
+    void updateControls();
+    void updateSustain();
 
-    Piano* piano;
+    juce::AudioProcessorValueTreeState state;
+    juce::MidiKeyboardState keyboardState;
+
+    openpiano::PianoInstrument piano;
+    bool prepared = false;
+
+    std::atomic<float>* volumeParam = nullptr;
+    std::atomic<float>* dynamicsParam = nullptr;
+    std::atomic<float>* hardnessParam = nullptr;
+    std::atomic<float>* damperParam = nullptr;
+    std::atomic<float>* latchParam = nullptr;
+
+    bool midiSustain = false;
+    bool sustainApplied = false;
+    std::atomic<bool> sustainShown { false };
+
+    std::atomic<float> cpuLoad { 0.0f };
+    std::atomic<double> currentSampleRate { 0.0 };
+
+    int currentProgram = 0;
+    int activeSlot = 0;
+    std::array<juce::ValueTree, 2> slots;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (OpenPianoAudioProcessor)
 };
