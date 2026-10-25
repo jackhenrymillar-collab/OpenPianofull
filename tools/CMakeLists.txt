@@ -1,0 +1,22 @@
+# dr_wav, for writing renders
+add_library(openpiano_drwav STATIC ../third_party/dr_wav/dr_wav.cpp)
+target_include_directories(openpiano_drwav PUBLIC ../third_party/dr_wav)
+
+# The original OpenPiano code, frozen as a reference for regression tests
+add_library(openpiano_upstream STATIC upstream/array_helpers.cpp)
+target_include_directories(openpiano_upstream PUBLIC upstream)
+target_link_libraries(openpiano_upstream PUBLIC openpiano_drwav)
+
+add_library(openpiano_harness STATIC
+    harness/Harness.h
+    harness/Harness.cpp
+    harness/UpstreamRender.cpp)
+target_include_directories(openpiano_harness PUBLIC harness)
+target_link_libraries(openpiano_harness PUBLIC openpiano_engine openpiano_upstream openpiano_drwav)
+
+add_executable(openpiano-render harness/RenderMain.cpp)
+target_link_libraries(openpiano-render PRIVATE openpiano_harness)
+
+add_executable(openpiano-regression-test ../tests/RegressionTest.cpp)
+target_link_libraries(openpiano-regression-test PRIVATE openpiano_harness)
+add_test(NAME regression_matches_upstream COMMAND openpiano-regression-test)
