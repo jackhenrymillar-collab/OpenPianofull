@@ -110,7 +110,13 @@ void ModalPiano::prepare (double newSampleRate, const Settings& newSettings)
         Rng rng (4242);
         for (auto& key : keys)
         {
-            const double keyDrift = 7.0 * ageFactor * rng.symmetric();
+            // Untuned for years, the stretch partly relaxes (the treble sags and the bass
+            // creeps back up, by up to a quarter), the whole piano settles a little flat, and
+            // neighbouring sections of the scale drift together as the frame and board move
+            const double position = (key.midiNote - kLowestKey) / double (kHighestKey - kLowestKey);
+            const double stretchDrift = -0.25 * key.stretchCents - 5.0 * position
+                                        + 4.0 * std::sin (2.0 * M_PI * position * 3.6 + 1.3);
+            const double keyDrift = ageFactor * (stretchDrift + 7.0 * rng.symmetric());
             for (int i = 0; i < key.numStrings; ++i)
             {
                 const double cents = keyDrift + 3.0 * ageFactor * rng.symmetric();
@@ -1082,7 +1088,7 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
         // In the top octaves the knock is a large part of what you hear: a woody thud that
         // tells a piano from a harp or a glockenspiel
         const double top = std::pow (std::max (0.0, (treble - 0.6) / 0.4), 2.0);
-        queueAction (1, 0, 0.06 * std::pow (v, 1.5) * (0.4 + 0.6 * treble + 1.2 * top), k);
+        queueAction (1, 0, 0.09 * std::pow (v, 1.5) * (0.4 + 0.6 * treble + 1.2 * top), k);
     }
 
     // Soft notes are made a little louder without changing their tone: the key's strings push
