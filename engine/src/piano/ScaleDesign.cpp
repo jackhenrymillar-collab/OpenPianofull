@@ -228,8 +228,11 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         // Unison: tuned together, with the tiny differences a good tuner leaves.
         // Trichord offsets around the centre; the exact amount varies a little per key.
         const double spread = unisonSpreadCents * (1.0 + 0.4 * keyNoise (k, 1));
-        const double offsets3[3] = { -spread, 0.25 * spread * keyNoise (k, 2), spread };
-        const double offsets2[2] = { -0.5 * spread, 0.5 * spread };
+        // Every key's pattern differs: which string is high or low, and by how much
+        const double offsets3[3] = { -spread * (1.0 + 0.3 * keyNoise (k, 3)), 0.25 * spread * keyNoise (k, 2),
+                                     spread * (1.0 + 0.3 * keyNoise (k, 4)) };
+        const double flip = keyNoise (k, 5) < 0 ? -1.0 : 1.0;
+        const double offsets2[2] = { -0.5 * flip * spread * (1.0 + 0.3 * keyNoise (k, 6)), 0.5 * flip * spread };
         for (int s = 0; s < key.numStrings; ++s)
         {
             const double cents = key.numStrings == 3 ? offsets3[s] : key.numStrings == 2 ? offsets2[s] : 0.0;
