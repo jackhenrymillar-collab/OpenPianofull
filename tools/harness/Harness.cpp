@@ -25,7 +25,7 @@ std::vector<Scenario> standardScenarios (int sr)
     struct Single { const char* label; int note; int velocity; };
     const Single singles[] = {
         { "A0", 21, 80 }, { "C2", 36, 80 }, { "C3", 48, 80 }, { "C4", 60, 80 },
-        { "A4", 69, 80 }, { "C5", 72, 80 }, { "C4", 60, 30 }, { "C4", 60, 127 },
+        { "A4", 69, 80 }, { "C5", 72, 80 }, { "C4", 60, 30 }, { "C4", 60, 127 }, { "C2", 36, 127 },
     };
     for (auto& s : singles)
     {

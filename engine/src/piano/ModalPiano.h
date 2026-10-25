@@ -8,6 +8,7 @@ Licensed under the GNU Affero General Public License v3 or later (see LICENSE).
 
 #include "ScaleDesign.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -26,24 +27,37 @@ namespace openpiano::piano
 // k f sqrt(1 + B k^2) and decays at its own rate. There is no grid to run out of, so treble
 // notes are as accurate as bass notes, at any sample rate.
 //
-// Hammers: a mass on a nonlinear felt spring, F = Q0 x^p, pressing on all of a key's
-// strings. While a hammer touches the strings that key runs 8x oversampled.
+// Each string vibrates in two directions: vertical (towards the soundboard, struck by the
+// hammer) and horizontal (sideways, along the board). The horizontal motion pushes on the
+// bridge much less, so it rings longer, and it leaks into the vertical through the bridge.
+// Strings also stretch along their length (longitudinal waves): the stretch rises with the
+// square of the vibration, so loud notes gain "phantom" partials and a metallic attack.
+//
+// Hammers: a mass on a nonlinear, lossy felt spring, F = Q0 x^p (1 + lambda dx/dt), pressing
+// on all of a key's strings. While a hammer touches the strings that key runs oversampled.
 //
 // Bridge and soundboard: every string pushes on the bridge, and the bridge's motion moves
 // the end of every string. The bridge is a resistive part (the dense high-frequency
-// soundboard response) plus a bank of soundboard modes. This one coupling gives:
+// soundboard response) plus a bank of soundboard and case modes. This one coupling gives:
 //   - double decay: a key's 2 or 3 strings share the bridge, so their in-step motion drains
-//     quickly into it while out-of-step motion lingers (Weinreich 1977);
+//     quickly into it while out-of-step motion lingers (Weinreich 1977), and the slow
+//     horizontal motion adds a second, longer tail;
 //   - sympathetic resonance: undamped strings (held keys, sustain pedal, top octaves with
-//     no dampers) pick up energy from the bridge;
+//     no dampers, duplex segments behind the bridge) pick up energy from the bridge;
 //   - the soundboard's own resonances colour and radiate the sound.
 class ModalPiano
 {
 public:
     struct Settings
     {
-        double unisonSpreadCents = 0.3; // how far apart unison strings are tuned
-        int oversampling = 8;           // during hammer contact
+        double unisonSpreadCents = 0.45;    // how far each outer unison string sits from the centre
+        double hammerUnevenness = 0.04e-3;  // [m] how far apart a hammer meets a key's strings
+        int oversampling = 8;               // during hammer contact
+        bool horizontal = true;             // second (sideways) vibration direction
+        bool longitudinal = true;           // lengthwise waves and phantom partials
+        bool duplex = true;                 // undamped string segments behind the treble bridge
+        double longitudinalCoupling = 0.12; // share of the lengthwise force that reaches the board (via bridge tilt)
+        double feltLoss = 0.12;             // [s/m] felt hysteresis (0 = perfectly elastic)
     };
 
     ModalPiano();
@@ -66,20 +80,29 @@ public:
     int lowestNote() const { return kLowestKey; }
     int highestNote() const { return kHighestKey; }
     const std::vector<KeySpec>& scale() const { return keys; }
+    const Settings& currentSettings() const { return settings; }
 
     // Frequency of a string's k-th partial as simulated (for tests)
     double partialFrequency (int midiNote, int stringIndex, int k) const;
 
 private:
     enum class Activity : uint8_t { Off, Sympathetic, Full };
+    enum class Kind : uint8_t { Vertical, Horizontal, Duplex };
 
     struct String
     {
         int key;              // index into keys
-        int first, count;     // range in the mode arrays
-        int sympatheticCount; // modes kept while only resonating
-        float mass;           // modal mass mu L / 2
-        float panLeft, panRight;
+        Kind kind = Kind::Vertical;
+        int count = 0;            // modes in all
+        int sympatheticCount = 0; // modes kept while only resonating (the lowest ones)
+        int first = 0;            // where the lowest sympatheticCount modes sit in the mode arrays
+        int highFirst = 0;        // where the rest sit
+        float mass = 0;           // modal mass mu L / 2
+        float panLeft = 0, panRight = 0;
+        float hammerShare = 0;    // horizontal strings: fraction of the hammer force they feel
+        int horizontal = -1;      // vertical strings: index of the same string's horizontal motion
+        int longFirst = 0, longCount = 0, longPartials = 0; // longitudinal modes
+        float tensionCoef = 0;    // EA/4 (pi/L)^2, for the average tension change
         bool damped = true;
         Activity activity = Activity::Off;
     };
@@ -89,22 +112,57 @@ private:
         bool active = false;
         double position = 0, velocity = 0; // moving towards the strings is positive
         int samplesSinceStrike = 0, samplesApart = 0;
-        std::array<double, 3> gap {};      // hammer not perfectly level across the unison
+        std::array<double, 3> gap {};          // hammer not perfectly level across the unison
+        std::array<double, 3> lastCompression {};
+        std::array<double, 3> forceSum {};     // per string, over the current sample
     };
 
     struct KeyState
     {
-        int firstString, numStrings;
+        int firstString = 0, numStrings = 0; // vertical strings
+        int firstHorizontal = -1;            // their horizontal motion, same order
+        int duplexString = -1;
         bool down = false;
         Hammer hammer;
     };
 
     void buildModes();
+    int addString (const StringSpec& spec, int key, Kind kind, double strikeRatio, double hammerWidth,
+                   int maxModes, double maxFrequency, uint32_t seed);
+    void addLongitudinal (String& s, const StringSpec& spec);
     void buildSoundboard();
     void updateDamping (int keyIndex);
     void setActivity (String& s, Activity a);
     void runHammerKey (int keyIndex, double bridgeAcceleration, double& forceSum, double& forceLeft, double& forceRight);
+    double runLongitudinal (const String& s);
     void checkActivity();
+
+    // Each string's modes are stored in two parts: the low ones it keeps while only
+    // resonating sit in one region, back to back with every other string's, and the rest
+    // in another. So resonating strings form long runs that can be stepped in one go.
+    static int modeIndex (const String& s, int k)
+    {
+        return k < s.sympatheticCount ? s.first + k : s.highFirst + k - s.sympatheticCount;
+    }
+    template <typename Fn> static void forModes (const String& s, int keep, Fn&& fn)
+    {
+        const int low = std::min (keep, s.sympatheticCount);
+        for (int j = s.first; j < s.first + low; ++j)
+            fn ((size_t) j);
+        for (int j = s.highFirst; j < s.highFirst + keep - low; ++j)
+            fn ((size_t) j);
+    }
+    void relayoutModes();
+
+    template <typename Fn> void forEachString (const KeyState& ks, Fn&& fn)
+    {
+        for (int i = 0; i < ks.numStrings; ++i)
+        {
+            fn (strings[(size_t) (ks.firstString + i)]);
+            if (ks.firstHorizontal >= 0)
+                fn (strings[(size_t) (ks.firstHorizontal + i)]);
+        }
+    }
 
     double sampleRate = 48000, Ts = 1.0 / 48000;
     Settings settings;
@@ -123,31 +181,53 @@ private:
         std::vector<float> pr, pi;          // per-sample pole in use
         std::vector<float> prFree, piFree;  // pole without damper
         std::vector<float> prDamp, piDamp;  // pole with damper
-        std::vector<float> bgr, bgi;        // bridge-acceleration input gain
+        std::vector<float> gr, gi;          // acceleration input gain, one sample
+        std::vector<float> bgr, bgi;        // bridge-acceleration input gain (gain * beta)
         std::vector<float> fk;              // contribution to the bridge force
         std::vector<float> beta;            // bridge coupling weight
         std::vector<float> phi;             // mode shape at the hammer (incl. hammer width)
         std::vector<float> prOs, piOs, gOsr, gOsi; // oversampled pole and input gain
         std::vector<float> sigmaInternal, omega;
 
-        void resize (size_t n);
+        void clear();
+        size_t size() const { return zr.size(); }
     } m;
 
-    // Soundboard modes
+    // Longitudinal modes
+    struct Longitudinal
+    {
+        std::vector<float> zr, zi, pr, pi, gr, gi;
+        std::vector<float> drive;   // acceleration per unit of the pair sum
+        std::vector<float> out;     // bridge force per unit of displacement
+        std::vector<float> invW2;   // 1 / omega^2, for the slowly varying part
+        std::vector<int> order;     // m
+    } lm;
+    std::vector<float> scratchU;
+
+    // Soundboard and case modes
     struct Board
     {
         std::vector<float> wr, wi, qr, qi, hr, hi, omega, sigma, radLeft, radRight;
     } board;
 
-    double bridgeResistance = 1.5e-4;  // m/s per N: the dense high-frequency part of the soundboard
+    double bridgeResistance = 1.5e-4;      // m/s per N: the dense high-frequency part of the soundboard
+    double horizontalResistance = 1.0e-4;  // the bridge moves less easily sideways
+    double crossResistance = 0.6e-4;       // vertical force -> sideways motion, and back
     double lastBridgeVelocity = 0, bridgeAcceleration = 0;
+    double lastHorizontalVelocity = 0, horizontalAcceleration = 0;
     double resistiveLpLeft = 0, resistiveLpRight = 0, lpCoeff = 0;
     double dcLeft = 0, dcRight = 0, dcInLeft = 0, dcInRight = 0, dcCoeff = 0;
     double outputGain = 1.0;
 
     int activityCounter = 0;
     int activeStrings = 0;
-    std::vector<int> fullList, hammerList;
+    std::vector<int> fullList, hammerList, longList, alwaysOn;
+
+    // Neighbouring strings whose modes sit back to back are stepped in one go
+    struct Run { int first, count; float panLeft, panRight; bool side; };
+    std::vector<Run> runs;
+    struct Segment { int first, count; float panLeft, panRight; bool side; };
+    std::vector<Segment> segmentScratch;
 };
 
 } // namespace openpiano::piano
