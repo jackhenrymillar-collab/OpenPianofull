@@ -16,7 +16,14 @@ target_link_libraries(openpiano_harness PUBLIC openpiano_engine openpiano_upstre
 
 add_executable(openpiano-render harness/RenderMain.cpp)
 target_link_libraries(openpiano-render PRIVATE openpiano_harness)
+# For --scale, which prints the piano's design table
+target_include_directories(openpiano-render PRIVATE ../engine/src)
 
 add_executable(openpiano-regression-test ../tests/RegressionTest.cpp)
 target_link_libraries(openpiano-regression-test PRIVATE openpiano_harness)
 add_test(NAME regression_matches_upstream COMMAND openpiano-regression-test)
+
+add_executable(openpiano-piano-test ../tests/PianoTest.cpp)
+target_link_libraries(openpiano-piano-test PRIVATE openpiano_engine)
+target_include_directories(openpiano-piano-test PRIVATE ../engine/src)
+add_test(NAME piano_checks COMMAND openpiano-piano-test)

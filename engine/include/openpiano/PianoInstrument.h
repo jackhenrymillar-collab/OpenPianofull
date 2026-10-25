@@ -7,7 +7,7 @@ Licensed under the GNU Affero General Public License v3 or later (see LICENSE).
 #pragma once
 
 #include "openpiano/Instrument.h"
-#include "openpiano/ParallelFor.h"
+#include "openpiano/PianoControls.h"
 
 #include <array>
 #include <atomic>
@@ -17,25 +17,15 @@ Licensed under the GNU Affero General Public License v3 or later (see LICENSE).
 namespace openpiano
 {
 
-namespace piano { class StringModel; }
+namespace piano { class ModalPiano; }
 
-// Player-facing controls for the piano. The defaults reproduce upstream OpenPiano exactly.
-struct PianoControls
-{
-    float outputGain = 1.0f;      // Linear gain on top of the engine's internal level
-    float dynamicsCurve = 1.0f;   // Velocity -> hammer speed exponent (1 = linear, >1 = softer touch)
-    float hammerHardness = 1.0f;  // Scales felt stiffness (brighter above 1)
-    float damperStrength = 1.0f;  // Scales how quickly released notes are damped
-};
-
+// The full 88-key piano: about 230 strings tuned as on a concert grand, hammers, a shared
+// bridge and a soundboard, with sympathetic resonance. See piano/ModalPiano.h.
 class PianoInstrument final : public Instrument
 {
 public:
-    // numWorkerThreads: extra threads used to compute strings in parallel (0 = audio thread only).
-    explicit PianoInstrument (unsigned numWorkerThreads = defaultWorkerThreads());
+    PianoInstrument();
     ~PianoInstrument() override;
-
-    static unsigned defaultWorkerThreads();
 
     const char* name() const override { return "Piano"; }
 
@@ -46,11 +36,15 @@ public:
     void noteOff (int midiNote) override;
     void setSustain (bool pedalDown) override;
 
+    // Lifts a key's dampers without striking (a key pressed too gently to sound)
+    void holdKeySilently (int midiNote);
+
+    // Writes stereo to channels 0 and 1 (mono hosts get the sum on channel 0)
     void process (float* const* outputs, int numChannels, int numSamples) override;
 
     int lowestNote() const override;
     int highestNote() const override;
-    int activeVoiceCount() const override { return activeVoices.load (std::memory_order_relaxed); }
+    int activeVoiceCount() const override { return activeStrings.load (std::memory_order_relaxed); }
 
     // Audio thread only. Takes effect immediately.
     void setControls (const PianoControls& controls);
@@ -58,24 +52,15 @@ public:
     // Hammer speed [m/s] for a MIDI velocity under the current dynamics curve.
     double hammerVelocityFor (int velocity) const;
 
-    // Level that upstream OpenPiano applied in its plugin.
-    static constexpr float kEngineGain = 150.0f;
+    // For tests and the render tool
+    const piano::ModalPiano& model() const { return *piano; }
 
 private:
-    void renderChunk (float* out, int numSamples);
-    piano::StringModel* stringFor (int midiNote);
-
-    std::unique_ptr<ParallelFor> pool;
-    std::vector<std::unique_ptr<piano::StringModel>> strings; // index 0 = lowestNote()
-    std::vector<std::vector<double>> stringBuffers;
-    int chunkSize = 256;
-    double sampleRate = 0;
-
+    std::unique_ptr<piano::ModalPiano> piano;
+    std::vector<float> scratch;
     PianoControls controls;
     std::array<bool, 128> keyHeld {};
-    bool sustainDown = false;
-
-    std::atomic<int> activeVoices { 0 };
+    std::atomic<int> activeStrings { 0 };
 };
 
 } // namespace openpiano

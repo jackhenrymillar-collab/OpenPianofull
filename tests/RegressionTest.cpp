@@ -4,11 +4,9 @@ Copyright (C) 2021-2022 Michele Perrone, and contributors
 Licensed under the GNU Affero General Public License v3 or later (see LICENSE).
 */
 
-// Checks that the restructured engine renders exactly what upstream OpenPiano renders,
-// sample for sample, across thread counts, block sizes and sample rates.
-//
-// Once the model is deliberately changed, this test will be switched to compare against
-// stored renders of the new model instead.
+// Checks that the restructured port of the original model (LegacyPiano) renders exactly what
+// upstream OpenPiano renders, sample for sample, across thread counts, block sizes and sample
+// rates. The new piano is checked separately by PianoTest.
 
 #include "Harness.h"
 
@@ -38,11 +36,11 @@ int main (int argc, char** argv)
         const auto cfg = configs[c];
         for (auto& sc : standardScenarios (cfg.rate))
         {
-            if (sc.benchmarkOnly)
+            if (sc.benchmarkOnly || sc.fullRangeOnly)
                 continue;
 
             const auto expected = renderUpstream (sc, cfg.rate);
-            const auto actual = renderEngine (sc, cfg.rate, cfg.threads, cfg.block);
+            const auto actual = renderLegacy (sc, cfg.rate, cfg.threads, cfg.block);
 
             size_t mismatches = 0, first = 0;
             float maxDiff = 0, peak = 0;

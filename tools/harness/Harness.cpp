@@ -6,6 +6,7 @@ Licensed under the GNU Affero General Public License v3 or later (see LICENSE).
 
 #include "Harness.h"
 
+#include "openpiano/LegacyPiano.h"
 #include "openpiano/PianoInstrument.h"
 #include "dr_wav.h"
 
@@ -81,6 +82,69 @@ std::vector<Scenario> standardScenarios (int sr)
         list.push_back (sc);
     }
 
+    // The rest use the full 88-key range of the new piano
+    for (auto& s : { Single { "C6", 84, 80 }, Single { "C7", 96, 80 }, Single { "C8", 108, 80 } })
+    {
+        Scenario sc;
+        sc.name = std::string ("single_") + s.label + "_v" + std::to_string (s.velocity);
+        sc.description = std::string ("One ") + s.label + " at velocity " + std::to_string (s.velocity)
+                       + ", held 3 s, then released";
+        sc.seconds = 4.5;
+        sc.events = { { at (0.01), Event::NoteOn, s.note, s.velocity }, { at (3.0), Event::NoteOff, s.note } };
+        sc.fullRangeOnly = true;
+        list.push_back (sc);
+    }
+
+    {
+        Scenario sc { "sympathetic_pedal", "C3 struck short, once with the sustain pedal up and once with it down", 7.0, {} };
+        sc.events.push_back ({ at (0.01), Event::NoteOn, 48, 100 });
+        sc.events.push_back ({ at (0.30), Event::NoteOff, 48 });
+        sc.events.push_back ({ at (3.0), Event::PedalDown });
+        sc.events.push_back ({ at (3.51), Event::NoteOn, 48, 100 });
+        sc.events.push_back ({ at (3.80), Event::NoteOff, 48 });
+        sc.events.push_back ({ at (6.5), Event::PedalUp });
+        sc.fullRangeOnly = true;
+        list.push_back (sc);
+    }
+
+    {
+        Scenario sc { "sympathetic_held_chord", "C4 E4 G4 held down silently, then C3 struck short: the held strings ring on", 4.0, {} };
+        for (int n : { 60, 64, 67 })
+            sc.events.push_back ({ at (0.0), Event::SilentKeyDown, n });
+        sc.events.push_back ({ at (0.5), Event::NoteOn, 48, 110 });
+        sc.events.push_back ({ at (0.75), Event::NoteOff, 48 });
+        sc.fullRangeOnly = true;
+        list.push_back (sc);
+    }
+
+    {
+        Scenario sc { "scale_full_range", "A0 to C8 in octaves, then a high flourish without dampers", 9.0, {} };
+        int i = 0;
+        for (int n = 21; n <= 108; n += 12, ++i)
+        {
+            sc.events.push_back ({ at (0.01 + 0.6 * i), Event::NoteOn, n, 90 });
+            sc.events.push_back ({ at (0.5 + 0.6 * i), Event::NoteOff, n });
+        }
+        for (int j = 0; j < 8; ++j)
+        {
+            const int n = 96 + (j * 5) % 12;
+            sc.events.push_back ({ at (5.5 + 0.1 * j), Event::NoteOn, n, 70 });
+            sc.events.push_back ({ at (5.58 + 0.1 * j), Event::NoteOff, n });
+        }
+        sc.fullRangeOnly = true;
+        list.push_back (sc);
+    }
+
+    {
+        Scenario sc { "stress_all_88", "All 88 keys struck at once with the pedal down (CPU benchmark)", 4.0, {} };
+        sc.events.push_back ({ at (0.0), Event::PedalDown });
+        for (int n = 21; n <= 108; ++n)
+            sc.events.push_back ({ at (0.01), Event::NoteOn, n, 100 });
+        sc.benchmarkOnly = true;
+        sc.fullRangeOnly = true;
+        list.push_back (sc);
+    }
+
     for (auto& sc : list)
         std::stable_sort (sc.events.begin(), sc.events.end(), [] (const Event& a, const Event& b) { return a.sample < b.sample; });
 
@@ -95,16 +159,18 @@ static void apply (Instrument& instrument, const Event& e)
         case Event::NoteOff:   instrument.noteOff (e.note); break;
         case Event::PedalDown: instrument.setSustain (true); break;
         case Event::PedalUp:   instrument.setSustain (false); break;
+        case Event::SilentKeyDown:
+            // Pressing a key slowly enough that the hammer never reaches the strings
+            if (auto* p = dynamic_cast<PianoInstrument*> (&instrument))
+                p->holdKeySilently (e.note);
+            break;
     }
 }
 
-std::vector<float> renderEngine (const Scenario& sc, int sampleRate, unsigned workerThreads, int blockSize)
+template <typename Engine, typename Process>
+static void drive (Engine& piano, const Scenario& sc, int sampleRate, int blockSize, Process&& process)
 {
-    PianoInstrument piano (workerThreads);
-    piano.prepare (sampleRate, blockSize);
-
     const auto total = (int64_t) std::llround (sc.seconds * sampleRate);
-    std::vector<float> out ((size_t) total, 0.0f);
     size_t nextEvent = 0;
 
     for (int64_t blockStart = 0; blockStart < total; blockStart += blockSize)
@@ -122,29 +188,61 @@ std::vector<float> renderEngine (const Scenario& sc, int sampleRate, unsigned wo
             if (nextEvent < sc.events.size())
                 segmentEnd = std::min (segmentEnd, sc.events[nextEvent].sample);
 
-            float* channel = out.data() + pos;
-            piano.process (&channel, 1, (int) (segmentEnd - pos));
+            process (pos, (int) (segmentEnd - pos));
             pos = segmentEnd;
         }
+    }
+}
+
+std::vector<float> renderLegacy (const Scenario& sc, int sampleRate, unsigned workerThreads, int blockSize)
+{
+    LegacyPiano piano (workerThreads);
+    piano.prepare (sampleRate, blockSize);
+
+    std::vector<float> out ((size_t) std::llround (sc.seconds * sampleRate), 0.0f);
+    drive (piano, sc, sampleRate, blockSize, [&] (int64_t pos, int n)
+    {
+        float* channel = out.data() + pos;
+        piano.process (&channel, 1, n);
+    });
+    return out;
+}
+
+std::vector<float> renderPiano (const Scenario& sc, int sampleRate, int blockSize)
+{
+    PianoInstrument piano;
+    piano.prepare (sampleRate, blockSize);
+
+    const auto total = (size_t) std::llround (sc.seconds * sampleRate);
+    std::vector<float> left (total), right (total), out (2 * total);
+    drive (piano, sc, sampleRate, blockSize, [&] (int64_t pos, int n)
+    {
+        float* channels[] = { left.data() + pos, right.data() + pos };
+        piano.process (channels, 2, n);
+    });
+    for (size_t i = 0; i < total; ++i)
+    {
+        out[2 * i] = left[i];
+        out[2 * i + 1] = right[i];
     }
     return out;
 }
 
-bool writeWav (const std::string& path, const std::vector<float>& samples, int sampleRate)
+bool writeWav (const std::string& path, const std::vector<float>& samples, int sampleRate, int channels)
 {
     drwav_data_format format {};
     format.container = drwav_container_riff;
     format.format = DR_WAVE_FORMAT_IEEE_FLOAT;
-    format.channels = 1;
+    format.channels = (drwav_uint32) channels;
     format.sampleRate = (drwav_uint32) sampleRate;
     format.bitsPerSample = 32;
 
     drwav wav;
     if (! drwav_init_file_write (&wav, path.c_str(), &format, nullptr))
         return false;
-    const auto written = drwav_write_pcm_frames (&wav, samples.size(), samples.data());
+    const auto written = drwav_write_pcm_frames (&wav, samples.size() / (size_t) channels, samples.data());
     drwav_uninit (&wav);
-    return written == samples.size();
+    return written == samples.size() / (size_t) channels;
 }
 
 } // namespace openpiano::harness
