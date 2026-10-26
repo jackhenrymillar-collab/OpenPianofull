@@ -264,7 +264,9 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         // out-of-step one is left ringing, which gives the recorded notes there their fast first
         // drop and long tail
         const double close = k >= 61 && k <= 66 ? 0.25 : k >= 28 && k < 50 ? 0.45 : k >= 20 && k < 49 ? 0.7 : k >= 49 && k < 63 ? 0.5 : k >= 63 && k < 67 ? 0.75 : k >= 67 && k < 75 ? 0.3 : k >= 75 ? 0.3 : 1.0;
-        double spread = unisonSpreadCents * (1.0 + 0.5 * keyNoise (k, 1)) * close;
+        double spread = unisonSpreadCents * (1.0 + 0.5 * keyNoise (k, 1)) * close * (k < 43 ? 0.6 : 1.0);
+        // (below D#5 the strings sit 40% closer than before: with the body coupled at its full,
+        // physical strength, wider unisons there drain the long tail twice as fast as the recording)
         // Treble unisons are tuned by ear and some are left a little loose: on the recorded grand
         // about one key in four from D#5 up beats 3 to 5 times faster than its neighbours
         // The rest are a little looser too (Jack's ear: the loose ones sound better)

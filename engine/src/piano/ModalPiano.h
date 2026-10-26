@@ -149,6 +149,7 @@ private:
         double headPos = 0, headVel = 0;   // the head's wooden core, which rocks against the tip
         double shankPos = 0, shankVel = 0; // the shank, which bends under the head
         int samplesSinceStrike = 0, samplesApart = 0;
+        double feltSet = 0;        // copied from the key at the strike
         std::array<double, 3> gap {};          // hammer not perfectly level across the unison
         std::array<double, 3> lastCompression {};
         std::array<double, 3> feltHistory {};  // relaxing part of the felt force, per string
@@ -165,6 +166,8 @@ private:
         int duplexString = -1;
         bool tensionApplied = false;
         long long releasedAt = -1;   // sample clock when the key was let go
+        long long struckAt = -1;     // and when it was last struck
+        double feltSet = 0;          // how far the felt is still squeezed from earlier blows (0-1)
         int damperPending = 0;       // samples until the rising key lets the damper land
         bool down = false;
         bool sostenuto = false;      // damper held up by the sostenuto pedal
@@ -336,12 +339,14 @@ private:
     static constexpr int kZones = 32, kBassZones = 4;   // about 2.4 keys per zone on the treble bridge, 5 on the bass bridge
     std::vector<int> keyZone;
     std::array<double, kZones> bridgeMassCoeff {}, bridgeMassState {};
+    std::array<double, kZones> highAdmittance {}, highPassState {}, highPassState2 {};   // the many-mode board above the solved modes
+    double highPassCoeff = 0, highRadiation = 0, highLeftState = 0, highRightState = 0, highLeftState2 = 0, highRightState2 = 0;
     // Where a zone sits along the bridges on the scale of the earlier eight-zone layout (0..7):
     // 0..1 the bass bridge, 2..7 the treble bridge from its low end to the top
     static double layoutPosition (int zone);
     // Fitted to recorded notes (tools/calibrate), on the eight-zone layout and interpolated:
     // how strongly each part of the bridge couples to the board...
-    static constexpr std::array<double, 8> zoneCouplingFit { 0.78, 1.25, 1.1, 1.1, 1.1, 1.0, 0.9, 0.8 };
+    static constexpr std::array<double, 8> zoneCouplingFit { 0.39, 0.62, 0.6, 0.77, 0.99, 0.9, 0.5, 0.56 };
     // ...and how much of its motion is the dense, resistive part of the board
     static constexpr std::array<double, 8> zoneResistanceFit { 1.0, 1.2, 1.5, 1.4, 2.0, 1.5, 0.6, 1.6 };
     std::array<double, kZones> zoneCoupling {}, zoneResistance {};

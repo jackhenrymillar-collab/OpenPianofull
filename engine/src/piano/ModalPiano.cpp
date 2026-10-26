@@ -154,6 +154,32 @@ void ModalPiano::prepare (double newSampleRate, const Settings& newSettings)
         zoneResistance[(size_t) z] = zoneResistanceFit[(size_t) i] + (zoneResistanceFit[(size_t) i + 1] - zoneResistanceFit[(size_t) i]) * (p - i);
     }
 
+    // The tuner tunes the piano as built: the body's springiness or mass at each note's
+    // pitch pulls the strings a little sharp or flat (a few cents near strong body modes),
+    // and the tuner turns the pins to cancel it. Worked out from the body's modes at each
+    // key's bridge zone, for all the key's strings pushing together.
+    {
+        for (size_t k = 0; k < keys.size(); ++k)
+        {
+            auto& key = keys[k];
+            const int z = keyZone[k];
+            const double w = 2.0 * M_PI * key.targetFrequency;
+            double imY = 0;
+            for (int i = 0; i < kBoardModeCount; ++i)
+            {
+                const auto& md = kBoardModes[i];
+                const double wn = 2.0 * M_PI * md.f, eta = md.radiationLoss + md.structLoss + md.airLoss;
+                const double ph = zoneCoupling[(size_t) z] * md.phi[z];
+                const std::complex<double> y = std::complex<double> (0.0, w) / std::complex<double> (wn * wn - w * w, eta * wn * w);
+                imY += ph * ph * y.imag();
+            }
+            const auto& s0 = key.strings[0];
+            const double z0 = std::sqrt (s0.tension * s0.linearDensity);
+            const double shift = -2.0 * z0 * key.numStrings * imY / M_PI;   // relative pitch shift (checked against the pitch test)
+            for (int i = 0; i < key.numStrings; ++i)
+                key.strings[(size_t) i].fundamental /= (1.0 + shift);
+        }
+    }
     buildModes();
     for (auto& st : strings)
         st.zone = keyZone[(size_t) st.key];
@@ -271,18 +297,18 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     // relative to the middle of the range. Pushing harder on the bridge while feeling its
     // motion less by the same factor keeps the decay and coupling unchanged.
     {
-        static constexpr double voicingDb[30] = { 0.6, -1.2, -3.6, -1.4, -3.9, -0.5, -7.3, 2.4, 3.2, -4.1,
-                                               0.9, -1.2, -3.4, -1.1, -2.3, 2.2, 0.6, 2.9, -4.4, 7.9,
-                                               -3.1, -1.4, -11.9, -4.8, -0.3, -1.2, -21.6, -12.7, -4.2, -11.5 }; // every 3 keys from A0
+        static constexpr double voicingDb[30] = { -1.3, -2.5, -2.9, -2.2, -3.7, -1.4, -1.3, 8.2, 8.7, -1.8,
+                                               -2.0, -2.5, -0.5, -0.5, -2.8, 0.7, 7.8, -2.5, -6.3, 1.2,
+                                               5.7, -1.5, -11.3, -6.0, -9.6, -8.4, -21.7, -16.9, -12.7, -9.5 }; // every 3 keys from A0
         const double pos = std::clamp ((key.midiNote - kLowestKey) / 3.0, 0.0, 28.999);
         const int i = (int) pos;
         const double db = voicingDb[i] + (voicingDb[i + 1] - voicingDb[i]) * (pos - i);
         const float g = (float) std::pow (10.0, db / 20.0);
         // Tone voicing (needling or hardening the felt): the slope of the upper partials, in dB
         // per octave of partial number, fitted note by note to the recorded grand's brightness
-        static constexpr double toneDb[30] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -3.3, -3.7, -2.3, -0.7,
-                                               -0.8, 0.8, -0.8, -0.6, -0.8, -3.8, -3.9, -6.4, -0.2, -8.8,
-                                               -7.0, -1.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 }; // every 3 keys from A0
+        static constexpr double toneDb[30] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -6.8, -7.8, -6.5, -5.2,
+                                               -0.3, 0.2, -3.5, -2.4, -1.4, -3.7, -10.9, -4.5, -3.3, -11.1,
+                                               -12.0, -9.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 }; // every 3 keys from A0
         const double tone = toneDb[i] + (toneDb[i + 1] - toneDb[i]) * (pos - i);
         // In the top octave and a half the bridge and board give way less and less to the upper
         // partials (up to 15 dB less per octave of partial number from C7 up). Without this the
@@ -558,7 +584,7 @@ void ModalPiano::buildSoundboard()
 {
     // The solved bridge admittance is about 25x what the recordings imply (likely the
     // bridge and string-load mass missing from the solve), so the coupling is fitted down.
-    const double phiScale = 0.2;
+    const double phiScale = 1.0;   // the solved admittance, as it is
     // The soundboard and the body around it: modes of a Yamaha C5's body, computed by
     // tools/soundboard/build_board.py (BoardModes.inc). The model is a tapered, ribbed spruce
     // board with its bridges, crown and downbearing, glued into a rim that bends and twists,
@@ -685,6 +711,39 @@ void ModalPiano::buildSoundboard()
         board.radLeft[i] = (float) rawL[i];
         board.radRight[i] = (float) rawR[i];
         board.volume[i] = (float) rawV[i];
+    }
+
+    // Above the solved modes the board is a many-mode system: its modes overlap so much that
+    // the bridge sees a smooth, resistive load. Its mean value follows from the modes just
+    // below the top (the average real admittance of overlapping modes is pi/2 times their
+    // squared shapes per unit of angular frequency), and it carries on above them.
+    {
+        const double f0 = 0.7 * fTop;
+        for (int z = 0; z < Z; ++z)
+        {
+            double sum = 0;
+            for (size_t i = 0; i < n; ++i)
+                if (modes[i].f >= f0 && modes[i].f < fTop)
+                {
+                    const double p = board.phi[(size_t) z * n + i];
+                    sum += p * p;
+                }
+            highAdmittance[(size_t) z] = 0.5 * M_PI * sum / (2.0 * M_PI * (fTop - f0));
+            highPassState[(size_t) z] = highPassState2[(size_t) z] = 0;
+        }
+        highPassCoeff = std::exp (-2.0 * M_PI * fTop / sampleRate);
+        // Its sound: overlapping modes add in power, so the sound per unit of bridge velocity
+        // is the root of (their radiation squared) over (their shapes squared at the bridge)
+        double rad2 = 0, phi2 = 0;
+        for (size_t i = 0; i < n; ++i)
+            if (modes[i].f >= f0 && modes[i].f < fTop)
+            {
+                rad2 += 0.5 * (rawL[i] * rawL[i] + rawR[i] * rawR[i]);
+                for (int z = 0; z < Z; ++z)
+                    phi2 += (double) board.phi[(size_t) z * n + i] * board.phi[(size_t) z * n + i] / Z;
+            }
+        highRadiation = phi2 > 0 ? std::sqrt (rad2 / phi2) : 0.0;
+        highLeftState = highRightState = highLeftState2 = highRightState2 = 0;
     }
 
     // Overall level: a mezzo-forte middle C peaks around -20 dBFS, fortissimo around -10
@@ -849,14 +908,11 @@ void ModalPiano::buildBody()
     highBoardLeft.clear(); highBoardRight.clear();
     {
         Rng rng (4242);
-        const double fs[] = { 5000.0, 6100.0, 7500.0, 9200.0, 11300.0 };
-        for (double f : fs)
+        // Many overlapping modes: a dense, random ripple of a few dB, different for each ear
+        for (double f = 5200.0; f < 0.42 * sampleRate; f *= 1.12)
         {
-            if (f > 0.42 * sampleRate)
-                break;
-            const double g = (rng.next() < 0.5 ? -1.0 : 1.0) * (2.0 + 2.0 * rng.next());
-            highBoardLeft.push_back (peaking (f * (1.0 + 0.05 * rng.symmetric()), g, 2.5));
-            highBoardRight.push_back (peaking (f * (1.0 + 0.05 * rng.symmetric()), -0.6 * g + 1.5 * rng.symmetric(), 2.5));
+            highBoardLeft.push_back (peaking (f * (1.0 + 0.04 * rng.symmetric()), 3.0 * rng.symmetric(), 4.0));
+            highBoardRight.push_back (peaking (f * (1.0 + 0.04 * rng.symmetric()), 3.0 * rng.symmetric(), 4.0));
         }
     }
     // A medium room (about 9 x 7 x 4 m) with the piano a little off centre and the player at
@@ -1246,6 +1302,16 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
     // (in the bass the big, soft-cored heads stay compliant: the recorded bass brightens far less)
     ks.hammer.exponentBoost = 0.5 * std::clamp ((hammerVelocity - 3.3) / 1.7, 0.0, 1.0) * std::clamp ((k - 15) / 25.0, 0.0, 1.0);
     ks.hammer.softFelt = softPedal;
+    // Felt memory between blows: felt squeezed by a blow takes a fraction of a second to
+    // spring back, so a key repeated quickly meets the strings with thinner, harder felt.
+    // The harder the earlier blows, the more is left
+    {
+        const double since = ks.struckAt < 0 ? 1e9 : (sampleClock - ks.struckAt) / sampleRate;
+        ks.feltSet = ks.feltSet * std::exp (-since / 0.2);
+        ks.hammer.feltSet = ks.feltSet;
+        ks.feltSet = std::min (1.0, ks.feltSet + 0.5 * std::clamp (hammerVelocity / 5.0, 0.0, 1.0));
+        ks.struckAt = sampleClock;
+    }
 
     ks.hammer.active = true;
     ks.hammer.position = nearest - letOff; // just let off, flying free
@@ -1398,13 +1464,13 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
     // The una corda moves the strings onto the unpacked felt beside the grooves: softer and
     // with a gentler force law, so the tone is darker as well as quieter
     const double q0 = key.feltStiffness * hardness * (1.0 + 1.5 * ageFactor) * (1.0 + 0.9 * groove * (1.0 - h.softFelt))
-                      * (1.0 - 0.35 * h.softFelt);
+                      * (1.0 - 0.35 * h.softFelt) * (1.0 + 0.4 * h.feltSet);
     const double p = key.feltExponent + h.exponentBoost - 0.3 * h.softFelt;
     // Felt has memory (Stulov 1995): squeezed quickly it is stiff; squeezed slowly it has
     // time to relax and gives way. So a gentle touch makes a long, soft contact that only
     // excites the low partials, and a hard blow a short, stiff one that brings out the top.
     const double memory = settings.feltMemory;
-    const double coreDepth = key.outerFeltDepth * 1000.0 * settings.outerFeltScale * (1.0 - 0.6 * ageFactor) * (1.0 - 0.5 * groove); // [mm]
+    const double coreDepth = key.outerFeltDepth * 1000.0 * settings.outerFeltScale * (1.0 - 0.6 * ageFactor) * (1.0 - 0.5 * groove) * (1.0 - 0.3 * h.feltSet); // [mm]
     // Treble hammers are smaller and their outer felt firmer, or soft notes there would vanish
     const double outer = settings.outerFelt * std::pow (10.0, std::max (0.0, (keyIndex - 39) / 48.0) * trebleFirmness);
     const double relax = 1.0 - std::exp (-dt / std::max (1e-6, settings.feltRelaxTime));
@@ -1814,17 +1880,25 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         // part of the board answers half locally (the zone's own force) and half as a whole.
         // Vertical and sideways motion are linked, which is how the slow sideways vibration
         // becomes audible.
-        double weightedForce = 0;
+        double weightedForce = 0, highZoneVelocity = 0;
         for (int z = 0; z < kZones; ++z)
             weightedForce += zoneCoupling[(size_t) z] * zoneForce[(size_t) z];
         for (int z = 0; z < kZones; ++z)
         {
             // The resistive part goes through the bridge's own mass (a one-pole roll-off)
             const double c = zoneCoupling[(size_t) z];
-            const double res = zoneResistance[(size_t) z] * bridgeResistance * c * (0.5 * c * zoneForce[(size_t) z] + 0.5 * weightedForce);
-            auto& ms = bridgeMassState[(size_t) z];
-            ms = res + bridgeMassCoeff[(size_t) z] * (ms - res);
-            const double v = ms + crossResistance * sideSum + zoneBoardVelocity[(size_t) z];
+            // Above the solved modes: the many-mode board's smooth resistance (high-passed at
+            // the top mode, so it takes over where the modes stop), local to the zone
+            const double fz = zoneForce[(size_t) z];
+            auto& hp = highPassState[(size_t) z];
+            hp = fz + highPassCoeff * (hp - fz);
+            auto& hp2 = highPassState2[(size_t) z];
+            const double h1 = fz - hp;
+            hp2 = h1 + highPassCoeff * (hp2 - h1);
+            const double high = highAdmittance[(size_t) z] * (h1 - hp2);   // two poles: little leaks below
+            (void) c; (void) weightedForce;
+            highZoneVelocity += high;
+            const double v = high + crossResistance * sideSum + zoneBoardVelocity[(size_t) z];
             zoneAcceleration[(size_t) z] = (v - lastZoneVelocity[(size_t) z]) * sampleRate;
             lastZoneVelocity[(size_t) z] = v;
         }
@@ -1833,8 +1907,18 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         lastHorizontalVelocity = sideVelocity;
 
         // Sound: soundboard modes plus the direct (dense high-frequency) bridge path
-        const double directLeft = forceLeft * bridgeResistance + sideLeft * crossResistance;
-        const double directRight = forceRight * bridgeResistance + sideRight * crossResistance;
+        // (the many-mode board above the solved modes, then the sideways motion)
+        double meanHigh = 0;
+        for (int z = 0; z < kZones; ++z) meanHigh += highAdmittance[(size_t) z];
+        meanHigh /= kZones;
+        highLeftState = forceLeft + highPassCoeff * (highLeftState - forceLeft);
+        highRightState = forceRight + highPassCoeff * (highRightState - forceRight);
+        const double hl = forceLeft - highLeftState, hr = forceRight - highRightState;
+        highLeftState2 = hl + highPassCoeff * (highLeftState2 - hl);
+        highRightState2 = hr + highPassCoeff * (highRightState2 - hr);
+        const double directLeft = highRadiation * meanHigh * (hl - highLeftState2) + sideLeft * crossResistance;
+        const double directRight = highRadiation * meanHigh * (hr - highRightState2) + sideRight * crossResistance;
+        (void) highZoneVelocity;
         float dl = (float) directLeft, dr = (float) directRight;
         for (auto& d : diffLeft) dl = d.process (dl);
         for (auto& d : diffRight) dr = d.process (dr);
