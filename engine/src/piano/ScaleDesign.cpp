@@ -8,6 +8,7 @@ Licensed under the GNU Affero General Public License v3 or later (see LICENSE).
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 
 namespace openpiano::piano
@@ -238,7 +239,14 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         // Unisons drift apart after tuning: like the recorded Yamaha, a key's strings end up 1 to 3
         // cents apart (each outer string 0.5 to 1.5 cents from the centre; the two strings of a
         // bass bichord a little closer, about 0.75 to 2.3 cents, as wider ones pull its pitch off)
-        const double spread = unisonSpreadCents * (1.0 + 0.5 * keyNoise (k, 1));
+        // From A4 to B6 the unisons sit closer (half as far apart up to A#5, three quarters above).
+        // Close strings share the bridge motion strongly: the in-step vibration drains fast and the
+        // out-of-step one is left ringing, which gives the recorded notes there their fast first
+        // drop and long tail
+        // From A2 to G#4 they sit closer too, or their upper partials beat against each other
+        // within the first quarter second and the tone dulls at once after a loud blow
+        const double close = k >= 25 && k < 63 ? 0.5 : k >= 63 && k < 75 ? 0.75 : 1.0;
+        const double spread = unisonSpreadCents * (1.0 + 0.5 * keyNoise (k, 1)) * close;
         // Every key's pattern differs: which string is high or low, and by how much
         const double offsets3[3] = { -spread * (1.0 + 0.15 * keyNoise (k, 3)), 0.25 * spread * keyNoise (k, 2),
                                      spread * (1.0 + 0.15 * keyNoise (k, 4)) };
@@ -264,6 +272,10 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         // No two hammers are alike: felt density, shape and wear differ a little from note
         // to note even on a well-voiced piano (which is what a voicer evens out by ear)
         key.hammerMass *= 1.0 + 0.03 * keyNoise (k, 11);
+        // From the tenor up the hammer acts lighter on the string (its felt tip and head move
+        // first, the rest follows through the shank), so the contact is short enough for loud
+        // treble notes to come out as bright as recorded ones (half the mass from B3 up)
+        key.hammerMass *= 1.0 - 0.5 * std::clamp ((k - 27) / 12.0, 0.0, 1.0);
         key.feltStiffness *= 1.0 + 0.12 * keyNoise (k, 12);
         key.feltExponent += 0.08 * keyNoise (k, 13);
         key.outerFeltDepth *= 1.0 + 0.15 * keyNoise (k, 14);

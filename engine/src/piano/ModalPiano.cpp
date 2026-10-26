@@ -47,7 +47,10 @@ namespace
         // at 3 to 6 kHz die at about 20 to 40 dB/s, so this rise is gentle
         // (the top fundamentals are spared: their losses are mostly at the bridge)
         const double overtone = std::clamp (f / f1 - 1.0, 0.0, 1.0);
-        return b1 + b2 * f * f + 0.11 * overtone * std::pow (f / 2000.0, 3);
+        // From the middle up the strings themselves lose a quarter less, which gives the long
+        // quiet tail of recorded notes there (about 3 dB/s from C4 to B5)
+        const double b1s = b1 * (1.0 - 0.25 * std::clamp (octavesAboveA0 - 2.5, 0.0, 1.0));
+        return b1s + b2 * f * f + 0.11 * overtone * std::pow (f / 2000.0, 3);
     }
 
     // Extra decay with the felt damper resting on the string
@@ -170,8 +173,10 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     // its strings a little off the design point (shared by the unison)
     Rng keyRng ((uint32_t) keyIndex * 2654435761u + 77u);
     const double strike = strikeRatio * (1.0 + 0.025 * keyRng.symmetric()) * (1.0 + 0.012 * rng.symmetric());
-    // Strings of one unison come off the same coil of wire: their stiffness is nearly identical
-    const double B = spec.inharmonicity * (1.0 + 0.005 * rng.symmetric());
+    // Strings of one unison come off the same coil, but wire gauge varies by a fraction of a
+    // percent, and stiffness goes with its fourth power: B differs by a few percent. That keeps
+    // the upper partials of a unison from all beating in step, which would dull the tone at once.
+    const double B = spec.inharmonicity * (1.0 + 0.04 * rng.symmetric());
     const double lossScale = (1.0 + 0.1 * rng.symmetric()) * (1.0 + 1.2 * ageFactor);
     const double fFlex = spec.fundamental / std::sqrt (1.0 + B);
     const double L = spec.length;
@@ -247,6 +252,25 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     s.sympatheticCount = ! key.hasDamper || segment ? s.count
                                                                  : std::clamp (sympathetic, 1, std::min (s.count, sympatheticCap));
 
+    // Voicing: a technician evens out a piano's loudness note by note (hammer needling,
+    // string levelling). This curve was fitted to the recorded grand's level, note by note
+    // relative to the middle of the range. Pushing harder on the bridge while feeling its
+    // motion less by the same factor keeps the decay and coupling unchanged.
+    {
+        static constexpr double voicingDb[30] = { -4.1, -1.3, -1.3, -4.8, -6.7, -4.3, -4.2, -6.2, -0.5, 2.0,
+                                                  4.3, -0.1, -1.0, 5.6, 3.5, 6.8, 1.4, -7.5, 1.2, -0.3,
+                                                  -1.2, 0.6, 0.9, 1.2, 3.5, 4.6, 0.4, 4.3, 3.0, 3.0 }; // every 3 keys from A0
+        const double pos = std::clamp ((key.midiNote - kLowestKey) / 3.0, 0.0, 28.999);
+        const int i = (int) pos;
+        const double db = voicingDb[i] + (voicingDb[i + 1] - voicingDb[i]) * (pos - i);
+        const float g = (float) std::pow (10.0, db / 20.0);
+        for (int j = 0; j < s.count; ++j)
+        {
+            const size_t q = (size_t) (s.first + j);
+            m.fk[q] *= g; m.bgr[q] /= g; m.bgi[q] /= g;
+        }
+    }
+
     strings.push_back (s);
     return (int) strings.size() - 1;
 }
@@ -279,7 +303,9 @@ void ModalPiano::addLongitudinal (String& s, const StringSpec& spec)
         const double w = 2.0 * M_PI * order * f1;
         // Free longitudinal ringing dies fast (end losses at the bridge pin and agraffe); what
         // remains audible is mostly the forced, phantom part that follows the transverse motion
-        const double sigma = settings.longitudinalLoss;
+        // Higher lengthwise modes lose energy faster still (end friction at the agraffe and
+        // bridge pins, and in the winding), or they ring on as a thin, metallic whistle
+        const double sigma = settings.longitudinalLoss + settings.longitudinalLossSlope * order * f1;
         const cd pole = std::exp (cd (-sigma, w) * Ts);
         const cd gain = pole * (Ts / w);
         lm.zr.push_back (0); lm.zi.push_back (0);
@@ -1611,6 +1637,7 @@ double ModalPiano::runLongitudinal (const String& s)
         return force * settings.longitudinalCoupling * keys[(size_t) s.key].numStrings * s.outScale;
     }
 
+    double resonant = 0;
     // Resonant part: each longitudinal mode m is driven by partial pairs whose numbers
     // differ by m (and by pairs that add up to m)
     for (int i = 0; i < s.longCount; ++i)
@@ -1626,8 +1653,11 @@ double ModalPiano::runLongitudinal (const String& s)
         const float ni = lm.pr[j] * im + lm.pi[j] * r + lm.gi[j] * drive;
         lm.zr[j] = lm.pr[j] * r - lm.pi[j] * im + lm.gr[j] * drive;
         lm.zi[j] = ni;
-        force += lm.out[j] * (ni - drive * lm.invW2[j]);
+        resonant += lm.out[j] * (ni - drive * lm.invW2[j]);
     }
+    // The lengthwise resonances reach the board less well than the slow stretch: they are
+    // sharp peaks in the treble region and, coupled fully, ring as a whistle
+    force += settings.longitudinalResonantShare * resonant;
     return force * settings.longitudinalCoupling * keys[(size_t) s.key].numStrings * s.outScale;
 }
 
