@@ -164,7 +164,10 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
 
     // No two strings are quite alike: small differences in where the hammer hits, in
     // stiffness and in losses keep the sound from being too regular.
-    const double strike = strikeRatio * (1.0 + 0.02 * rng.symmetric());
+    // Hammers are never set in a perfectly straight line, so each key's hammer also meets
+    // its strings a little off the design point (shared by the unison)
+    Rng keyRng ((uint32_t) keyIndex * 2654435761u + 77u);
+    const double strike = strikeRatio * (1.0 + 0.025 * keyRng.symmetric()) * (1.0 + 0.012 * rng.symmetric());
     // Strings of one unison come off the same coil of wire: their stiffness is nearly identical
     const double B = spec.inharmonicity * (1.0 + 0.005 * rng.symmetric());
     const double lossScale = (1.0 + 0.1 * rng.symmetric()) * (1.0 + 1.2 * ageFactor);
@@ -175,6 +178,8 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     s.key = keyIndex;
     s.kind = kind;
     s.first = (int) m.size();
+    s.strikeBase = (float) strike;
+    s.halfWidthOverL = (float) (hammerWidth / (2.0 * L));
     s.mass = (float) (spec.linearDensity * L / 2.0);
 
     // Pan with the keyboard, as heard from the player's seat
@@ -329,7 +334,11 @@ void ModalPiano::buildModes()
                 spec.fundamental *= std::pow (2.0, 0.25 * rng.symmetric() / 1200.0);
                 const int index = addString (spec, (int) k, Kind::Horizontal, key.strikeRatio, key.hammerWidth, 24,
                                              std::min (fMax, 6000.0), (uint32_t) (k * 7 + (size_t) i + 1));
-                strings[(size_t) index].hammerShare = (float) (0.03 + 0.04 * rng.next());
+                // Hammer twist: a few hammers sit visibly off-square and push the strings
+                // sideways much more; wear makes it worse
+                Rng twistRng ((uint32_t) k * 7919u + 3u);
+                const double twist = std::pow (twistRng.next(), 3.0) * (0.12 + 0.08 * ageFactor);
+                strings[(size_t) index].hammerShare = (float) (0.03 + 0.04 * rng.next() + twist);
                 strings[(size_t) (ks.firstString + i)].horizontal = index;
             }
         }
@@ -536,7 +545,9 @@ void ModalPiano::buildSoundboard()
             if (flat0 > fTop)
                 continue;
             // Real boards are not perfectly uniform: a few percent of scatter
-            const double flat = flat0 * (1.0 + 0.04 * rng.symmetric());
+            // The inner rim holds the edges more firmly than a simple support, which raises
+            // the lowest modes most (towards clamped edges)
+            const double flat = flat0 * (1.0 + 0.04 * rng.symmetric()) * (1.0 + 0.15 / (mi + ni - 1));
             const double fm = std::sqrt (flat * flat + fc * fc);
             if (fm > fTop)
                 continue;
@@ -548,12 +559,31 @@ void ModalPiano::buildSoundboard()
             modes.push_back (md);
         }
 
-    // The rim: a few heavy, lightly damped low resonances that move the whole board edge
+    // The rim: a few heavy, lightly damped low resonances that move the whole board edge.
+    // The inner rim holds the board's edge, so they reach the bridge most near its two ends
+    // (the bass bridge and the top treble run close to the rim).
     for (double f : { 68.0, 104.0, 151.0, 207.0, 286.0, 410.0 })
     {
         Mode md { f * (1.0 + 0.05 * rng.symmetric()), 0.008, 0.9e-4, 0.5, 0, 0, {} };
-        md.phi.fill (1.0);
+        for (int z = 0; z < Z; ++z)
+        {
+            const double edge = std::max (std::exp (-z / 1.5), std::exp (-(Z - 1 - z) / 1.5));
+            md.phi[(size_t) z] = 0.6 + 0.5 * edge;
+        }
         modes.push_back (md);
+    }
+    // The back braces: heavy wooden beams under the board, joined to the rim. Each bends at
+    // its own few hundred Hz and moves the part of the board (and bridge) above it.
+    {
+        const double braceF[] = { 118.0, 176.0, 243.0, 338.0, 471.0, 655.0 };
+        const double braceAt[] = { 0.8, 2.6, 4.3, 5.8, 1.7, 6.8 }; // centre, in zones
+        for (int k = 0; k < 6; ++k)
+        {
+            Mode md { braceF[k] * (1.0 + 0.04 * rng.symmetric()), 0.012, 0.35e-4, 0.25, -2, k, {} };
+            for (int z = 0; z < Z; ++z)
+                md.phi[(size_t) z] = std::exp (-std::pow ((z - braceAt[k]) / 1.3, 2.0));
+            modes.push_back (md);
+        }
     }
     // The cast-iron plate: stiff and barely damped. It carries the strings' far ends (the
     // agraffes and hitch pins), so it rings faintly under everything; its bending shapes
@@ -765,16 +795,35 @@ void ModalPiano::buildBody()
     // Air under a grand's board is boxed in by the rim and the floor and leaks out at the
     // gap underneath: a few broad resonances between about 90 and 350 Hz that fill out the bass.
     airModes.clear();
-    const double airF[] = { 92.0, 165.0, 238.0, 330.0 };
-    const double airQ[] = { 4.0, 5.0, 5.0, 6.0 };
-    const double airG[] = { 0.55, 0.4, 0.3, 0.2 };
-    for (int i = 0; i < 4; ++i)
+    // The first is the whole volume breathing through the gap (a Helmholtz-like mode); the
+    // rest are standing waves across the case, about 2.4 m long and 1.45 m wide, up to 700 Hz.
+    // The higher ones are weaker: the open bottom lets them leak away and the board drives
+    // them less evenly.
+    auto addAir = [&] (double f, double q, double g)
     {
-        const double w = 2.0 * M_PI * airF[i] / sampleRate;
-        const double alpha = std::sin (w) / (2.0 * airQ[i]);
+        const double w = 2.0 * M_PI * f / sampleRate;
+        const double alpha = std::sin (w) / (2.0 * q);
         const double a0 = 1.0 + alpha;
         airModes.push_back ({ (float) (alpha / a0), (float) (-2.0 * std::cos (w) / a0), (float) ((1.0 - alpha) / a0),
-                              0, 0, 0, 0, (float) airG[i] });
+                              0, 0, 0, 0, (float) g });
+    };
+    addAir (92.0, 4.0, 0.55);
+    {
+        Rng rng (777);
+        const double lx = 2.4, ly = 1.45, c = 343.0;
+        for (int p = 0; p <= 6; ++p)
+            for (int q = 0; q <= 4; ++q)
+            {
+                if (p == 0 && q == 0)
+                    continue;
+                const double f = 0.5 * c * std::sqrt (std::pow (p / lx, 2) + std::pow (q / ly, 2));
+                if (f > 700.0)
+                    continue;
+                // Odd-odd shapes push and pull at the same time across the board and couple weakly
+                const double shape = ((p % 2) == 1 && (q % 2) == 1) ? 0.4 : 1.0;
+                const double g = 0.42 * shape / (1.0 + f / 160.0) * (0.8 + 0.4 * rng.next());
+                addAir (f * (1.0 + 0.03 * rng.symmetric()), 5.0 + f / 60.0, g);
+            }
     }
     airPressure = 0;
 
@@ -861,14 +910,16 @@ void ModalPiano::buildAction()
     //   0 key bottom: the key lands on the keybed felt, a dull low thump
     //   1 hammer knock: shank and hammer flex at the strike, a brighter click
     //   2 damper return: the felt lands back on the strings, soft and muffled
-    const double freqs[8] = { 95, 160, 270, 430, 690, 1100, 1750, 2800 };
-    const double q[8] = { 6, 7, 8, 9, 10, 10, 11, 12 };
-    const double shapes[3][8] = {
-        { 1.0, 0.9, 0.7, 0.45, 0.25, 0.12, 0.05, 0.02 },
-        { 0.15, 0.25, 0.4, 0.6, 0.8, 0.9, 0.7, 0.5 },
-        { 0.4, 0.5, 0.45, 0.3, 0.15, 0.06, 0.02, 0.01 },
+    // The last three are the keybed, the legs and the floor: the key's landing travels down
+    // through the keyframe into the case and legs, a low thump you feel as much as hear
+    const double freqs[11] = { 95, 160, 270, 430, 690, 1100, 1750, 2800, 31, 47, 66 };
+    const double q[11] = { 6, 7, 8, 9, 10, 10, 11, 12, 3, 4, 5 };
+    const double shapes[3][11] = {
+        { 1.0, 0.9, 0.7, 0.45, 0.25, 0.12, 0.05, 0.02, 1.1, 0.9, 0.7 },
+        { 0.15, 0.25, 0.4, 0.6, 0.8, 0.9, 0.7, 0.5, 0.1, 0.1, 0.1 },
+        { 0.4, 0.5, 0.45, 0.3, 0.15, 0.06, 0.02, 0.01, 0.2, 0.2, 0.15 },
     };
-    for (int i = 0; i < 8; ++i)
+    for (int i = 0; i < ActionBank::N; ++i)
     {
         const double w = 2.0 * M_PI * freqs[i];
         const cd pole = std::exp (cd (-w / (2.0 * q[i]), w) * Ts);
@@ -895,7 +946,7 @@ void ModalPiano::runAction (double& force, double& left, double& right)
     {
         auto& h = actionHits[i];
         if (h.delay-- > 0) { ++i; continue; }
-        for (size_t j = 0; j < 8; ++j)
+        for (size_t j = 0; j < (size_t) ActionBank::N; ++j)
             action.zr[j] += h.amount * action.weight[(size_t) h.type][j];
         // The bank radiates from roughly where the keys were hit
         action.panLeft += 0.5f * (h.panLeft - action.panLeft);
@@ -904,7 +955,7 @@ void ModalPiano::runAction (double& force, double& left, double& right)
         actionHits.pop_back();
     }
     float f = 0;
-    for (size_t j = 0; j < 8; ++j)
+    for (size_t j = 0; j < (size_t) ActionBank::N; ++j)
     {
         const float r = action.zr[j], im = action.zi[j];
         action.zr[j] = action.pr[j] * r - action.pi[j] * im;
@@ -1104,10 +1155,35 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
         });
     }
 
+    // Strike point moves a little with how hard the key is played: on a hard blow the shank
+    // bends and the head rolls, so the felt lands slightly further from the agraffe
+    {
+        const double shift = 0.012 * (std::clamp (hammerVelocity, 0.3, 5.0) - 2.0) / 3.0;
+        forEachString (ks, [&] (String& s)
+        {
+            if (s.kind != Kind::Vertical)
+                return;
+            const double strikePos = s.strikeBase * (1.0 + shift);
+            forModes (s, s.count, [&] (size_t j)
+            {
+                const double n = std::round (2.0 / (M_PI * std::max (1e-6f, std::abs (m.beta[j]))));
+                const double x = n * M_PI * s.halfWidthOverL;
+                const double width = std::abs (x) < 1e-9 ? 1.0 : std::sin (x) / x;
+                m.phi[j] = (float) (std::sin (n * M_PI * strikePos) * width);
+            });
+        });
+    }
+
+    // Let-off: the jack slips out from under the hammer a couple of millimetres before the
+    // string, and the hammer flies the rest of the way free, slowed a little by gravity. Soft
+    // notes therefore arrive a few milliseconds later than hard ones.
+    const double letOff = 2.0e-3 * (1.0 + 0.15 * rng.symmetric()) * (1.0 + 0.5 * ageFactor);
+    hammerVelocity = std::sqrt (std::max (0.0025, hammerVelocity * hammerVelocity - 2.0 * 9.81 * letOff));
+
     ks.hammer.active = true;
-    ks.hammer.position = nearest; // touching the first string
+    ks.hammer.position = nearest - letOff; // just let off, flying free
     ks.hammer.velocity = std::max (0.05, hammerVelocity);
-    ks.hammer.headPos = ks.hammer.shankPos = nearest;
+    ks.hammer.headPos = ks.hammer.shankPos = nearest - letOff;
     ks.hammer.headVel = ks.hammer.shankVel = ks.hammer.velocity;
     ks.hammer.samplesSinceStrike = 0;
     ks.hammer.samplesApart = 0;
@@ -1116,7 +1192,7 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
         const auto& s = strings[(size_t) (ks.firstString + i)];
         double u = 0;
         forModes (s, s.count, [&] (size_t j) { u += m.phi[j] * m.zi[j]; });
-        ks.hammer.lastCompression[(size_t) i] = nearest - u - ks.hammer.gap[(size_t) i];
+        ks.hammer.lastCompression[(size_t) i] = nearest - letOff - u - ks.hammer.gap[(size_t) i];
         ks.hammer.forceSum[(size_t) i] = 0;
         ks.hammer.feltHistory[(size_t) i] = 0;
     }
@@ -1247,13 +1323,18 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
     const auto& key = keys[(size_t) keyIndex];
     const int os = std::max (1, settings.oversampling);
     const double dt = Ts / os;
-    const double q0 = key.feltStiffness * hardness * (1.0 + 1.5 * ageFactor);
+    // Felt grooves: years of playing pack the felt hard where the strings land, most in the
+    // middle of the keyboard where most music sits. The grooves are harder and flatter than
+    // the crown, so a worn hammer sounds brighter and more cutting there.
+    const double groove = ageFactor * std::exp (-std::pow ((key.midiNote - 66) / 18.0, 2.0))
+                          * (0.7 + 0.6 * Rng ((uint32_t) keyIndex * 131u + 9u).next());
+    const double q0 = key.feltStiffness * hardness * (1.0 + 1.5 * ageFactor) * (1.0 + 0.9 * groove);
     const double p = key.feltExponent;
     // Felt has memory (Stulov 1995): squeezed quickly it is stiff; squeezed slowly it has
     // time to relax and gives way. So a gentle touch makes a long, soft contact that only
     // excites the low partials, and a hard blow a short, stiff one that brings out the top.
     const double memory = settings.feltMemory;
-    const double coreDepth = key.outerFeltDepth * 1000.0 * settings.outerFeltScale * (1.0 - 0.6 * ageFactor); // [mm]
+    const double coreDepth = key.outerFeltDepth * 1000.0 * settings.outerFeltScale * (1.0 - 0.6 * ageFactor) * (1.0 - 0.5 * groove); // [mm]
     // Treble hammers are smaller and their outer felt firmer, or soft notes there would vanish
     const double outer = settings.outerFelt * std::pow (10.0, std::max (0.0, (keyIndex - 39) / 48.0) * trebleFirmness);
     const double relax = 1.0 - std::exp (-dt / std::max (1e-6, settings.feltRelaxTime));
@@ -1349,7 +1430,7 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
     // The hammer is done once it has been clear of the strings and falling for 2 ms
     ++h.samplesSinceStrike;
     h.samplesApart = (! touching && h.velocity < 0) ? h.samplesApart + 1 : 0;
-    if (h.samplesApart > (int) (0.002 * sampleRate) || h.samplesSinceStrike > (int) (0.1 * sampleRate))
+    if (h.samplesApart > (int) (0.002 * sampleRate) || h.samplesSinceStrike > (int) (0.12 * sampleRate))
     {
         h.active = false;
         checkActivity();

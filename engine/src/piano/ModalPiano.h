@@ -122,6 +122,8 @@ private:
         float restTension = 1;
         float outScale = 1;       // loudness lift for soft notes (bridge force up, bridge input down)
         int zone = 0;             // bridge zone the string presses on
+        float strikeBase = 0;     // where the hammer meets it, as a fraction of the length
+        float halfWidthOverL = 0; // hammer width / (2 L)
         bool damped = true;
         Activity activity = Activity::Off;
     };
@@ -284,8 +286,9 @@ private:
     std::vector<ActionHit> actionHits;
     struct ActionBank
     {
-        std::array<float, 8> zr {}, zi {}, pr {}, pi {};
-        std::array<std::array<float, 8>, 3> weight {}; // per hit type
+        static constexpr int N = 11;
+        std::array<float, N> zr {}, zi {}, pr {}, pi {};
+        std::array<std::array<float, N>, 3> weight {}; // per hit type
         float panLeft = 0.7f, panRight = 0.7f;
     } action;
     void buildAction();
