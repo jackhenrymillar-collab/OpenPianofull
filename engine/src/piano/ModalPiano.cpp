@@ -264,10 +264,15 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
         const int i = (int) pos;
         const double db = voicingDb[i] + (voicingDb[i + 1] - voicingDb[i]) * (pos - i);
         const float g = (float) std::pow (10.0, db / 20.0);
+        // In the top octave and a half the bridge and board give way less and less to the upper
+        // partials (up to 15 dB less per octave of partial number from C7 up). Without this the
+        // 2nd and 3rd partials there sit 10 to 20 dB above the recorded grand's: thin and metallic.
+        const double topRoll = 15.0 * std::clamp ((keyIndex - 66) / 9.0, 0.0, 1.0);
         for (int j = 0; j < s.count; ++j)
         {
             const size_t q = (size_t) (s.first + j);
-            m.fk[q] *= g; m.bgr[q] /= g; m.bgi[q] /= g;
+            const float gj = g * (float) std::pow (10.0, -topRoll * std::log2 (j + 1.0) / 20.0);
+            m.fk[q] *= gj; m.bgr[q] /= gj; m.bgi[q] /= gj;
         }
     }
 

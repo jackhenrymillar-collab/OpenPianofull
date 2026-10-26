@@ -217,9 +217,10 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         for (int key = a3 + 1; key < a4; ++key)
             f (key) = f (a3) * std::pow (f (a4) / f (a3), (key - a3) / 12.0);
 
-        // Upwards: 4:2 octaves up to C6, then 2:1 (fundamental on the octave partial below)
+        // Upwards: 4:2 octaves all the way, which stretches the top like the recorded grand
+        // (about +22 cents at C7, +38 at A7)
         for (int key = a4 + 1; key <= 88; ++key)
-            f (key) = f (key - 12) * octaveRatio (key <= 64 ? 2 : 1, b (key - 12), b (key));
+            f (key) = f (key - 12) * octaveRatio (2, b (key - 12), b (key));
         // Downwards: 4:2, then 6:3 and 8:4 octaves as the strings get lower
         for (int key = a3 - 1; key >= 1; --key)
             f (key) = f (key + 12) / octaveRatio (octaveCheck (key), b (key), b (key + 12));
