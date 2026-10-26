@@ -267,8 +267,11 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         double spread = unisonSpreadCents * (1.0 + 0.5 * keyNoise (k, 1)) * close;
         // Treble unisons are tuned by ear and some are left a little loose: on the recorded grand
         // about one key in four from D#5 up beats 3 to 5 times faster than its neighbours
+        // The rest are a little looser too (Jack's ear: the loose ones sound better)
         if (k >= 43 && keyNoise (k, 7) > 0.5)
             spread *= 3.0 + 2.0 * (0.5 + 0.5 * keyNoise (k, 8));
+        else if (k >= 43)
+            spread *= 1.8;
         // Every key's pattern differs: which string is high or low, and by how much
         const double offsets3[3] = { -spread * (1.0 + 0.15 * keyNoise (k, 3)), 0.25 * spread * keyNoise (k, 2),
                                      spread * (1.0 + 0.15 * keyNoise (k, 4)) };
