@@ -1,3 +1,4 @@
+#include <cstdlib>
 /*
 OpenPiano: an open source piano engine based on physical modeling
 Copyright (C) 2021-2022 Michele Perrone, and contributors
@@ -546,99 +547,48 @@ double ModalPiano::layoutPosition (int zone)
                              : 2.0 + (zone - kBassZones + 0.5) * 6.0 / (kZones - kBassZones) - 0.5;
 }
 
-// A board mode's radiation loss relative to the average of the modes within an octave of it
-static double radiationLossShare (int i)
-{
-    double sum = 0;
-    int count = 0;
-    for (int j = 0; j < kBoardModeCount; ++j)
-        if (kBoardModes[j].f > kBoardModes[i].f / std::sqrt (2.0) && kBoardModes[j].f < kBoardModes[i].f * std::sqrt (2.0))
-        {
-            sum += kBoardModes[j].radiationLoss;
-            ++count;
-        }
-    return count > 0 && sum > 0 ? kBoardModes[i].radiationLoss * count / sum : 1.0;
-}
-
 void ModalPiano::buildSoundboard()
 {
-    // The soundboard: modes of a grand's spruce board, computed by tools/soundboard/build_board.py
-    // (BoardModes.inc). The board has a grand's outline (straight spine, curved bentside, narrow
-    // tail) and is clamped all round in the rim; it tapers from about 9 mm in the middle to 6 mm
-    // at the edge; ribs every 13 cm stiffen it along the strings, so above about 1 kHz its
-    // vibration is trapped between them; and the two bridges are stiff beams glued on top. So
-    // the modes are lopsided and crowd into some parts of the board, and each part of the
-    // bridge feels them differently. Their shapes at the 16 bridge zones come from that model.
-    // The crown and the strings' downbearing stiffen the board further (below). Each mode's
-    // mass is set so that the average admittance across the bridge matches measured bridge
-    // admittances (Wogram 1980; Conklin 1996; Giordano 1998).
+    // The solved bridge admittance is about 25x what the recordings imply (likely the
+    // bridge and string-load mass missing from the solve), so the coupling is fitted down.
+    const double phiScale = 0.2;
+    // The soundboard and the body around it: modes of a Yamaha C5's body, computed by
+    // tools/soundboard/build_board.py (BoardModes.inc). The model is a tapered, ribbed spruce
+    // board with its bridges, crown and downbearing, glued into a rim that bends and twists,
+    // held by back braces, standing on three legs, with the iron frame bolted on and the air
+    // above and below the board, all solved together. Everything a mode does comes from that
+    // model: its shape at the bridge zones (unit modal mass, so the admittance the strings
+    // feel is the physical one), its losses (the materials it strains, the sound it radiates,
+    // the air leaving the case) and the sound it sends to the listener. Modes that mostly move
+    // the frame are in FrameModes.inc instead (see buildFrame).
     static_assert (kBoardZones == kZones, "regenerate BoardModes.inc for this many bridge zones");
-    Rng rng (1234);
     constexpr int Z = kZones;
-    struct Mode { double f, loss, peak, radiation; int m, n; std::array<double, Z> phi; };
+    struct Mode { double f, loss; int n; std::array<double, Z> phi; };
     std::vector<Mode> modes;
 
-    const double lossFactor = 0.02 * (1.0 + 0.8 * ageFactor);
-    const double meanBoardAdmittance = 0.9e-4;
-    // The crown and downbearing are in the body model's stiffness (BoardModes.inc). An old
-    // board has lost some of its crown, which lowers its low modes a little; the Crown setting
-    // scales what is left of that stiffening (1 = as built).
+    // The crown and downbearing are in the model's stiffness. An old board has lost some of its
+    // crown, which lowers its low modes a little; the Crown setting scales what is left of that
+    // stiffening (1 = as built). Age also makes the wood and glue lossier.
     const double crownLift = settings.crown * (1.0 - 0.5 * ageFactor);
-    // Modes are simulated one by one up to 4 kHz; above that they overlap so much that the
+    const double ageLoss = 1.0 + 0.8 * ageFactor;
+    // Modes are simulated one by one up to 5 kHz; above that they overlap so much that the
     // board acts as a plain resistance (the direct bridge path below)
-    const double fTop = std::min (4000.0, 0.45 * sampleRate);
+    const double fTop = std::min (5000.0, 0.45 * sampleRate);
     for (int i = 0; i < kBoardModeCount; ++i)
     {
         const auto& src = kBoardModes[i];
-        const double flat = src.f;
         // The crown's share of each mode's stiffness falls off with frequency (about 12 Hz equivalent)
-        const double fm = std::sqrt (std::max (1.0, flat * flat + (crownLift - 1.0) * 144.0));
+        const double fm = std::sqrt (std::max (1.0, (double) src.f * src.f + (crownLift - 1.0) * 144.0));
         if (fm > fTop)
             continue;
-        // Mode spacing around this one (the ribs crowd the modes above about 1 kHz)
-        int lo = std::max (0, i - 4), hi = std::min (kBoardModeCount - 1, i + 4);
-        const double spacing = 2.0 * M_PI * (kBoardModes[hi].f - kBoardModes[lo].f) / std::max (1, hi - lo);
-        // Losses rise with frequency (the wood's internal friction, the ribs and glue joints),
-        // so the upper modes overlap and neighbouring notes come out evenly instead of hitting
-        // sharp peaks. On top, each mode loses what it radiates: modes that pump air well (odd
-        // shapes, and most modes once their bending waves outrun sound, above about 1 kHz) are
-        // damped more than ones whose halves cancel. Scaled so the average in each octave is unchanged.
-        const double radiationShare = radiationLossShare (i);
-        // (Below about 100 Hz the rim's modes rock the whole case on its legs, and the castors
-        // and floor soak that up quickly.)
-        // Body modes mix in the rim's (maple, glue joints and the legs on the floor) and the air's losses (it
-        // leaks out of the open case), in proportion to the energy each part holds
-        const double boardLoss = 2.0 * lossFactor * (1.0 + 3.0 * fm / 1000.0) * (0.6 + 0.4 * radiationShare);
-        const double rimShare = std::clamp ((double) src.rimShare, 0.0, 1.0);
-        const double airShare = std::clamp ((double) src.airShare, 0.0, 1.0 - rimShare);
-        const double modeLoss = boardLoss * (1.0 - rimShare - airShare) + (0.03 + 0.15 * std::clamp ((100.0 - fm) / 60.0, 0.0, 1.0)) * rimShare + 0.06 * airShare;
-        Mode md { fm, modeLoss, 0, 1.0, 1, i, {} };
-        const double sigmaFlat = M_PI * flat * modeLoss;
-        md.peak = std::min (0.9e-3, meanBoardAdmittance * spacing / (M_PI * sigmaFlat)) * flat / fm;
-        // The bridge feels a body mode only through the board's share of it
-        // Modes that mostly move the heavy rim and frame (the piano rocking on its legs, the rim
-        // bending) are hardly moved by the strings: the board's share sets how much they respond
-        md.peak *= (1.0 - airShare) * (1.0 - rimShare) * (1.0 - rimShare);
+        // The casters rub on the floor: the case's rocking modes, below ~60 Hz, lose far more
+        // than the wood alone would give them
+        const double floorLoss = 0.06 / (1.0 + std::pow (fm / 60.0, 4.0));
+        const double loss = src.radiationLoss + ageLoss * src.structLoss + src.airLoss + floorLoss;
+        Mode md { fm, loss, i, {} };
         for (int z = 0; z < Z; ++z)
             md.phi[(size_t) z] = src.phi[z];
         modes.push_back (md);
-    }
-    const size_t plateModes = modes.size();
-
-    // The rim, braces, legs and the air in the case are part of the body model above (their
-    // modes come out of it, coupled to the board), so they are not added by hand here.
-    // The cast-iron plate: stiff and barely damped. It carries the strings' far ends (the
-    // agraffes and hitch pins), so it rings faintly under everything; its bending shapes
-    // move the bass and treble ends in opposite directions.
-    {
-        const double plateF[] = { 122.0, 187.0, 324.0, 517.0, 768.0, 1130.0 };
-        for (int k = 0; k < 6; ++k)
-        {
-            Mode md { plateF[k] * (1.0 + 0.03 * rng.symmetric()), 0.002, 2.5e-5, 0.3, -1, k, {} };
-            for (int z = 0; z < Z; ++z)
-                md.phi[(size_t) z] = std::cos (M_PI * (k + 1) * (layoutPosition (z) + 0.5) / 8.0);
-            modes.push_back (md);
-        }
     }
 
     const size_t n = modes.size();
@@ -649,50 +599,29 @@ void ModalPiano::buildSoundboard()
     board.scratchF.assign (n, 0.0f);
     board.scratchV.assign (n, 0.0f);
 
-    // Sound radiated towards two listening points: the far-field (Rayleigh) integral of each
-    // board mode's shape (computed with the shapes, in BoardModes.inc). The two points sit above
-    // the keyboard, one towards the bass, one towards the treble, as from the player's seat.
+    // Sound at the player's seat (or a close mic pair over the strings), worked out with the
+    // shapes: both faces of the open board, the short circuit round its edge, the floor and the
+    // open lid. One overall scale sets the output units (the same for the frame's modes).
     std::vector<double> rawL (n), rawR (n), rawV (n);
-    for (size_t i = 0; i < plateModes; ++i)
+    for (size_t i = 0; i < n; ++i)
     {
         const auto& src = kBoardModes[modes[i].n];
-        // From the player's seat (far field) or from a close mic pair over the strings
         rawL[i] = settings.closeMics ? src.micLeft : src.radLeft;
         rawR[i] = settings.closeMics ? src.micRight : src.radRight;
         rawV[i] = src.volume;
     }
-
-    // Keep the overall tonal balance the earlier, tuned board had: within each octave, scale
-    // the radiation so its average strength matches; the differences between modes and
-    // between the ears (the directivity) are what the shapes add.
-    auto normaliseBands = [&] (std::vector<double>& w, double target)
-    {
-        // Below 80 Hz there are only a handful of (mostly rim and leg) modes, too few to
-        // average: they take the scale of the 80-160 Hz octave instead of being pulled up
-        auto bandScale = [&] (double lo)
-        {
-            double sum = 0; int count = 0;
-            for (size_t i = 0; i < n; ++i)
-                if (modes[i].m > 0 && modes[i].f >= lo && modes[i].f < 2.0 * lo) { sum += w[i] * w[i]; ++count; }
-            return count == 0 || sum <= 0 ? 0.0 : target / std::sqrt (sum / count);
-        };
-        const double lowScale = bandScale (80.0);
-        for (double lo = 20.0; lo < 20000.0; lo *= 2.0)
-        {
-            const double scale = lo < 80.0 ? lowScale : bandScale (lo);
-            if (scale <= 0) continue;
-            for (size_t i = 0; i < n; ++i)
-                if (modes[i].m > 0 && modes[i].f >= lo && modes[i].f < 2.0 * lo) w[i] *= scale;
-        }
-    };
-    normaliseBands (rawL, 0.85);
-    normaliseBands (rawR, 0.85);
-    // The air under the board is driven by the net volume a mode pushes: strong for the
-    // lowest piston-like modes, small for the rest
     {
         double sum = 0; int count = 0;
         for (size_t i = 0; i < n; ++i)
-            if (modes[i].m > 0 && modes[i].f < 400.0) { sum += rawV[i] * rawV[i]; ++count; }
+            if (modes[i].f >= 200.0 && modes[i].f < 800.0) { sum += rawL[i] * rawL[i] + rawR[i] * rawR[i]; count += 2; }
+        radScale = count > 0 && sum > 0 ? 0.85 / std::sqrt (sum / count) : 1.0;
+        for (size_t i = 0; i < n; ++i) { rawL[i] *= radScale; rawR[i] *= radScale; }
+    }
+    // The sound leaking out under the board (see buildBody) follows the net volume a mode pushes
+    {
+        double sum = 0; int count = 0;
+        for (size_t i = 0; i < n; ++i)
+            if (modes[i].f < 400.0) { sum += rawV[i] * rawV[i]; ++count; }
         const double scale = count > 0 && sum > 0 ? 0.85 / std::sqrt (sum / count) : 0.0;
         for (auto& v : rawV) v *= scale;
     }
@@ -702,15 +631,9 @@ void ModalPiano::buildSoundboard()
         const double f = modes[i].f;
         const double w = 2.0 * M_PI * f;
         const double sigma = M_PI * f * modes[i].loss;
-        // Mass from the admittance this mode should add, averaged over the bridge
-        double meanPhi2 = 0;
-        for (int z = 0; z < Z; ++z)
-            meanPhi2 += modes[i].phi[(size_t) z] * modes[i].phi[(size_t) z];
-        meanPhi2 = std::max (0.05, meanPhi2 / Z);
-        const double modalMass = meanPhi2 / (2.0 * sigma * modes[i].peak);
-
+        // Unit modal mass: the shapes carry the physical admittance
         const cd pole = std::exp (cd (-sigma, w) * Ts);
-        const cd gain = pole * (Ts / (w * modalMass));
+        const cd gain = pole * (Ts / w);
         board.omega[i] = (float) w;
         board.sigma[i] = (float) sigma;
         board.qr[i] = (float) pole.real();
@@ -722,27 +645,11 @@ void ModalPiano::buildSoundboard()
         for (int z = 0; z < Z; ++z)
         {
             const double fc = 2000.0 * std::pow (1.22, layoutPosition (z)), ratio = modes[i].f / fc;
-            board.phi[(size_t) z * n + i] = (float) (zoneCoupling[(size_t) z] * modes[i].phi[(size_t) z] / std::sqrt (1.0 + ratio * ratio));
+            board.phi[(size_t) z * n + i] = (float) (phiScale * zoneCoupling[(size_t) z] * modes[i].phi[(size_t) z] / std::sqrt (1.0 + ratio * ratio));
         }
-
-        if (modes[i].m > 0)
-        {
-            // Acoustic short circuit: the board (and below 100 Hz the whole case) is open on both
-            // faces, so at low frequencies the air just sloshes round its edge from the front to
-            // the back. Below about 120 Hz (where the wavelength outgrows the case) it radiates
-            // like a dipole, 6 dB per octave weaker for each octave down.
-            const double baffle = std::min (1.0, f / 120.0);
-            board.radLeft[i] = (float) (baffle * rawL[i]);
-            board.radRight[i] = (float) (baffle * rawR[i]);
-            board.volume[i] = (float) rawV[i];
-        }
-        else
-        {
-            // Rim and plate: small radiators, much the same in both ears
-            const double l = (0.6 + 0.4 * rng.next()) * (rng.next() < 0.5 ? -1 : 1);
-            board.radLeft[i] = (float) (l * modes[i].radiation);
-            board.radRight[i] = (float) (l * (0.8 + 0.2 * rng.next()) * modes[i].radiation);
-        }
+        board.radLeft[i] = (float) rawL[i];
+        board.radRight[i] = (float) rawR[i];
+        board.volume[i] = (float) rawV[i];
     }
 
     // Overall level: a mezzo-forte middle C peaks around -20 dBFS, fortissimo around -10
@@ -752,14 +659,12 @@ void ModalPiano::buildSoundboard()
 
 void ModalPiano::buildFrame()
 {
-    // The cast-iron frame holds the strings' far ends (agraffes, capo bar). Its bending modes
-    // come from a model of its bars bolted onto the rim (FrameModes.inc, tools/soundboard),
-    // with their shapes at each key zone's far ends, so a string feels the frame move where
-    // it actually ends, and a mode that twists the frame moves bass and treble ends apart.
-    // Levels are set so the average admittance at the agraffes matches a grand's frame
-    // (around 1.5e-5 m/s/N at its resonances), lightly damped.
+    // The cast-iron frame holds the strings' far ends (agraffes, capo bar). Its modes come from
+    // the same body model as the board's (FrameModes.inc: the body modes that mostly move the
+    // frame, solved with the rim, board and air), with their shapes where each key zone's
+    // strings end, their own losses, and the sound they make through the board.
     static_assert (sizeof (kFrameModes[0].phi) / sizeof (float) == kZones, "regenerate FrameModes.inc for this many zones");
-    std::vector<int> use;
+        std::vector<int> use;
     for (int i = 0; i < kFrameModeCount; ++i)
         if (kFrameModes[i].f < 0.45 * sampleRate)
             use.push_back (i);
@@ -770,24 +675,16 @@ void ModalPiano::buildFrame()
     for (size_t k = 0; k < n; ++k)
     {
         const auto& src = kFrameModes[use[k]];
-        const double f = src.f, w = 2.0 * M_PI * f, sigma = M_PI * f * 0.006;
-        double meanPhi2 = 0;
-        for (int z = 0; z < kZones; ++z)
-            meanPhi2 += (double) src.phi[z] * src.phi[z];
-        meanPhi2 = std::max (1e-9, meanPhi2 / kZones);
-        // Scale the shapes so a mode's mean peak admittance is 1.5e-5 (shape kept, level measured)
-        const double scale = std::sqrt (2.0 * sigma * 1.5e-5 / meanPhi2);
+        // At least the loss of the frame's bolted seats on the rim (measured frames: Q of 100-250)
+        const double f = src.f, w = 2.0 * M_PI * f, sigma = M_PI * f * std::max (0.004, (double) src.loss);
         const cd pole = std::exp (cd (-sigma, w) * Ts);
         const cd gain = pole * (Ts / w);
         frame.omega[k] = (float) w; frame.sigma[k] = (float) sigma;
         frame.qr[k] = (float) pole.real(); frame.qi[k] = (float) pole.imag();
         frame.hr[k] = (float) gain.real(); frame.hi[k] = (float) gain.imag();
         for (int z = 0; z < kZones; ++z)
-            frame.phi[k * kZones + (size_t) z] = (float) (src.phi[z] * scale);
-        // The plate itself radiates only a little, but it is a large, ringing metal surface
-        // A cast-iron bar is narrow next to a low note's wavelength, so it barely radiates below
-        // about 1 kHz (radiation efficiency rises as (ka)^2)
-        frame.rad[k] = (float) (0.6 * src.rad * std::min (1.0, std::pow (f / 1000.0, 2.0)));
+            frame.phi[k * kZones + (size_t) z] = src.phi[z];
+        frame.rad[k] = (float) (radScale * src.rad);
     }
     frame.accel.fill (0); frame.lastVel.fill (0); frame.force.fill (0);
     frame.knock = 0;

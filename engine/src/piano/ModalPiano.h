@@ -333,7 +333,7 @@ private:
     // The bridge is split into zones along its length (three on the bass bridge, thirteen on the
     // treble bridge); each key's strings press on their own zone, and every board mode moves each
     // zone by its own amount
-    static constexpr int kZones = 16, kBassZones = 3;
+    static constexpr int kZones = 32, kBassZones = 4;   // about 2.4 keys per zone on the treble bridge, 5 on the bass bridge
     std::vector<int> keyZone;
     std::array<double, kZones> bridgeMassCoeff {}, bridgeMassState {};
     // Where a zone sits along the bridges on the scale of the earlier eight-zone layout (0..7):
@@ -363,6 +363,7 @@ private:
     // and move those ends back, coupling the strings a second way.
     struct Frame { std::vector<float> wr, wi, qr, qi, hr, hi, omega, sigma, rad, phi; std::array<double, kZones> accel {}, lastVel {}, force {}; double knock = 0, knockDecay = 0; } frame;
     void buildFrame();
+    double radScale = 1.0;   // output units of the body model's radiation (set in buildSoundboard)
     void runFrame (double& left, double& right);
 
     // Neighbouring strings whose modes sit back to back are stepped in one go
