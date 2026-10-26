@@ -139,6 +139,7 @@ private:
         std::array<double, 3> lastCompression {};
         std::array<double, 3> feltHistory {};  // relaxing part of the felt force, per string
         std::array<double, 3> forceSum {};     // per string, over the current sample
+        double exponentBoost = 0;              // the felt's exponent rises on the hardest blows
     };
 
     struct KeyState
@@ -296,6 +297,7 @@ private:
     void runAction (double& force, double& left, double& right);
 
     double bridgeResistance = 0.9e-4;      // m/s per N: the dense high-frequency part of the soundboard
+    double frameKnockGain = 150.0;          // N per (m/s)^1.5: how hard the hammer blow shakes the iron plate
     double horizontalResistance = 0.6e-4;  // the bridge moves less easily sideways
     double crossResistance = 0.36e-4;      // vertical force -> sideways motion, and back
     // The bridge is split into zones along its length; each key's strings press on their own
@@ -322,7 +324,7 @@ private:
     // The iron frame at the strings' far ends (agraffes, pressure bar): a stiff, heavy,
     // barely damped structure. Its few modes are pushed by every sounding string's far end
     // and move those ends back, coupling the strings a second way.
-    struct Frame { std::vector<float> wr, wi, qr, qi, hr, hi, omega, sigma, rad; double accel = 0, lastVel = 0; } frame;
+    struct Frame { std::vector<float> wr, wi, qr, qi, hr, hi, omega, sigma, rad; double accel = 0, lastVel = 0, knock = 0, knockDecay = 0; } frame;
     void buildFrame();
     void runFrame (double& left, double& right);
 

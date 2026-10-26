@@ -739,6 +739,8 @@ void ModalPiano::buildFrame()
         frame.rad[i] = (float) ((0.5 + 0.5 * rng.next()) * (rng.next() < 0.5 ? -1 : 1) * 0.6);
     }
     frame.accel = frame.lastVel = 0;
+    frame.knock = 0;
+    frame.knockDecay = std::exp (-1.0 / (0.0004 * sampleRate));
 }
 
 void ModalPiano::runFrame (double& left, double& right)
@@ -772,6 +774,11 @@ void ModalPiano::runFrame (double& left, double& right)
         F += f;
     }
     F *= settings.farEnd;
+    // The hammer's blow also travels through the strings' far ends into the iron plate: a
+    // short, sharp push that sets the frame ringing for a moment (the metallic shock of a
+    // hard treble note)
+    F += frame.knock;
+    frame.knock *= frame.knockDecay;
 
     double v = 3e-6 * F, out = 0;
     for (size_t i = 0; i < frame.omega.size(); ++i)
@@ -1003,6 +1010,11 @@ void ModalPiano::reset()
         s.activity = Activity::Off;
         s.damped = true;
     }
+    // Strings without dampers (the top of the compass) listen to the bridge all the time,
+    // whether or not their keys have been played: the sympathetic halo of the treble
+    for (size_t k = 0; k < keys.size(); ++k)
+        if (! keys[k].hasDamper)
+            updateDamping ((int) k);
     // Duplex segments have no dampers and always listen
     for (int i : alwaysOn)
     {
@@ -1140,6 +1152,8 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
         // tells a piano from a harp or a glockenspiel
         const double top = std::pow (std::max (0.0, (treble - 0.6) / 0.4), 2.0);
         queueAction (1, 0, 0.09 * std::pow (v, 1.5) * (0.4 + 0.6 * treble + 1.2 * top), k);
+        if (settings.actionNoise > 0)
+            frame.knock += settings.actionNoise * settings.farEnd * frameKnockGain * std::pow (v, 1.5) * (0.2 + 0.8 * treble * treble);
     }
 
     // Soft notes are made a little louder without changing their tone: the key's strings push
@@ -1179,6 +1193,10 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
     // notes therefore arrive a few milliseconds later than hard ones.
     const double letOff = 2.0e-3 * (1.0 + 0.15 * rng.symmetric()) * (1.0 + 0.5 * ageFactor);
     hammerVelocity = std::sqrt (std::max (0.0025, hammerVelocity * hammerVelocity - 2.0 * 9.81 * letOff));
+
+    // Above about MIDI velocity 100 the felt is squeezed into its densest state and its
+    // force law steepens further, so the hardest blows get disproportionately brighter
+    ks.hammer.exponentBoost = 0.5 * std::clamp ((hammerVelocity - 3.3) / 1.7, 0.0, 1.0);
 
     ks.hammer.active = true;
     ks.hammer.position = nearest - letOff; // just let off, flying free
@@ -1329,7 +1347,7 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
     const double groove = ageFactor * std::exp (-std::pow ((key.midiNote - 66) / 18.0, 2.0))
                           * (0.7 + 0.6 * Rng ((uint32_t) keyIndex * 131u + 9u).next());
     const double q0 = key.feltStiffness * hardness * (1.0 + 1.5 * ageFactor) * (1.0 + 0.9 * groove);
-    const double p = key.feltExponent;
+    const double p = key.feltExponent + h.exponentBoost;
     // Felt has memory (Stulov 1995): squeezed quickly it is stiff; squeezed slowly it has
     // time to relax and gives way. So a gentle touch makes a long, soft contact that only
     // excites the low partials, and a hard blow a short, stiff one that brings out the top.
