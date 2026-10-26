@@ -225,17 +225,22 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         key.targetFrequency = F[(size_t) k - 1];
         key.stretchCents = 1200.0 * std::log2 (key.targetFrequency / equalTempered (key.midiNote));
 
-        // Unison: tuned together, with the tiny differences a good tuner leaves.
-        // Trichord offsets around the centre; the exact amount varies a little per key.
-        const double spread = unisonSpreadCents * (1.0 + 0.4 * keyNoise (k, 1));
+        // Unison: trichord offsets around the centre; the exact amount varies per key.
+        // Unisons drift apart after tuning: like the recorded Yamaha, a key's strings end up 1 to 3
+        // cents apart (each outer string 0.5 to 1.5 cents from the centre; the two strings of a
+        // bass bichord a little closer, about 0.75 to 2.3 cents, as wider ones pull its pitch off)
+        const double spread = unisonSpreadCents * (1.0 + 0.5 * keyNoise (k, 1));
         // Every key's pattern differs: which string is high or low, and by how much
         const double offsets3[3] = { -spread * (1.0 + 0.15 * keyNoise (k, 3)), 0.25 * spread * keyNoise (k, 2),
                                      spread * (1.0 + 0.15 * keyNoise (k, 4)) };
         const double flip = keyNoise (k, 5) < 0 ? -1.0 : 1.0;
-        const double offsets2[2] = { -0.5 * flip * spread * (1.0 + 0.3 * keyNoise (k, 6)), 0.5 * flip * spread };
+        const double offsets2[2] = { -0.75 * flip * spread * (1.0 + 0.3 * keyNoise (k, 6)), 0.75 * flip * spread };
+        // Centred, so the key's pitch stays where the tuner put it
+        const double centre = key.numStrings == 3 ? (offsets3[0] + offsets3[1] + offsets3[2]) / 3.0
+                            : key.numStrings == 2 ? (offsets2[0] + offsets2[1]) / 2.0 : 0.0;
         for (int s = 0; s < key.numStrings; ++s)
         {
-            const double cents = key.numStrings == 3 ? offsets3[s] : key.numStrings == 2 ? offsets2[s] : 0.0;
+            const double cents = (key.numStrings == 3 ? offsets3[s] : key.numStrings == 2 ? offsets2[s] : 0.0) - centre;
             const double f = key.targetFrequency * std::pow (2.0, cents / 1200.0);
             key.strings[(size_t) s] = makeString (designs[(size_t) k - 1], kLengths[k - 1], f);
         }

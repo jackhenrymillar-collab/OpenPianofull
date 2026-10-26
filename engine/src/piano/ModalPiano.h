@@ -50,7 +50,7 @@ class ModalPiano
 public:
     struct Settings
     {
-        double unisonSpreadCents = 0.3;     // how far each outer unison string sits from the centre
+        double unisonSpreadCents = 1.0;      // how far each outer unison string sits from the centre
         double hammerUnevenness = 0.04e-3;  // [m] how far apart a hammer meets a key's strings
         int oversampling = 8;               // during hammer contact
         bool horizontal = true;             // second (sideways) vibration direction
@@ -58,8 +58,8 @@ public:
         bool duplex = true;                 // undamped string segments behind the treble bridge
         double longitudinalCoupling = 0.12; // share of the lengthwise force that reaches the board (via bridge tilt)
         double crown = 1.0;                 // soundboard crown and downbearing (0 = flat, unloaded board)
-        double feltMemory = 0.6;            // felt relaxation strength (0 = perfectly elastic)
-        double feltRelaxTime = 0.6e-3;      // [s] how quickly squeezed felt relaxes
+        double feltMemory = 0.95;           // felt relaxation strength (0 = perfectly elastic)
+        double feltRelaxTime = 3.0e-3;     // [s] how quickly squeezed felt relaxes
         double actionNoise = 1.0;           // key, hammer and damper noises (0 = silent action)
         double outerFelt = 0.02;            // stiffness of the soft outer felt, relative to the core
         double outerFeltScale = 1.0;        // scales how deep the outer felt is
@@ -306,6 +306,7 @@ private:
     void queueAction (int type, int delaySamples, double amount, int keyIndex);
     void runAction (double& force, double& left, double& right);
 
+    double dbgRad = 1, dbgDirect = 1; std::array<double, 8> dbgRZ { 1, 1, 1, 1, 1, 1, 1, 1 }; // TEMP
     double bridgeResistance = 0.9e-4;      // m/s per N: the dense high-frequency part of the soundboard
     double feltScatter = 0.12;            // how unevenly one hammer's felt meets the strings of its unison
     double frameKnockGain = 150.0;          // N per (m/s)^1.5: how hard the hammer blow shakes the iron plate
@@ -321,6 +322,10 @@ private:
     // the middle of the treble bridge (about C4 to C5) couples most strongly, which gives those
     // notes their fast first decay and long quiet tail
     static constexpr std::array<double, kZones> zoneCoupling { 0.78, 1.25, 1.25, 1.12, 1.38, 0.98, 0.9, 0.8 };
+    // How much of each zone's bridge motion is the dense, resistive part of the board: high
+    // from the tenor to C5 (fast first decay there), low in the upper treble. Fitted to
+    // recorded notes (tools/calibrate)
+    static constexpr std::array<double, kZones> zoneResistance { 1.0, 1.6, 1.6, 1.6, 2.24, 0.49, 0.6, 1.6 };
     std::array<double, kZones> zoneForce {}, zoneAcceleration {}, lastZoneVelocity {}, zoneBoardVelocity {};
     double lastBridgeVelocity = 0, bridgeAcceleration = 0;
     double lastHorizontalVelocity = 0, horizontalAcceleration = 0;

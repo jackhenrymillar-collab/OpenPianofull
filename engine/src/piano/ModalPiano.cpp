@@ -553,8 +553,11 @@ void ModalPiano::buildSoundboard()
             const double fm = std::sqrt (flat * flat + fc * fc);
             if (fm > fTop)
                 continue;
-            Mode md { fm, lossFactor, 0, 1.0, mi, ni, {} };
-            const double sigmaFlat = M_PI * flat * lossFactor;
+            // Losses rise with frequency (ribs, glue joints and radiation), so the upper modes
+            // overlap and neighbouring notes come out evenly instead of hitting sharp peaks
+            const double modeLoss = 2.0 * lossFactor * (1.0 + 3.0 * fm / 1000.0);
+            Mode md { fm, modeLoss, 0, 1.0, mi, ni, {} };
+            const double sigmaFlat = M_PI * flat * modeLoss;
             md.peak = std::min (0.9e-3, meanBoardAdmittance * meanSpacing / (M_PI * sigmaFlat)) * flat / fm;
             for (int z = 0; z < Z; ++z)
                 md.phi[(size_t) z] = std::sin (mi * M_PI * zx[(size_t) z] / a) * std::sin (ni * M_PI * zy[(size_t) z] / b);
@@ -1782,7 +1785,7 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         {
             // The resistive part goes through the bridge's own mass (a one-pole roll-off)
             const double c = zoneCoupling[(size_t) z];
-            const double res = bridgeResistance * c * (0.5 * c * zoneForce[(size_t) z] + 0.5 * weightedForce);
+            const double res = zoneResistance[(size_t) z] * bridgeResistance * c * (0.5 * c * zoneForce[(size_t) z] + 0.5 * weightedForce);
             auto& ms = bridgeMassState[(size_t) z];
             ms = res + bridgeMassCoeff[(size_t) z] * (ms - res);
             const double v = ms + crossResistance * sideSum + zoneBoardVelocity[(size_t) z];
