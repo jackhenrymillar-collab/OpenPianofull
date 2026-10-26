@@ -47,7 +47,10 @@ namespace
         // at 3 to 6 kHz die at about 20 to 40 dB/s, so this rise is gentle
         // (the top fundamentals are spared: their losses are mostly at the bridge)
         const double overtone = std::clamp (f / f1 - 1.0, 0.0, 1.0);
-        return b1 + b2 * f * f + 0.11 * overtone * std::pow (f / 2000.0, 3);
+        // From the middle up the strings themselves lose a quarter less, which gives the long
+        // quiet tail of recorded notes there (about 3 dB/s from C4 to B5)
+        const double b1s = b1 * (1.0 - 0.25 * std::clamp (octavesAboveA0 - 2.5, 0.0, 1.0));
+        return b1s + b2 * f * f + 0.11 * overtone * std::pow (f / 2000.0, 3);
     }
 
     // Extra decay with the felt damper resting on the string
@@ -248,6 +251,25 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     const int sympatheticCap = segment || ! key.hasDamper ? s.count : kind == Kind::Horizontal ? 6 : 16;
     s.sympatheticCount = ! key.hasDamper || segment ? s.count
                                                                  : std::clamp (sympathetic, 1, std::min (s.count, sympatheticCap));
+
+    // Voicing: a technician evens out a piano's loudness note by note (hammer needling,
+    // string levelling). This curve was fitted to the recorded grand's level, note by note
+    // relative to the middle of the range. Pushing harder on the bridge while feeling its
+    // motion less by the same factor keeps the decay and coupling unchanged.
+    {
+        static constexpr double voicingDb[30] = { -2.3, -1.0, -1.0, -3.2, -4.6, -3.8, -3.7, -3.4, -0.5, 2.5,
+                                                  2.7, 0.2, -0.4, 1.2, 2.1, 2.4, -1.6, -5.6, -3.5, -2.0,
+                                                  -2.0, -0.7, 0.3, 1.3, 3.2, 3.6, 2.3, 2.9, 3.4, 2.6 }; // every 3 keys from A0
+        const double pos = std::clamp ((key.midiNote - kLowestKey) / 3.0, 0.0, 28.999);
+        const int i = (int) pos;
+        const double db = voicingDb[i] + (voicingDb[i + 1] - voicingDb[i]) * (pos - i);
+        const float g = (float) std::pow (10.0, db / 20.0);
+        for (int j = 0; j < s.count; ++j)
+        {
+            const size_t q = (size_t) (s.first + j);
+            m.fk[q] *= g; m.bgr[q] /= g; m.bgi[q] /= g;
+        }
+    }
 
     strings.push_back (s);
     return (int) strings.size() - 1;
