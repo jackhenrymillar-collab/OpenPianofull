@@ -329,20 +329,21 @@ private:
     double frameKnockGain = 150.0;          // N per (m/s)^1.5: how hard the hammer blow shakes the iron plate
     double horizontalResistance = 1.2e-4;  // the bridge moves less easily sideways
     double crossResistance = 0.72e-4;      // vertical force -> sideways motion, and back
-    // The bridge is split into zones along its length; each key's strings press on their own
-    // zone, and every board mode moves each zone by its own amount
-    static constexpr int kZones = 8;
+    // The bridge is split into zones along its length (three on the bass bridge, thirteen on the
+    // treble bridge); each key's strings press on their own zone, and every board mode moves each
+    // zone by its own amount
+    static constexpr int kZones = 16, kBassZones = 3;
     std::vector<int> keyZone;
     std::array<double, kZones> bridgeMassCoeff {}, bridgeMassState {};
-    // Towards the top the bridge runs near the stiff edge of the board, so the board moves
-    // less there and the strings couple more weakly. Fitted to recorded notes (tools/calibrate):
-    // the middle of the treble bridge (about C4 to C5) couples most strongly, which gives those
-    // notes their fast first decay and long quiet tail
-    static constexpr std::array<double, kZones> zoneCoupling { 0.78, 1.25, 1.1, 1.0, 0.95, 0.98, 0.9, 0.8 };
-    // How much of each zone's bridge motion is the dense, resistive part of the board: high
-    // from the tenor to C5 (fast first decay there), low in the upper treble. Fitted to
-    // recorded notes (tools/calibrate)
-    static constexpr std::array<double, kZones> zoneResistance { 1.0, 1.6, 1.0, 1.0, 0.8, 0.49, 0.6, 1.6 };
+    // Where a zone sits along the bridges on the scale of the earlier eight-zone layout (0..7):
+    // 0..1 the bass bridge, 2..7 the treble bridge from its low end to the top
+    static double layoutPosition (int zone);
+    // Fitted to recorded notes (tools/calibrate), on the eight-zone layout and interpolated:
+    // how strongly each part of the bridge couples to the board...
+    static constexpr std::array<double, 8> zoneCouplingFit { 0.78, 1.25, 1.1, 1.1, 1.1, 1.0, 0.9, 0.8 };
+    // ...and how much of its motion is the dense, resistive part of the board
+    static constexpr std::array<double, 8> zoneResistanceFit { 1.0, 1.2, 1.5, 1.4, 1.0, 0.49, 0.6, 1.6 };
+    std::array<double, kZones> zoneCoupling {}, zoneResistance {};
     std::array<double, kZones> zoneForce {}, zoneAcceleration {}, lastZoneVelocity {}, zoneBoardVelocity {};
     double lastBridgeVelocity = 0, bridgeAcceleration = 0;
     double lastHorizontalVelocity = 0, horizontalAcceleration = 0;
