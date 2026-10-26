@@ -279,7 +279,9 @@ void ModalPiano::addLongitudinal (String& s, const StringSpec& spec)
         const double w = 2.0 * M_PI * order * f1;
         // Free longitudinal ringing dies fast (end losses at the bridge pin and agraffe); what
         // remains audible is mostly the forced, phantom part that follows the transverse motion
-        const double sigma = settings.longitudinalLoss;
+        // Higher lengthwise modes lose energy faster still (end friction at the agraffe and
+        // bridge pins, and in the winding), or they ring on as a thin, metallic whistle
+        const double sigma = settings.longitudinalLoss + settings.longitudinalLossSlope * order * f1;
         const cd pole = std::exp (cd (-sigma, w) * Ts);
         const cd gain = pole * (Ts / w);
         lm.zr.push_back (0); lm.zi.push_back (0);
@@ -1611,6 +1613,7 @@ double ModalPiano::runLongitudinal (const String& s)
         return force * settings.longitudinalCoupling * keys[(size_t) s.key].numStrings * s.outScale;
     }
 
+    double resonant = 0;
     // Resonant part: each longitudinal mode m is driven by partial pairs whose numbers
     // differ by m (and by pairs that add up to m)
     for (int i = 0; i < s.longCount; ++i)
@@ -1626,8 +1629,11 @@ double ModalPiano::runLongitudinal (const String& s)
         const float ni = lm.pr[j] * im + lm.pi[j] * r + lm.gi[j] * drive;
         lm.zr[j] = lm.pr[j] * r - lm.pi[j] * im + lm.gr[j] * drive;
         lm.zi[j] = ni;
-        force += lm.out[j] * (ni - drive * lm.invW2[j]);
+        resonant += lm.out[j] * (ni - drive * lm.invW2[j]);
     }
+    // The lengthwise resonances reach the board less well than the slow stretch: they are
+    // sharp peaks in the treble region and, coupled fully, ring as a whistle
+    force += settings.longitudinalResonantShare * resonant;
     return force * settings.longitudinalCoupling * keys[(size_t) s.key].numStrings * s.outScale;
 }
 

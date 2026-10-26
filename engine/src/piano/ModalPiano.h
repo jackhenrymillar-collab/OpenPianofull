@@ -60,6 +60,8 @@ public:
         int longitudinalOrders = 16;        // lengthwise modes per string
         int longitudinalPartials = 64;     // transverse partials that drive them
         double longitudinalLoss = 40.0;     // decay of free lengthwise ringing [1/s]
+        double longitudinalResonantShare = 0.35; // of that, for the lengthwise resonances themselves
+        double longitudinalLossSlope = 0.15; // and its rise with frequency [1/s per Hz]
         bool contactSpread = true;          // the felt's contact patch widens as it is squeezed
         double crown = 1.0;                 // soundboard crown and downbearing (0 = flat, unloaded board)
         double feltMemory = 0.95;           // felt relaxation strength (0 = perfectly elastic)
