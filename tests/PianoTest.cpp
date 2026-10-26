@@ -1,3 +1,4 @@
+#include <cstdlib>
 /*
 OpenPiano: an open source piano engine based on physical modeling
 Copyright (C) 2021-2022 Michele Perrone, and contributors
@@ -124,6 +125,7 @@ int main()
             }
             const double raw = 1200 * std::log2 (measured / target);
             const double cents = raw < low ? raw - low : raw > high ? raw - high : 0.0;
+            if (std::getenv ("TUNE_DUMP")) std::printf ("TUNE %d %.3f\n", key.midiNote, raw - 0.5 * (low + high));
             if (std::abs (cents) > std::abs (worst)) { worst = cents; worstNote = key.midiNote; }
             if (std::abs (cents) > 2.0)
                 std::printf ("  MIDI %d: %+.2f cents\n", key.midiNote, cents);

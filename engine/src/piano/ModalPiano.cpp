@@ -154,32 +154,12 @@ void ModalPiano::prepare (double newSampleRate, const Settings& newSettings)
         zoneResistance[(size_t) z] = zoneResistanceFit[(size_t) i] + (zoneResistanceFit[(size_t) i + 1] - zoneResistanceFit[(size_t) i]) * (p - i);
     }
 
-    // The tuner tunes the piano as built: the body's springiness or mass at each note's
-    // pitch pulls the strings a little sharp or flat (a few cents near strong body modes),
-    // and the tuner turns the pins to cancel it. Worked out from the body's modes at each
-    // key's bridge zone, for all the key's strings pushing together.
-    {
-        for (size_t k = 0; k < keys.size(); ++k)
-        {
-            auto& key = keys[k];
-            const int z = keyZone[k];
-            const double w = 2.0 * M_PI * key.targetFrequency;
-            double imY = 0;
-            for (int i = 0; i < kBoardModeCount; ++i)
-            {
-                const auto& md = kBoardModes[i];
-                const double wn = 2.0 * M_PI * md.f, eta = md.radiationLoss + md.structLoss + md.airLoss;
-                const double ph = zoneCoupling[(size_t) z] * md.phi[z];
-                const std::complex<double> y = std::complex<double> (0.0, w) / std::complex<double> (wn * wn - w * w, eta * wn * w);
-                imY += ph * ph * y.imag();
-            }
-            const auto& s0 = key.strings[0];
-            const double z0 = std::sqrt (s0.tension * s0.linearDensity);
-            const double shift = -2.0 * z0 * key.numStrings * imY / M_PI;   // relative pitch shift (checked against the pitch test)
-            for (int i = 0; i < key.numStrings; ++i)
-                key.strings[(size_t) i].fundamental /= (1.0 + shift);
-        }
-    }
+    // The tuner tunes the piano as built, by ear: the body pulls some notes a few cents
+    // sharp or flat (most near strong body modes), and the pins are turned to cancel it.
+    // Measured on this model with the pitch test (tools: openpiano-piano-test), in cents.
+    tuneFactor.assign (keys.size(), 1.0);
+    for (size_t k = 0; k < keys.size() && k < kTunerCents.size(); ++k)
+        tuneFactor[k] = std::pow (2.0, -kTunerCents[k] / 1200.0);
     buildModes();
     for (auto& st : strings)
         st.zone = keyZone[(size_t) st.key];
@@ -218,7 +198,7 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     // the upper partials of a unison from all beating in step, which would dull the tone at once.
     const double B = spec.inharmonicity * (1.0 + 0.01 * rng.symmetric());
     const double lossScale = (1.0 + 0.1 * rng.symmetric()) * (1.0 + 1.2 * ageFactor);
-    const double fFlex = spec.fundamental / std::sqrt (1.0 + B);
+    const double fFlex = spec.fundamental * (keyIndex < (int) tuneFactor.size() ? tuneFactor[(size_t) keyIndex] : 1.0) / std::sqrt (1.0 + B);
     const double L = spec.length;
 
     String s;
@@ -616,7 +596,7 @@ void ModalPiano::buildSoundboard()
             continue;
         // The casters rub on the floor: the case's rocking modes, below ~60 Hz, lose far more
         // than the wood alone would give them
-        const double floorLoss = 0.06 / (1.0 + std::pow (fm / 60.0, 4.0));
+        const double floorLoss = 0.3 / (1.0 + std::pow (fm / 90.0, 4.0));   // the case rocks on its casters and legs: heavily damped (lighter damping let these modes pull bass notes up to 25 cents off)
         const double loss = src.radiationLoss + ageLoss * src.structLoss + src.airLoss + floorLoss;
         Mode md { fm, loss, i, {} };
         for (int z = 0; z < Z; ++z)
@@ -747,7 +727,7 @@ void ModalPiano::buildSoundboard()
     }
 
     // Overall level: a mezzo-forte middle C peaks around -20 dBFS, fortissimo around -10
-    outputGain = 21.5;
+    outputGain = 21.5 * 0.4;   // the body at full strength is ~8 dB louder
     buildBody();
 }
 
