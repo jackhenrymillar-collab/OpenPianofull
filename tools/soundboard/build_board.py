@@ -27,8 +27,8 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as sla
 from scipy import ndimage
 
-DX = 0.02                      # grid step [m]
-A, B = 1.42, 1.62              # bounding box: across (treble 0 .. bass A), along the strings (keyboard 0 .. tail B)
+DX = 0.01                      # grid step [m]
+A, B = 1.38, 1.47              # Yamaha C5 board's bounding box: across (treble 0 .. bass A), along the strings (belly rail 0 .. tail B)
 E_L, E_T, G_LT, NU = 11e9, 0.75e9, 0.7e9, 0.4   # spruce: along / across the grain, shear, Poisson (LT)
 GRAIN = math.radians(35.0)    # the grain runs diagonally, from the treble front towards the bass tail
 RHO = 420.0
@@ -38,7 +38,7 @@ RIB_EI = 2.0 * E_L * RIB_W * RIB_T ** 3 / 12.0     # x2: glued on the plate, the
 RIB_M = RHO * RIB_W * RIB_T
 TREBLE_EI, TREBLE_M = 14e9 * 0.030 * 0.030 ** 3 / 12.0, 750.0 * 0.030 * 0.030   # beech bridge
 BASS_EI, BASS_M = 14e9 * 0.035 * 0.035 ** 3 / 12.0, 750.0 * 0.035 * 0.035
-F_TOP = 2000.0
+F_TOP = 4000.0
 # The body around the board (a Yamaha C5): the rim it is glued into, the braces under it,
 # the iron frame bolted on the rim, the legs, and the air in the case above the board.
 RIM_EI = 12e9 * 0.035 * 0.26 ** 3 / 12.0 * 3.0   # laminated maple, 26 cm deep; x3: the bolted iron frame ties it
@@ -49,6 +49,14 @@ BRACE_EI, BRACE_M = 12e9 * 0.09 * 0.11 ** 3 / 12.0, 650.0 * 0.09 * 0.11   # back
 LEG_K = 3.0e6                                     # each leg on its castor [N/m]
 CASE_H = 0.24 + 0.08                              # rim height above the board, plus the open top's end correction [m]
 RHO_AIR, C_AIR = 1.2, 343.0
+FLOOR_GAP = 0.62           # board underside to the floor [m] (the rim skirt hangs ~10 cm below the board, then it is open)
+# Crown and downbearing. The ribs are planed to an arch (radius about 20 m), so the board is a
+# shallow shell: bending it also stretches it, which stiffens the low modes. The strings press
+# the bridges down (downbearing, about 1.7% of the total string tension, ~3 kN on a C5); that
+# load flattens the arch where it pushes (less crown, less stiffening there) and squeezes the
+# board along the ribs (compression, which softens bending). Both are solved here, not guessed.
+CROWN_R = 20.0
+DOWNBEARING = 3000.0       # [N], shared along both bridges (a quarter on the bass bridge)
 N_BASS, N_TREBLE = 3, 13       # bridge zones (bass bridge keys A0..E2, treble bridge F2..C8)
 
 
@@ -62,16 +70,39 @@ def inside(x, y):
     return (y >= 0) & (y <= B) & (x <= A) & (x >= bentside(y))
 
 
+def c5_lengths():
+    """Speaking lengths per key (1..88), the same table the engine uses (ScaleDesign.cpp)."""
+    import re, pathlib
+    src = (pathlib.Path(__file__).resolve().parents[2] / "engine/src/piano/ScaleDesign.cpp").read_text()
+    d = [float(v) for v in re.search(r"kSteinwayD\[88\] = \{(.*?)\};", src, re.S).group(1).replace("\n", " ").split(",") if v.strip()]
+    def scale(k):
+        if k >= 40: return 1.0
+        if k > 20: return 0.80 + 0.20 * (k - 21) / 19.0
+        return 0.66 + 0.06 * (k - 1) / 19.0
+    return np.array([d[k - 1] * scale(k) for k in range(1, 89)])
+
+
+LEN = c5_lengths()
+CAPO_Y = 0.02     # the treble strings' speaking length starts just in front of the belly rail
+FAN = 0.86        # the strings fan out a little towards the tail: along-the-board share of each length
+
+
 def treble_bridge(t):
-    """t = 0 at the top note (C8, near the keyboard on the treble side) .. 1 at F2."""
-    x = 0.15 + 0.70 * t
-    y = 0.10 + 0.78 * t ** 1.15 + 0.04 * np.sin(np.pi * t)
-    return x, y
+    """t = 0 at the top note (C8, near the belly rail on the treble side) .. 1 at F2.
+    Each key's bridge pin sits one speaking length behind its capo/agraffe."""
+    k = 88 - t * (88 - 21)
+    L = np.interp(k, np.arange(1, 89), LEN)
+    x = 0.12 + 0.80 * t
+    return x, CAPO_Y + FAN * L
 
 
 def bass_bridge(t):
-    """t = 0 at E2 .. 1 at A0, near the tail on the bass side."""
-    return 1.02 + 0.23 * t, 1.10 + 0.38 * t
+    """t = 0 at E2 .. 1 at A0: the cross-strung bass runs at about 25 degrees over the tenor,
+    towards the spine and the tail."""
+    k = 20 - t * 19
+    L = np.interp(k, np.arange(1, 89), LEN)
+    ang = math.radians(25.0)
+    return 1.00 + 0.20 * t, 0.10 + L * math.cos(ang)
 
 
 def curve_points(fn, n):
@@ -82,9 +113,96 @@ def curve_points(fn, n):
     return np.interp(si, s, x), np.interp(si, s, y), s[-1]
 
 
+# --- The cast-iron frame (plate) ----------------------------------------------------------
+# The frame holds the strings' far ends: the agraffes and capo bar at the front. It is a
+# network of cast-iron bars (front bar over the pin block, bentside and spine flanges, the
+# tail rail with the hitch pins, and three struts), bolted onto the rim. Its bending modes
+# move the strings' far ends; the shapes at the 16 key zones along the front bar are what
+# the engine needs.
+IRON_E, IRON_RHO = 1.1e11, 7200.0
+FRAME_A, FRAME_I = 0.0022, 2.6e-6          # bar section [m^2], bending [m^4] (8 cm deep ribbed bars)
+FRONT_Y = -0.05                             # the front bar, just ahead of the belly rail
+BOLT_K = 2.0e7                              # each bolt into the rim [N/m]
+
+
+def frame_modes(zone_x, zone_is_bass, f_top):
+    bars = [
+        [(0.05, FRONT_Y), (1.35, FRONT_Y)],                                   # front bar (capo, agraffes)
+        [(1.35, FRONT_Y), (1.35, 1.40)],                                      # spine flange
+        [(0.98, 1.40), (1.35, 1.40)],                                         # tail rail (hitch pins)
+        [(0.05, FRONT_Y)] + [(float(bentside(y)) + 0.04, float(y)) for y in np.linspace(0.05, 1.40, 12)],  # bentside flange
+        [(0.35, FRONT_Y), (0.98, 1.38)], [(0.75, FRONT_Y), (1.15, 1.40)], [(1.05, FRONT_Y), (1.32, 1.00)],  # struts
+    ]
+    h = 0.04
+    nodes, coords = [], []
+    def node_at(x, y):
+        for k, (a, b) in enumerate(coords):
+            if abs(a - x) < 0.03 and abs(b - y) < 0.03:
+                return k
+        coords.append((x, y)); return len(coords) - 1
+    chains = []
+    for pts_ in bars:
+        P_ = np.array(pts_)
+        seg = np.hypot(*np.diff(P_, axis=0).T); s_ = np.concatenate([[0], np.cumsum(seg)])
+        n_ = max(3, int(s_[-1] / h) + 1)
+        si = np.linspace(0, s_[-1], n_)
+        xs = np.interp(si, s_, P_[:, 0]); ys = np.interp(si, s_, P_[:, 1])
+        chains.append(([node_at(x, y) for x, y in zip(xs, ys)], s_[-1] / (n_ - 1)))
+    n = len(coords)
+    K = np.zeros((n, n)); Mv = np.zeros(n)
+    for ch, ds in chains:
+        for a, b, c in zip(ch[:-2], ch[1:-1], ch[2:]):
+            v = np.zeros(n); v[a] += 1; v[b] -= 2; v[c] += 1
+            K += np.outer(v, v) * IRON_E * FRAME_I / ds ** 3
+        for k in ch:
+            Mv[k] += IRON_RHO * FRAME_A * ds
+    C = np.array(coords)
+    # Bolts: every ~30 cm along the bars that lie on the rim (front ends, spine, bentside, tail)
+    on_rim = (np.abs(C[:, 0] - 1.35) < 0.02) | (C[:, 1] > 1.38) | (np.abs(C[:, 0] - (bentside(C[:, 1]) + 0.04)) < 0.03) | \
+             ((np.abs(C[:, 1] - FRONT_Y) < 0.01) & ((C[:, 0] < 0.1) | (C[:, 0] > 1.3)))
+    bolts = np.flatnonzero(on_rim)[::6]
+    for b in bolts:
+        K[b, b] += BOLT_K
+    vals, vecs = np.linalg.eigh(K / np.sqrt(Mv[:, None] * Mv[None, :]))
+    vecs = vecs / np.sqrt(Mv)[:, None]                       # unit modal mass
+    keep = (vals > (2 * math.pi * 20) ** 2) & (vals < (2 * math.pi * f_top) ** 2)
+    f = np.sqrt(vals[keep]) / (2 * math.pi); V = vecs[:, keep]
+    front = [k for k in range(n) if abs(C[k, 1] - FRONT_Y) < 0.01]
+    front = sorted(front, key=lambda k: C[k, 0])
+    fx = C[front, 0]
+    # Each zone's strings end on the front bar: treble zones straight ahead of their bridge
+    # section, the cross-strung bass towards the spine end
+    ax = np.where(zone_is_bass, 1.25 - 0.08 * np.arange(len(zone_x)), zone_x)
+    phi = np.array([[np.interp(x, fx, V[front, i]) for x in ax] for i in range(V.shape[1])])
+    rad = np.array([np.sum(V[:, i] * Mv) for i in range(V.shape[1])])
+    rad = rad / (np.abs(rad).max() + 1e-12)
+    print(f"frame: {len(coords)} nodes, {Mv.sum():.0f} kg, {len(bolts)} bolts; {len(f)} modes below {f_top:.0f} Hz, lowest {f[:6].round(0)}")
+    return f, phi, rad
+
+
+def write_frame(path, f, phi, rad):
+    def lit(v):
+        t = "%.5g" % v
+        if "." not in t and "e" not in t:
+            t += ".0"
+        return t + "f"
+    with open(path, "w") as fo:
+        fo.write("// Generated by tools/soundboard/build_board.py: do not edit by hand.\n")
+        fo.write("// Bending modes of the cast-iron frame (bars bolted on the rim). Per mode: frequency [Hz], shape at the\n")
+        fo.write("// strings' far ends for the 16 key zones (unit modal mass, 1/sqrt(kg)), and a relative radiation weight.\n")
+        fo.write(f"static constexpr int kFrameModeCount = {len(f)};\n")
+        fo.write("struct FrameModeData { float f; float phi[%d]; float rad; };\n" % phi.shape[1])
+        fo.write("static const FrameModeData kFrameModes[kFrameModeCount] = {\n")
+        for i in range(len(f)):
+            fo.write("    { %.2ff, { %s }, %s },\n" % (f[i], ", ".join(lit(v) for v in phi[i]), lit(rad[i])))
+        fo.write("};\n")
+    print("wrote", path)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="engine/src/piano/BoardModes.inc")
+    ap.add_argument("--frame-out", default="engine/src/piano/FrameModes.inc")
     ap.add_argument("--plot")
     ap.add_argument("--json", help="also write the board geometry and some mode shapes for the visualiser")
     args = ap.parse_args()
@@ -185,6 +303,39 @@ def main():
         K = K + C.T @ C * (EI * ds)
         M = M + Bm.T @ sp.diags(np.full(n, mlin * ds)) @ Bm
 
+    # --- Crown and downbearing (see the constants above)
+    cR, sR = -s_, c                                         # rib direction (across the grain)
+    def grad_op(dx_, dy_):
+        r, cc, v = [], [], []
+        for k_, (i, j) in enumerate(pts):
+            r += [k_, k_]; cc += [lin(i, j), lin(i + dx_, j + dy_)]; v += [-1.0 / DX, 1.0 / DX]
+        return sp.csr_matrix((v, (r, cc)), shape=(len(pts), nx * ny))
+    Gr = cR * grad_op(1, 0) + sR * grad_op(0, 1)            # slope along the ribs
+    Crr = cR * cR * Cxx + sR * sR * Cyy + 2 * cR * sR * Cxy # curvature along the ribs
+    Eh_r = E_T * h + E_L * RIB_W * RIB_T / RIB_SPACING      # membrane stiffness along the ribs [N/m]
+    ipts = (pts[:, 0], pts[:, 1])
+    # Static sag under the downbearing, board edge held: K_board w = F
+    Fd = np.zeros(nx * ny)
+    for fn, share in ((treble_bridge, 0.75), (bass_bridge, 0.25)):
+        n_ = 60
+        xs_, ys_, _ = curve_points(fn, n_)
+        Fd -= interp_rows(xs_, ys_).T @ np.full(n_, DOWNBEARING * share / n_)
+    found0 = sp.diags((Eh_r[ipts] / CROWN_R ** 2) * area)
+    Ks = (C1.T @ g(D11) @ C1 + C2.T @ g(D22) @ C2 + C1.T @ g(D12) @ C2 + C2.T @ g(D12) @ C1 + C3.T @ g(D66) @ C3)
+    Ks = Ks + sp.csr_matrix((found0.diagonal(), (np.array([lin(i, j) for i, j in pts]),) * 2), shape=(nx * ny, nx * ny))
+    ii_ = np.flatnonzero(interior.ravel())
+    Kss = (K - (C1.T @ g(D11) @ C1 + C2.T @ g(D22) @ C2 + C1.T @ g(D12) @ C2 + C2.T @ g(D12) @ C1 + C3.T @ g(D66) @ C3) + Ks).tocsr()[ii_][:, ii_]
+    wsag = np.zeros(nx * ny); wsag[ii_] = sla.spsolve(Kss.tocsc(), Fd[ii_])
+    kappa = 1.0 / CROWN_R - (Crr @ wsag)                    # the arch curves down (w_rr = -1/R); the sag bends the other way: flatter where pressed
+    print(f"downbearing sag: max {(-wsag).max() * 1000:.2f} mm; crown radius left under the bridge: "
+          f"{1 / np.clip(np.median(kappa[np.abs(Gr @ wsag) >= 0]), 1e-4, None):.0f} m (median), "
+          f"{1 / np.clip(kappa.min(), 1e-4, None):.0f} m (flattest)")
+    kappa = np.clip(kappa, 0.0, None)
+    Nc = DOWNBEARING / (A * B * 0.75) * CROWN_R              # membrane compression along the ribs, p R [N/m]
+    K = K + sp.csr_matrix(((Eh_r[ipts] * kappa ** 2) * area, (np.array([lin(i, j) for i, j in pts]),) * 2), shape=(nx * ny, nx * ny))
+    K = K - Gr.T @ sp.diags(np.full(len(pts), Nc * area)) @ Gr
+    print(f"crown stiffening ~{math.sqrt(np.median(Eh_r[ipts] * kappa ** 2) / (RHO * H_MID * 1.4)) / (2 * math.pi):.0f} Hz equivalent; compression {Nc / 1000:.0f} kN/m")
+
     # --- The rim: ring nodes ordered round the outline, a beam bending out of the board's plane
     rp = np.argwhere(ring)
     cx, cy = rp[:, 0].mean(), rp[:, 1].mean()
@@ -253,7 +404,7 @@ def main():
     Kf = Kf.tocsc(); Mf = Mf.tocsc()
     rimNodes = pos_of[rlin]
     lam_top = (2 * math.pi * F_TOP) ** 2
-    nev = 400
+    nev = 1800
     vals, vecs = sla.eigsh(Kf, k=nev, M=Mf, sigma=0, which="LM")
     order = np.argsort(vals)
     vals, vecs = vals[order], vecs[:, order]
@@ -295,8 +446,26 @@ def main():
     ns = len(f)
     Ob = np.diag((2 * math.pi * f) ** 2); Oa = np.diag((2 * math.pi * fa) ** 2)
     Dg = RHO_AIR * C_AIR ** 2 / Lam
-    Kc = np.block([[Ob, Cba], [np.zeros((nair, ns)), Oa]])
-    Mc = np.block([[np.eye(ns), np.zeros((ns, nair))], [-Dg * Cba.T, np.eye(nair)]])
+    # --- The air under the board: a layer between the board and the floor, open all round
+    # the sides (pressure released just past the rim: p = 0 on the ring), with standing waves
+    # across it and, from about 280 Hz, up and down between board and floor. The board pushes
+    # it the opposite way to the air above.
+    ii2 = np.flatnonzero(interior.ravel()[bi])                               # interior nodes, in board numbering
+    Ld = Lap.tocsr()[ii2][:, ii2]
+    nu_ = 40
+    uv, uw = sla.eigsh(Ld.tocsc(), k=nu_, sigma=0, which="LM")
+    psiU = np.zeros((nbd, nu_)); psiU[ii2] = uw
+    psiU = psiU / np.sqrt((psiU ** 2).sum(0) / nbd)
+    fu = C_AIR * np.sqrt(np.maximum(uv, 0)) / (2 * math.pi)
+    LamU = Abd * FLOOR_GAP                                                   # the horizontal modes fill the whole layer evenly
+    Cbu = (full_s[bi, :].T @ psiU) * DX * DX
+    Ou = np.diag((2 * math.pi * fu) ** 2); Du = RHO_AIR * C_AIR ** 2 / LamU
+    print(f"air under the board: lowest {fu[:4].round(0)} Hz")
+    Z_ = np.zeros
+    Kc = np.block([[Ob, Cba, -Cbu], [Z_((nair, ns)), Oa, Z_((nair, nu_))], [Z_((nu_, ns)), Z_((nu_, nair)), Ou]])
+    Mc = np.block([[np.eye(ns), Z_((ns, nair)), Z_((ns, nu_))],
+                   [-Dg * Cba.T, np.eye(nair), Z_((nair, nu_))],
+                   [Du * Cbu.T, Z_((nu_, nair)), np.eye(nu_)]])
     import scipy.linalg as la
     lam, Vc = la.eig(Kc, Mc)
     lam, Vc = lam.real, Vc.real
@@ -307,7 +476,7 @@ def main():
     nq = np.sqrt((Q ** 2).sum(0)); nq[nq == 0] = 1
     # Share of the potential energy held by the air (structure: w^2 q^2 / 2; air: Lam P^2 / (2 rho c^2))
     eS = ((2 * math.pi * f)[:, None] ** 2 * Q ** 2).sum(0)
-    eA = (Lam / (RHO_AIR * C_AIR ** 2)) * (Vc[ns:] ** 2).sum(0)
+    eA = (Lam / (RHO_AIR * C_AIR ** 2)) * (Vc[ns:ns + nair] ** 2).sum(0) + (LamU / (RHO_AIR * C_AIR ** 2)) * (Vc[ns + nair:] ** 2).sum(0)
     airE = eA / (eA + eS)
     Q = Q / nq                                                               # unit structural modal mass
     f = np.sqrt(lam) / (2 * math.pi)
@@ -345,6 +514,19 @@ def main():
         radL[i] = math.hypot(lr, li) * (-1 if lr < 0 else 1)
         radR[i] = math.hypot(rr, ri) * (-1 if rr < 0 else 1)
         vol[i] = np.sum(w[nz])
+    # Close microphones, as on studio recordings like the reference samples: a pair about
+    # 35 cm above the strings, one over the bass and tenor, one over the treble, near the
+    # hammers. Near-field Rayleigh integral (each board element a small piston) at each mic.
+    mics = {"L": (1.05, 0.55, 0.35), "R": (0.40, 0.25, 0.35)}
+    micL = np.zeros(len(f)); micR = np.zeros(len(f))
+    bnz = board.ravel()
+    for name, (mx, my, mz) in mics.items():
+        r_ = np.sqrt((xs[bnz] - mx) ** 2 + (ys[bnz] - my) ** 2 + mz ** 2)
+        for i in range(len(f)):
+            ph_ = np.exp(-1j * k[i] * r_) / r_
+            p_ = np.sum(full[bnz, i] * ph_) * k[i]           # x k: radiated pressure rises with frequency like the far field's
+            val = abs(p_) * (-1 if p_.real < 0 else 1)
+            (micL if name == "L" else micR)[i] = val
 
     def lit(v):
         t = "%.5g" % v
@@ -377,12 +559,12 @@ def main():
         fo.write("// factor from the sound it radiates (both faces).\n")
         fo.write(f"static constexpr int kBoardModeCount = {len(f)};\n")
         fo.write(f"static constexpr int kBoardZones = {N_BASS + N_TREBLE};\n")
-        fo.write("struct BoardModeData { float f; float phi[%d]; float radLeft, radRight, volume, radiationLoss, rimShare, airShare; };\n" % (N_BASS + N_TREBLE))
+        fo.write("struct BoardModeData { float f; float phi[%d]; float radLeft, radRight, volume, radiationLoss, rimShare, airShare, micLeft, micRight; };\n" % (N_BASS + N_TREBLE))
         fo.write("static const BoardModeData kBoardModes[kBoardModeCount] = {\n")
         for i in range(len(f)):
-            fo.write("    { %.2ff, { %s }, %s, %s, %s, %s, %s, %s },\n" % (
+            fo.write("    { %.2ff, { %s }, %s, %s, %s, %s, %s, %s, %s, %s },\n" % (
                 f[i], ", ".join(lit(v) for v in phi[:, i]), lit(radL[i]), lit(radR[i]), lit(vol[i]), lit(etaRad[i]),
-                lit(rimShare[i] + braceShare[i]), lit(airE[i])))
+                lit(rimShare[i] + braceShare[i]), lit(airE[i]), lit(micL[i]), lit(micR[i])))
         fo.write("};\n")
     print("wrote", args.out)
 
@@ -402,6 +584,9 @@ def main():
                    "nBass": N_BASS, "modes": shapes, "allf": [round(float(v), 1) for v in f]},
                   open(args.json, "w"), separators=(",", ":"))
         print("wrote", args.json)
+
+    ff, fphi, frad = frame_modes(np.array(zx), np.arange(N_BASS + N_TREBLE) < N_BASS, 3000.0)
+    write_frame(args.frame_out, ff, fphi, frad)
 
     if args.plot:
         import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt

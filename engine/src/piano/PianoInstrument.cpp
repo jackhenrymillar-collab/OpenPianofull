@@ -39,6 +39,7 @@ void PianoInstrument::prepare (double sampleRate, int maxBlockSize)
     this->sampleRate = sampleRate;
     piano::ModalPiano::Settings settings;
     settings.age = controls.age;
+    settings.closeMics = closeMics;
     piano->prepare (sampleRate, settings);
     builtAge = controls.age;
     ageSettleSamples = 0;
@@ -142,6 +143,7 @@ void PianoInstrument::process (float* const* outputs, int numChannels, int numSa
             // Rebuild with the new age. Sounding notes stop; held keys and the pedal carry over.
             piano::ModalPiano::Settings settings;
             settings.age = controls.age;
+            settings.closeMics = closeMics;
             piano->prepare (sampleRate, settings);
             builtAge = controls.age;
             applyLiveControls();

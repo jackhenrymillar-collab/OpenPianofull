@@ -197,7 +197,10 @@ int main()
             piano.setSoftPedal (soft ? 1.0f : 0.0f);
             piano.noteOn (69, 100);
             const auto x = render (piano, kRate / 2);
-            level[soft] = rms (x, 0, x.size());
+            // The attack: with one string fewer the note starts quieter, but it also drains into
+            // the bridge more slowly and sustains longer (Weinreich's aftersound), so a long
+            // window would mostly measure the sustain
+            level[soft] = rms (x, 0, 4800);
             bright[soft] = powerAt (x, 1200, 9600, 440.0 * 4.02) / powerAt (x, 1200, 9600, 440.0);
         }
         std::printf ("una corda: %.1f dB quieter, 4th partial %.1f dB weaker relative to the 1st\n",

@@ -76,6 +76,7 @@ public:
         double tensionLoss = 0.0;         // and lose their high partials faster while it lasts
         double air = 1.0;                   // air trapped under the board, between the rim and the floor
         double lid = 1.0;                   // lid opening (0 = closed, 1 = fully open)
+        bool closeMics = false;             // listen from a close stereo mic pair (as on studio sample sets) instead of the player's seat
         double age = 0.0;                   // 0 = new piano, 1 = old and worn (see prepare)
         double shankFlex = 1.0;             // hammer shank bending and head rocking (0 = rigid hammer)
         double softLift = 0.3;              // lifts the volume of soft bass notes without changing their tone, fading to none at the top (0 = off)
@@ -360,7 +361,7 @@ private:
     // The iron frame at the strings' far ends (agraffes, pressure bar): a stiff, heavy,
     // barely damped structure. Its few modes are pushed by every sounding string's far end
     // and move those ends back, coupling the strings a second way.
-    struct Frame { std::vector<float> wr, wi, qr, qi, hr, hi, omega, sigma, rad; double accel = 0, lastVel = 0, knock = 0, knockDecay = 0; } frame;
+    struct Frame { std::vector<float> wr, wi, qr, qi, hr, hi, omega, sigma, rad, phi; std::array<double, kZones> accel {}, lastVel {}, force {}; double knock = 0, knockDecay = 0; } frame;
     void buildFrame();
     void runFrame (double& left, double& right);
 
