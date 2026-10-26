@@ -1,13 +1,20 @@
-OpenPianoJUCE/CMakeLists.txt.user*
-OpenPianoJUCE/Build/
-OpenPianoJUCE/JUCE/
-OpenPianoJUCE/.idea/
+# Build output
+build*/
+cmake-build-*/
+out/
 
-OpenPianoCore/CMakeLists.txt.user*
-OpenPianoCore/Build/
-OpenPianoCore/.idea/
+# IDEs
+.idea/
+.vscode/
+*.user
+CMakeLists.txt.user*
+.DS_Store
+
+# Render tool output
+renders/
+report/
 
 README.md.backup
-
 Resources/
+!plugin/Resources/
 Matlab/

@@ -113,12 +113,10 @@ struct Piano
             // Stop the "while" loop: set the "thread_running" flags to "false"
             thr_running[i] = false;
 
-            // Each thread checks the "thr_running" flag every "sleep_duration" microseconds,
-            // so let's sleep for a while and give him the time to check it
-            std::this_thread::sleep_for(std::chrono::microseconds(sleep_duration*2));
-
-            // Finally, we can safely delete the threads
-            // (reminder: don't join them, because they're detached)
+            // Wait for the thread to leave its loop before freeing what it uses. (Upstream
+            // detached the threads and slept briefly, which crashes now and then on a busy
+            // machine; joining changes nothing in the audio.)
+            threads[i]->join();
             delete threads[i];
         }
         free(threads);
@@ -274,7 +272,6 @@ struct Piano
         // Detach the threads
         for(uint32_t idx_thread = 0; idx_thread < N_THREADS; idx_thread++)
         {
-            threads[idx_thread]->detach();
         }
     }
     void init_buffers()
