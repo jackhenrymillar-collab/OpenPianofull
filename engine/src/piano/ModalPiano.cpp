@@ -675,15 +675,16 @@ void ModalPiano::buildFrame()
     for (size_t k = 0; k < n; ++k)
     {
         const auto& src = kFrameModes[use[k]];
-        // At least the loss of the frame's bolted seats on the rim (measured frames: Q of 100-250)
-        const double f = src.f, w = 2.0 * M_PI * f, sigma = M_PI * f * std::max (0.004, (double) src.loss);
+        // At least the loss of the frame's bolted seats on the rim (Q of about 100 with its felt pads)
+        const double f = src.f, w = 2.0 * M_PI * f, sigma = M_PI * f * std::max (0.01, (double) src.loss);
         const cd pole = std::exp (cd (-sigma, w) * Ts);
         const cd gain = pole * (Ts / w);
         frame.omega[k] = (float) w; frame.sigma[k] = (float) sigma;
         frame.qr[k] = (float) pole.real(); frame.qi[k] = (float) pole.imag();
         frame.hr[k] = (float) gain.real(); frame.hi[k] = (float) gain.imag();
+        // Fitted down like the board (see buildSoundboard): at full strength the frame rang as a chord on every key
         for (int z = 0; z < kZones; ++z)
-            frame.phi[k * kZones + (size_t) z] = src.phi[z];
+            frame.phi[k * kZones + (size_t) z] = (float) (0.2 * src.phi[z]);
         frame.rad[k] = (float) (radScale * src.rad);
     }
     frame.accel.fill (0); frame.lastVel.fill (0); frame.force.fill (0);
