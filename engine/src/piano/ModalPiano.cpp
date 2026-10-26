@@ -882,6 +882,36 @@ void ModalPiano::buildBody()
             highBoardRight.push_back (peaking (f * (1.0 + 0.05 * rng.symmetric()), -0.6 * g + 1.5 * rng.symmetric(), 2.5));
         }
     }
+    // A medium room (about 9 x 7 x 4 m) with the piano a little off centre and the player at
+    // the keyboard. Each ear gets the floor bounce, the near and far side walls, the ceiling
+    // and the back wall, then a few second-order paths; later and more often reflected paths
+    // are quieter and duller (wood floor, plaster, curtains).
+    {
+        reflections.clear();
+        const double msL[] = { 3.1, 7.4, 11.8, 15.2, 19.7, 24.3, 29.8, 36.1, 43.5 };
+        const double msR[] = { 3.4, 8.9, 10.6, 16.7, 21.4, 25.9, 31.6, 38.2, 45.0 };
+        int maxDelay = 1;
+        for (int i = 0; i < 9; ++i)
+            for (int ear = 0; ear < 2; ++ear)
+            {
+                const double ms = ear == 0 ? msL[i] : msR[i];
+                const double gain = 0.42 * std::exp (-ms / 22.0) * (i % 3 == 1 ? -1.0 : 1.0);
+                const double cutoff = 7000.0 / (1.0 + 0.35 * i);
+                Reflection r;
+                r.delay = std::max (1, (int) (ms * 1e-3 * sampleRate));
+                r.fromRight = (i + ear) % 2;           // reflections cross over between the ears
+                r.toRight = ear == 1;
+                r.gain = (float) gain;
+                r.lpCoeff = (float) std::exp (-2.0 * M_PI * cutoff / sampleRate);
+                r.state = 0;
+                reflections.push_back (r);
+                maxDelay = std::max (maxDelay, r.delay);
+            }
+        roomBufLeft.assign ((size_t) maxDelay + 2, 0.0f);
+        roomBufRight.assign ((size_t) maxDelay + 2, 0.0f);
+        roomPos = 0;
+    }
+
     // The lid is a large spruce panel that the sound hits; it rings faintly at its own modes
     lidPanel.clear(); lidPanelGain.clear();
     {
@@ -921,10 +951,13 @@ void ModalPiano::buildAction()
     // through the keyframe into the case and legs, a low thump you feel as much as hear
     const double freqs[11] = { 95, 160, 270, 430, 690, 1100, 1750, 2800, 31, 47, 66 };
     const double q[11] = { 6, 7, 8, 9, 10, 10, 11, 12, 3, 4, 5 };
-    const double shapes[3][11] = {
+    //   3 damper release: the felt meets a ringing string and briefly buzzes against it, a
+    //     soft mid-range "chuff" whose strength follows how much the string was moving
+    const double shapes[4][11] = {
         { 1.0, 0.9, 0.7, 0.45, 0.25, 0.12, 0.05, 0.02, 1.1, 0.9, 0.7 },
         { 0.15, 0.25, 0.4, 0.6, 0.8, 0.9, 0.7, 0.5, 0.1, 0.1, 0.1 },
         { 0.4, 0.5, 0.45, 0.3, 0.15, 0.06, 0.02, 0.01, 0.2, 0.2, 0.15 },
+        { 0.1, 0.3, 0.55, 0.7, 0.6, 0.4, 0.2, 0.08, 0.0, 0.0, 0.0 },
     };
     for (int i = 0; i < ActionBank::N; ++i)
     {
@@ -932,7 +965,7 @@ void ModalPiano::buildAction()
         const cd pole = std::exp (cd (-w / (2.0 * q[i]), w) * Ts);
         action.pr[(size_t) i] = (float) pole.real();
         action.pi[(size_t) i] = (float) pole.imag();
-        for (int t = 0; t < 3; ++t)
+        for (int t = 0; t < ActionBank::Types; ++t)
             action.weight[(size_t) t][(size_t) i] = (float) shapes[t][i];
     }
     actionHits.clear();
@@ -1136,6 +1169,10 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
     {
         const auto& s = strings[(size_t) (ks.firstString + i)];
         ks.hammer.gap[(size_t) i] = settings.hammerUnevenness * rng.next();
+        // The felt is not uniform across the hammer's width either: each string of the
+        // unison is pushed a little harder or softer. This uneven start is what leaves the
+        // strings swinging partly against each other, the slow, quiet "aftersound" tail.
+        ks.hammer.feltScale[(size_t) i] = 1.0 + feltScatter * (2.0 * Rng ((uint32_t) (k * 3 + i) * 7919u + 11u).next() - 1.0);
         double u = 0;
         forModes (s, s.count, [&] (size_t j) { u += m.phi[j] * m.zi[j]; });
         nearest = std::min (nearest, u + ks.hammer.gap[(size_t) i]);
@@ -1377,7 +1414,7 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
                 : 0.0;
             auto& history = h.feltHistory[(size_t) i];
             history += (elastic - history) * relax;
-            const double f = compression > 0 ? std::max (0.0, q0 * (elastic - memory * history)) : 0.0;
+            const double f = compression > 0 ? std::max (0.0, q0 * h.feltScale[(size_t) i] * (elastic - memory * history)) : 0.0;
             hammerForce += f;
             h.forceSum[(size_t) i] += f;
             touching = touching || f > 0;
@@ -1537,7 +1574,23 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         {
             ks.damperPending = 0;
             if (keys[k].hasDamper && ! sustain)
+            {
                 queueAction (2, 0, 0.3, (int) k);
+                // How much the strings are still moving decides how loud the release is
+                double e = 0;
+                for (int i = 0; i < keyState[k].numStrings; ++i)
+                {
+                    const auto& st = strings[(size_t) (keyState[k].firstString + i)];
+                    for (int j = 0; j < st.sympatheticCount; ++j)
+                    {
+                        const float zr = m.zr[(size_t) (st.first + j)], zi = m.zi[(size_t) (st.first + j)];
+                        e += zr * zr + zi * zi;
+                    }
+                }
+                const double motion = std::min (2.0, std::sqrt (e) / 1.0e-3);
+                if (motion > 0.01)
+                    queueAction (3, 0, 0.35 * motion, (int) k);
+            }
             updateDamping ((int) k);
             checkActivity();
         }
@@ -1794,6 +1847,25 @@ void ModalPiano::process (float* left, float* right, int numSamples)
                 panel += lidPanelGain[i] * lidPanel[i].process (drive);
             outL += settings.lid * panel;
             outR += 0.8 * settings.lid * panel;
+        }
+
+        // Room: early reflections, heard from the player's seat
+        if (room > 0.0f && ! reflections.empty())
+        {
+            const int size = (int) roomBufLeft.size();
+            roomBufLeft[(size_t) roomPos] = (float) outL;
+            roomBufRight[(size_t) roomPos] = (float) outR;
+            float rl = 0, rr = 0;
+            for (auto& r : reflections)
+            {
+                const int at = (roomPos - r.delay + size) % size;
+                const float x = r.fromRight ? roomBufRight[(size_t) at] : roomBufLeft[(size_t) at];
+                r.state = x + r.lpCoeff * (r.state - x);
+                (r.toRight ? rr : rl) += r.gain * r.state;
+            }
+            roomPos = (roomPos + 1) % size;
+            outL += room * rl;
+            outR += room * rr;
         }
 
         // DC blocker

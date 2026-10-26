@@ -16,6 +16,7 @@ namespace params
     inline constexpr auto damper = "damper";
     inline constexpr auto actionNoise = "actionNoise";
     inline constexpr auto age = "age";
+    inline constexpr auto room = "room";
     inline constexpr auto sustainLatch = "sustainLatch";
     inline constexpr auto velocitySens = "velocitySens";
 

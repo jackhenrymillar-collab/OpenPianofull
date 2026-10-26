@@ -71,6 +71,7 @@ private:
     std::atomic<float>* damperParam = nullptr;
     std::atomic<float>* actionParam = nullptr;
     std::atomic<float>* ageParam = nullptr;
+    std::atomic<float>* roomParam = nullptr;
     std::atomic<float>* latchParam = nullptr;
     std::atomic<float>* velocitySensParam = nullptr;
 
