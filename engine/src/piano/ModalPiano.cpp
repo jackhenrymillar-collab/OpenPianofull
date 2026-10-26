@@ -88,7 +88,7 @@ namespace
 void ModalPiano::Modes::clear()
 {
     for (auto* v : { &zr, &zi, &pr, &pi, &prFree, &piFree, &prDamp, &piDamp, &gr, &gi, &bgr, &bgi, &fk, &beta,
-                     &phi, &prOs, &piOs, &gOsr, &gOsi, &sigmaInternal, &omega, &alt })
+                     &phi, &pt, &wa, &prOs, &piOs, &gOsr, &gOsi, &sigmaInternal, &omega, &alt })
         v->clear();
 }
 
@@ -228,6 +228,8 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
         m.beta.push_back ((float) beta);
         m.alt.push_back ((float) sign);
         m.phi.push_back ((float) (std::sin (n * M_PI * strike) * width));
+        m.pt.push_back ((float) std::sin (n * M_PI * strike));
+        m.wa.push_back ((float) (-x * x / 6.0));
         m.prOs.push_back ((float) poleOs.real()); m.piOs.push_back ((float) poleOs.imag());
         m.gOsr.push_back ((float) gainOs.real()); m.gOsi.push_back ((float) gainOs.imag());
         m.sigmaInternal.push_back ((float) sigma);
@@ -259,11 +261,11 @@ void ModalPiano::addLongitudinal (String& s, const StringSpec& spec)
     const double EA = kSteelE * M_PI * spec.coreDiameter * spec.coreDiameter / 4.0;
     const double c2 = EA / spec.linearDensity;
     const double f1 = std::sqrt (c2) / (2.0 * L);
-    const double fTop = std::min (0.4 * sampleRate, 12000.0);
+    const double fTop = std::min (0.4 * sampleRate, 7000.0);
 
     int partials = 0;
-    for (int j = 0; j < s.count && j < 32; ++j)
-        if (m.omega[(size_t) modeIndex (s, j)] < 2.0 * M_PI * 4000.0)
+    for (int j = 0; j < s.count && j < settings.longitudinalPartials; ++j)
+        if (m.omega[(size_t) modeIndex (s, j)] < 2.0 * M_PI * 5000.0)
             partials = j + 1;
 
     s.longFirst = (int) lm.zr.size();
@@ -272,12 +274,12 @@ void ModalPiano::addLongitudinal (String& s, const StringSpec& spec)
     s.tensionCoef = (float) (EA / 4.0 * std::pow (M_PI / L, 2));
     s.restTension = (float) spec.tension;
 
-    for (int order = 1; order <= 4 && order * f1 < fTop && partials > 1; ++order)
+    for (int order = 1; order <= settings.longitudinalOrders && order * f1 < fTop && partials > 1; ++order)
     {
         const double w = 2.0 * M_PI * order * f1;
         // Free longitudinal ringing dies fast (end losses at the bridge pin and agraffe); what
         // remains audible is mostly the forced, phantom part that follows the transverse motion
-        const double sigma = 40.0;
+        const double sigma = settings.longitudinalLoss;
         const cd pole = std::exp (cd (-sigma, w) * Ts);
         const cd gain = pole * (Ts / w);
         lm.zr.push_back (0); lm.zi.push_back (0);
@@ -289,7 +291,7 @@ void ModalPiano::addLongitudinal (String& s, const StringSpec& spec)
         lm.order.push_back (order);
         ++s.longCount;
     }
-    scratchU.resize (std::max (scratchU.size(), (size_t) 32));
+    scratchU.resize (std::max (scratchU.size(), (size_t) settings.longitudinalPartials));
 }
 
 void ModalPiano::buildModes()
@@ -455,7 +457,7 @@ void ModalPiano::relayoutModes()
             order.push_back ((size_t) (strings[i].first + k));
     }
     for (auto* v : { &m.zr, &m.zi, &m.pr, &m.pi, &m.prFree, &m.piFree, &m.prDamp, &m.piDamp, &m.gr, &m.gi, &m.bgr,
-                     &m.bgi, &m.fk, &m.beta, &m.phi, &m.prOs, &m.piOs, &m.gOsr, &m.gOsi, &m.sigmaInternal, &m.omega, &m.alt })
+                     &m.bgi, &m.fk, &m.beta, &m.phi, &m.pt, &m.wa, &m.prOs, &m.piOs, &m.gOsr, &m.gOsi, &m.sigmaInternal, &m.omega, &m.alt })
     {
         std::vector<float> moved (order.size());
         for (size_t j = 0; j < order.size(); ++j)
@@ -1229,6 +1231,7 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
                 const double x = n * M_PI * s.halfWidthOverL;
                 const double width = std::abs (x) < 1e-9 ? 1.0 : std::sin (x) / x;
                 m.phi[j] = (float) (std::sin (n * M_PI * strikePos) * width);
+                m.pt[j] = (float) std::sin (n * M_PI * strikePos);
             });
         });
     }
@@ -1401,6 +1404,8 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
     // Treble hammers are smaller and their outer felt firmer, or soft notes there would vanish
     const double outer = settings.outerFelt * std::pow (10.0, std::max (0.0, (keyIndex - 39) / 48.0) * trebleFirmness);
     const double relax = 1.0 - std::exp (-dt / std::max (1e-6, settings.feltRelaxTime));
+    // Squeeze at which the contact patch is hammerWidth long (a firm mezzo-forte blow)
+    const double contactRef = 1.55e-3 * std::exp (-0.0185 * keyIndex);
 
     bool touching = false;
     for (int step = 0; step < os; ++step)
@@ -1423,6 +1428,21 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
             auto& history = h.feltHistory[(size_t) i];
             history += (elastic - history) * relax;
             const double f = compression > 0 ? std::max (0.0, q0 * h.feltScale[(size_t) i] * (elastic - memory * history)) : 0.0;
+
+            // The felt crown is round: squeezed by d, it flattens into a patch about
+            // 2 sqrt(2 R d) long. A light touch meets the string almost at a point; a hard
+            // blow spreads over a wider patch, which averages out the shortest wavelengths.
+            // The patch is hammerWidth at the reference squeeze; the mode shape is
+            // sin(n pi a) sinc(x), with sinc(x) = 1 - x^2/6 + x^4/120 (x stays below about 2).
+            if (settings.contactSpread && compression > 0)
+            {
+                const float q = (float) std::clamp (compression / contactRef, 0.09, 2.56); // (width / reference)^2
+                forModes (s, s.count, [&] (size_t j)
+                {
+                    const float a = m.wa[j] * q;
+                    m.phi[j] = m.pt[j] * (1.0f + a + 0.3f * a * a);
+                });
+            }
             hammerForce += f;
             h.forceSum[(size_t) i] += f;
             touching = touching || f > 0;
@@ -1548,6 +1568,15 @@ double ModalPiano::runLongitudinal (const String& s)
     // Slowly varying part: the average tension rise, the same all along the string
     double force = s.tensionCoef * squares;
     s.tensionRise = (float) (force / s.restTension);
+
+    // Once the stretch is tiny (below about -90 dB of the string's own force), the phantom
+    // tones are inaudible: let the lengthwise modes rest and skip the pair sums
+    if (s.tensionRise < 1e-7f)
+    {
+        for (int i = 0; i < s.longCount; ++i)
+            lm.zr[(size_t) (s.longFirst + i)] = lm.zi[(size_t) (s.longFirst + i)] = 0;
+        return force * settings.longitudinalCoupling * keys[(size_t) s.key].numStrings * s.outScale;
+    }
 
     // Resonant part: each longitudinal mode m is driven by partial pairs whose numbers
     // differ by m (and by pairs that add up to m)
