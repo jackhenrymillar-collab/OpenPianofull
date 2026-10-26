@@ -263,7 +263,7 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         // Close strings share the bridge motion strongly: the in-step vibration drains fast and the
         // out-of-step one is left ringing, which gives the recorded notes there their fast first
         // drop and long tail
-        const double close = k >= 61 && k <= 66 ? 0.25 : k >= 20 && k < 49 ? 0.7 : k >= 49 && k < 63 ? 0.5 : k >= 63 && k < 75 ? 0.75 : k >= 75 ? 0.3 : 1.0;
+        const double close = k >= 61 && k <= 66 ? 0.25 : k >= 20 && k < 49 ? 0.7 : k >= 49 && k < 63 ? 0.5 : k >= 63 && k < 67 ? 0.75 : k >= 67 && k < 75 ? 0.3 : k >= 75 ? 0.3 : 1.0;
         const double spread = unisonSpreadCents * (1.0 + 0.5 * keyNoise (k, 1)) * close;
         // Every key's pattern differs: which string is high or low, and by how much
         const double offsets3[3] = { -spread * (1.0 + 0.15 * keyNoise (k, 3)), 0.25 * spread * keyNoise (k, 2),
