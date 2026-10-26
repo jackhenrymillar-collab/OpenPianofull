@@ -27,3 +27,11 @@ add_executable(openpiano-piano-test ../tests/PianoTest.cpp)
 target_link_libraries(openpiano-piano-test PRIVATE openpiano_engine)
 target_include_directories(openpiano-piano-test PRIVATE ../engine/src)
 add_test(NAME piano_checks COMMAND openpiano-piano-test)
+
+# Single held notes, for calibrating against recorded samples (tools/calibrate)
+add_executable(openpiano-notes harness/NotesMain.cpp)
+target_link_libraries(openpiano-notes PRIVATE openpiano_harness)
+
+# Renders a text list of note and pedal events (for example a converted MIDI file)
+add_executable(openpiano-events harness/EventsMain.cpp)
+target_link_libraries(openpiano-events PRIVATE openpiano_harness)
