@@ -56,7 +56,11 @@ public:
         bool horizontal = true;             // second (sideways) vibration direction
         bool longitudinal = true;           // lengthwise waves and phantom partials
         bool duplex = true;                 // undamped string segments behind the treble bridge
-        double longitudinalCoupling = 0.12; // share of the lengthwise force that reaches the board (via bridge tilt)
+        double longitudinalCoupling = 0.7;  // share of the lengthwise force that reaches the board (via bridge tilt)
+        int longitudinalOrders = 16;        // lengthwise modes per string
+        int longitudinalPartials = 64;     // transverse partials that drive them
+        double longitudinalLoss = 40.0;     // decay of free lengthwise ringing [1/s]
+        bool contactSpread = true;          // the felt's contact patch widens as it is squeezed
         double crown = 1.0;                 // soundboard crown and downbearing (0 = flat, unloaded board)
         double feltMemory = 0.95;           // felt relaxation strength (0 = perfectly elastic)
         double feltRelaxTime = 3.0e-3;     // [s] how quickly squeezed felt relaxes
@@ -231,6 +235,7 @@ private:
         std::vector<float> alt;             // (-1)^(n+1): turns bridge-end coupling into far-end coupling
         std::vector<float> beta;            // bridge coupling weight
         std::vector<float> phi;             // mode shape at the hammer (incl. hammer width)
+        std::vector<float> pt, wa;          // the same at a single point, and the width term (see runHammerKey)
         std::vector<float> prOs, piOs, gOsr, gOsi; // oversampled pole and input gain
         std::vector<float> sigmaInternal, omega;
 

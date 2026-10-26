@@ -103,16 +103,25 @@ namespace
         if (key <= kLastWoundKey)
         {
             d.wound = true;
+            // Core gauges, fitted so the inharmonicity follows a recorded grand (fitted B from
+            // Salamander C5 single notes): stiffest at A0, falling to a minimum around F#2-A2
+            // and rising again into the plain strings. Thick cores at the very bottom are what
+            // give the lowest notes their slightly "out of tune with themselves" partials.
+            constexpr double coreAt[] = { 2.03, 1.86, 1.72, 1.51, 1.45, 1.37, 1.22,  // keys 1, 4, ... 19
+                                          1.27, 1.16, 1.12 };                      // keys 22, 25, 26 (treble bridge)
             if (key <= kLastBassBridgeKey)
             {
                 const double t = (key - 1) / double (kLastBassBridgeKey - 1);
-                d.coreDiameter = lerp (1.85e-3, 1.35e-3, t);
+                const double pos = std::min ((key - 1) / 3.0, 5.999);
+                const int i = (int) pos;
+                d.coreDiameter = lerp (coreAt[i], coreAt[i + 1], pos - i) * 1e-3;
                 d.woundTension = lerp (1800.0, 1350.0, t);
             }
             else
             {
                 const double t = (key - kLastBassBridgeKey - 1) / double (kLastWoundKey - kLastBassBridgeKey - 1);
-                d.coreDiameter = lerp (1.20e-3, 1.10e-3, t);
+                const double pos = std::min ((key - 22) / 3.0, 1.0);
+                d.coreDiameter = (key < 22 ? coreAt[7] : key >= 26 ? coreAt[9] : lerp (coreAt[7], coreAt[8], pos)) * 1e-3;
                 d.woundTension = lerp (1150.0, 1000.0, t);
             }
             return d;
