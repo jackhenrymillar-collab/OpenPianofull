@@ -685,7 +685,8 @@ void ModalPiano::buildFrame()
         // Fitted down like the board (see buildSoundboard): at full strength the frame rang as a chord on every key
         for (int z = 0; z < kZones; ++z)
             frame.phi[k * kZones + (size_t) z] = (float) (0.2 * src.phi[z]);
-        frame.rad[k] = (float) (radScale * src.rad);
+        // The bars are narrow, so they push little air themselves: most of their sound goes out through the board
+        frame.rad[k] = (float) (0.3 * radScale * src.rad);
     }
     frame.accel.fill (0); frame.lastVel.fill (0); frame.force.fill (0);
     frame.knock = 0;
@@ -760,10 +761,9 @@ void ModalPiano::runFrame (double& left, double& right)
 
 void ModalPiano::buildBody()
 {
-    // Air under the board: its resonances (and its push back on the board) are part of the
-    // body model now (BoardModes.inc: an open-sided air layer between board and floor). What
-    // is left here is how its sound gets out: through the open sides and off the floor, a
-    // broad low-frequency path driven by the volume the board pushes.
+    // Air under the board: its resonances, its push back on the board and the sound leaking
+    // out of the open sides and off the floor are all in the body solve (BoardModes.inc), so
+    // there is no separate leak path here any more: it counted the rocking modes twice.
     airModes.clear();
     auto addAir = [&] (double f, double q, double g)
     {
@@ -773,7 +773,7 @@ void ModalPiano::buildBody()
         airModes.push_back ({ (float) (alpha / a0), (float) (-2.0 * std::cos (w) / a0), (float) ((1.0 - alpha) / a0),
                               0, 0, 0, 0, (float) g });
     };
-    addAir (160.0, 0.5, 0.55);
+    (void) addAir;
     airPressure = 0;
 
     // Lid: a reflection off its underside reaches the listener 1 to 2 ms after the direct
