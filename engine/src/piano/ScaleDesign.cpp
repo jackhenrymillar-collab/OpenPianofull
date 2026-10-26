@@ -264,7 +264,11 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         // out-of-step one is left ringing, which gives the recorded notes there their fast first
         // drop and long tail
         const double close = k >= 61 && k <= 66 ? 0.25 : k >= 28 && k < 50 ? 0.45 : k >= 20 && k < 49 ? 0.7 : k >= 49 && k < 63 ? 0.5 : k >= 63 && k < 67 ? 0.75 : k >= 67 && k < 75 ? 0.3 : k >= 75 ? 0.3 : 1.0;
-        const double spread = unisonSpreadCents * (1.0 + 0.5 * keyNoise (k, 1)) * close;
+        double spread = unisonSpreadCents * (1.0 + 0.5 * keyNoise (k, 1)) * close;
+        // Treble unisons are tuned by ear and some are left a little loose: on the recorded grand
+        // about one key in four from D#5 up beats 3 to 5 times faster than its neighbours
+        if (k >= 43 && keyNoise (k, 7) > 0.5)
+            spread *= 3.0 + 2.0 * (0.5 + 0.5 * keyNoise (k, 8));
         // Every key's pattern differs: which string is high or low, and by how much
         const double offsets3[3] = { -spread * (1.0 + 0.15 * keyNoise (k, 3)), 0.25 * spread * keyNoise (k, 2),
                                      spread * (1.0 + 0.15 * keyNoise (k, 4)) };
@@ -283,6 +287,17 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         const double n = k;
         key.hammerMass = (11.074 - 0.074 * n + 0.0001 * n * n) * 1e-3;
         key.feltStiffness = 183.0 * std::exp (0.045 * n);
+        // Hammer voicing for loud playing: a technician hardens or needles each felt so the
+        // fortissimo brightness is even; fitted note by note to the recorded grand (every 3 keys from A0)
+        {
+            static constexpr double hardness[30] = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 0.5,
+                                                     0.5, 2.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.67, 0.5,
+                                                     0.5, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
+            const double pos = std::clamp ((k - 1) / 3.0, 0.0, 28.999);
+            const int i = (int) pos;
+            // (a lighter, harder head leaves the string sooner: brighter)
+            key.hammerMass /= hardness[i] + (hardness[i + 1] - hardness[i]) * (pos - i);
+        }
         key.feltExponent = 2.5 + 1.5 * (n - 1) / 87.0; // softer-curving felt: 2.5 in the bass to 4 in the treble
         key.outerFeltDepth = lerp (1.0e-3, 0.1e-3, std::pow ((k - 1) / 87.0, 0.7));
         key.strikeRatio = k <= 40 ? lerp (0.122, 0.115, (k - 1) / 39.0) : lerp (0.115, 0.08, (k - 40) / 48.0);

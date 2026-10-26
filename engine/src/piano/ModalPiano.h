@@ -56,7 +56,7 @@ public:
         bool horizontal = true;             // second (sideways) vibration direction
         bool longitudinal = true;           // lengthwise waves and phantom partials
         bool duplex = true;                 // undamped string segments behind the treble bridge
-        double longitudinalCoupling = 1.4;  // share of the lengthwise force that reaches the board (via bridge tilt)
+        double longitudinalCoupling = 0.2;  // share of the lengthwise force that reaches the board (via bridge tilt); 0.2 fits the recorded bass's loud brightness
         int longitudinalOrders = 16;        // lengthwise modes per string
         int longitudinalPartials = 64;     // transverse partials that drive them
         double longitudinalLoss = 40.0;     // decay of free lengthwise ringing [1/s]

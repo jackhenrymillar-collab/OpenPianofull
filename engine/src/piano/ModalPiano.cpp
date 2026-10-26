@@ -187,9 +187,10 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     Rng keyRng ((uint32_t) keyIndex * 2654435761u + 77u);
     const double strike = strikeRatio * (1.0 + 0.025 * keyRng.symmetric()) * (1.0 + 0.012 * rng.symmetric());
     // Strings of one unison come off the same coil, but wire gauge varies by a fraction of a
-    // percent, and stiffness goes with its fourth power: B differs by a few percent. That keeps
+    // percent, and stiffness goes with its fourth power: B differs by about 1% (more split the treble
+    // 2nd partials into separate beating peaks the recordings don't show). That keeps
     // the upper partials of a unison from all beating in step, which would dull the tone at once.
-    const double B = spec.inharmonicity * (1.0 + 0.04 * rng.symmetric());
+    const double B = spec.inharmonicity * (1.0 + 0.01 * rng.symmetric());
     const double lossScale = (1.0 + 0.1 * rng.symmetric()) * (1.0 + 1.2 * ageFactor);
     const double fFlex = spec.fundamental / std::sqrt (1.0 + B);
     const double L = spec.length;
@@ -270,18 +271,18 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     // relative to the middle of the range. Pushing harder on the bridge while feeling its
     // motion less by the same factor keeps the decay and coupling unchanged.
     {
-        static constexpr double voicingDb[30] = { 0.5, -1.7, -4.5, -2.1, -4.7, -1.2, -6.3, -0.7, 9.0, 2.3,
-                                               6.3, -10.1, 0.3, 1.1, 3.1, 6.3, 3.4, 4.7, -2.9, 10.2,
-                                               -0.7, -1.2, -11.8, -3.9, -0.8, -1.2, -21.7, -14.7, -6.1, -11.5 }; // every 3 keys from A0
+        static constexpr double voicingDb[30] = { 0.6, -1.2, -3.6, -1.4, -3.9, -0.5, -7.3, 2.4, 3.2, -4.1,
+                                               0.9, -1.2, -3.4, -1.1, -2.3, 2.2, 0.6, 2.9, -4.4, 7.9,
+                                               -3.1, -1.4, -11.9, -4.8, -0.3, -1.2, -21.6, -12.7, -4.2, -11.5 }; // every 3 keys from A0
         const double pos = std::clamp ((key.midiNote - kLowestKey) / 3.0, 0.0, 28.999);
         const int i = (int) pos;
         const double db = voicingDb[i] + (voicingDb[i + 1] - voicingDb[i]) * (pos - i);
         const float g = (float) std::pow (10.0, db / 20.0);
         // Tone voicing (needling or hardening the felt): the slope of the upper partials, in dB
         // per octave of partial number, fitted note by note to the recorded grand's brightness
-        static constexpr double toneDb[30] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -5.4, -8.3,
-                                               -4.8, 4.2, -2.2, -0.3, -7.9, -10.5, -15.0, -13.3, -7.6, -15.0,
-                                               -8.4, 4.3, -7.6, -12.1, -6.8, 0.0, 0.0, 0.0, 0.0, 0.0 }; // every 3 keys from A0
+        static constexpr double toneDb[30] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -3.3, -3.7, -2.3, -0.7,
+                                               -0.8, 0.8, -0.8, -0.6, -0.8, -3.8, -3.9, -6.4, -0.2, -8.8,
+                                               -7.0, -1.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 }; // every 3 keys from A0
         const double tone = toneDb[i] + (toneDb[i + 1] - toneDb[i]) * (pos - i);
         // In the top octave and a half the bridge and board give way less and less to the upper
         // partials (up to 15 dB less per octave of partial number from C7 up). Without this the
@@ -1242,7 +1243,8 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
 
     // Above about MIDI velocity 100 the felt is squeezed into its densest state and its
     // force law steepens further, so the hardest blows get disproportionately brighter
-    ks.hammer.exponentBoost = 0.5 * std::clamp ((hammerVelocity - 3.3) / 1.7, 0.0, 1.0);
+    // (in the bass the big, soft-cored heads stay compliant: the recorded bass brightens far less)
+    ks.hammer.exponentBoost = 0.5 * std::clamp ((hammerVelocity - 3.3) / 1.7, 0.0, 1.0) * std::clamp ((k - 15) / 25.0, 0.0, 1.0);
     ks.hammer.softFelt = softPedal;
 
     ks.hammer.active = true;
