@@ -61,7 +61,7 @@ public:
         double feltMemory = 0.6;            // felt relaxation strength (0 = perfectly elastic)
         double feltRelaxTime = 0.6e-3;      // [s] how quickly squeezed felt relaxes
         double actionNoise = 1.0;           // key, hammer and damper noises (0 = silent action)
-        double outerFelt = 0.03;            // stiffness of the soft outer felt, relative to the core
+        double outerFelt = 0.02;            // stiffness of the soft outer felt, relative to the core
         double outerFeltScale = 1.0;        // scales how deep the outer felt is
         double farEnd = 1.0;                // agraffe / pressure-bar end moves with the iron frame
         double nonlinear = 1.0;             // instantaneous tension feedback on every partial
@@ -71,7 +71,7 @@ public:
         double lid = 1.0;                   // lid opening (0 = closed, 1 = fully open)
         double age = 0.0;                   // 0 = new piano, 1 = old and worn (see prepare)
         double shankFlex = 1.0;             // hammer shank bending and head rocking (0 = rigid hammer)
-        double softLift = 0.35;             // lifts the volume of soft notes without changing their tone (0 = off)
+        double softLift = 0.3;              // lifts the volume of soft bass notes without changing their tone, fading to none at the top (0 = off)
     };
 
     ModalPiano();
@@ -209,7 +209,7 @@ private:
     double sampleRate = 48000, Ts = 1.0 / 48000;
     Settings settings;
     double hardness = 1.0;
-    double trebleFirmness = 1.7;
+    double trebleFirmness = 0.5;
     double ageFactor = 0;
     double damperStrength = 1.0;
     bool sustain = false;
@@ -309,16 +309,18 @@ private:
     double bridgeResistance = 0.9e-4;      // m/s per N: the dense high-frequency part of the soundboard
     double feltScatter = 0.12;            // how unevenly one hammer's felt meets the strings of its unison
     double frameKnockGain = 150.0;          // N per (m/s)^1.5: how hard the hammer blow shakes the iron plate
-    double horizontalResistance = 0.6e-4;  // the bridge moves less easily sideways
-    double crossResistance = 0.36e-4;      // vertical force -> sideways motion, and back
+    double horizontalResistance = 1.2e-4;  // the bridge moves less easily sideways
+    double crossResistance = 0.72e-4;      // vertical force -> sideways motion, and back
     // The bridge is split into zones along its length; each key's strings press on their own
     // zone, and every board mode moves each zone by its own amount
     static constexpr int kZones = 8;
     std::vector<int> keyZone;
     std::array<double, kZones> bridgeMassCoeff {}, bridgeMassState {};
     // Towards the top the bridge runs near the stiff edge of the board, so the board moves
-    // less there: the strings couple more weakly and ring on longer
-    static constexpr std::array<double, kZones> zoneCoupling { 1.15, 1.15, 1.15, 1.08, 0.92, 0.78, 0.64, 0.52 };
+    // less there and the strings couple more weakly. Fitted to recorded notes (tools/calibrate):
+    // the middle of the treble bridge (about C4 to C5) couples most strongly, which gives those
+    // notes their fast first decay and long quiet tail
+    static constexpr std::array<double, kZones> zoneCoupling { 0.78, 1.25, 1.25, 1.12, 1.38, 0.98, 0.9, 0.8 };
     std::array<double, kZones> zoneForce {}, zoneAcceleration {}, lastZoneVelocity {}, zoneBoardVelocity {};
     double lastBridgeVelocity = 0, bridgeAcceleration = 0;
     double lastHorizontalVelocity = 0, horizontalAcceleration = 0;

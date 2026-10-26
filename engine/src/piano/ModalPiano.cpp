@@ -38,14 +38,16 @@ namespace
     double internalDecay (double f, double f1, bool wound)
     {
         const double octavesAboveA0 = std::log2 (std::max (f1, 27.5) / 27.5);
-        const double b1 = 0.15 + 0.35 * octavesAboveA0 / 7.25;
+        // The top two octaves also lose more in the string and its terminations: recorded
+        // notes there fall 45 dB within one or two seconds
+        const double b1 = 0.157 + 0.367 * octavesAboveA0 / 7.25 + 0.3 * std::pow (std::max (0.0, octavesAboveA0 - 5.0), 2.0);
         // Air and internal friction take the upper partials much faster (Bank 2000; Chaigne & Askenfelt 1994)
-        const double b2 = wound ? 4.0e-7 : 2.0e-7;
-        // Above about 2 kHz the losses climb steeply, so treble overtones die within a second
-        // while the fundamental sings on
+        const double b2 = wound ? 2.4e-7 : 1.2e-7;
+        // Above about 2 kHz the losses climb faster still. Measured on recorded notes, overtones
+        // at 3 to 6 kHz die at about 20 to 40 dB/s, so this rise is gentle
         // (the top fundamentals are spared: their losses are mostly at the bridge)
         const double overtone = std::clamp (f / f1 - 1.0, 0.0, 1.0);
-        return b1 + b2 * f * f + 0.6 * overtone * std::pow (f / 2000.0, 3);
+        return b1 + b2 * f * f + 0.11 * overtone * std::pow (f / 2000.0, 3);
     }
 
     // Extra decay with the felt damper resting on the string
@@ -1197,7 +1199,10 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
     // harder on the bridge and feel its motion less by the same factor, so their decay and
     // coupling stay as they were. Fortissimo (5 m/s) is left unchanged.
     {
-        const float lift = (float) std::pow (5.0 / std::clamp (hammerVelocity, 0.3, 5.0), settings.softLift);
+        // Recorded pianos have more dynamic range in the treble than in the bass, so the lift
+        // fades out towards the top of the keyboard
+        const double top = k / double (kHighestKey - kLowestKey);
+        const float lift = (float) std::pow (5.0 / std::clamp (hammerVelocity, 0.3, 5.0), settings.softLift * (1.0 - top));
         forEachString (ks, [&] (String& s)
         {
             const float ratio = lift / s.outScale;
