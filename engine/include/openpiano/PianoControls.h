@@ -18,6 +18,7 @@ struct PianoControls
     float damperStrength = 1.0f;  // Scales how quickly released notes are damped
     float actionNoise = 1.0f;     // Level of key, hammer and damper noises (0 = off)
     float age = 0.0f;             // 0 = new piano, 1 = old and worn
+    float room = 0.35f;           // early reflections of the room around the piano (0 = dry)
 };
 
 } // namespace openpiano

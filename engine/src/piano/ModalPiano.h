@@ -87,6 +87,7 @@ public:
     void setHammerHardness (double scale) { hardness = scale; }
     void setDamperStrength (double scale);
     void setActionNoise (double level) { settings.actionNoise = level; }
+    void setRoom (double amount) { room = (float) std::clamp (amount, 0.0, 1.0); }
 
     // Adds nothing: overwrites left and right
     void process (float* left, float* right, int numSamples);
@@ -139,6 +140,7 @@ private:
         std::array<double, 3> lastCompression {};
         std::array<double, 3> feltHistory {};  // relaxing part of the felt force, per string
         std::array<double, 3> forceSum {};     // per string, over the current sample
+        std::array<double, 3> feltScale { 1, 1, 1 }; // each string meets slightly different felt
         double exponentBoost = 0;              // the felt's exponent rises on the hardest blows
     };
 
@@ -277,6 +279,13 @@ private:
         float process (float x) { const float y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
                                   x2 = x1; x1 = x; y2 = y1; y1 = y; return y; } };
     std::vector<Biquad> highBoardLeft, highBoardRight; // board peaks and dips above the simulated modes
+    // Early reflections of the room, as heard from the player's seat: floor, side walls,
+    // ceiling and the wall behind, each a delayed, duller copy of the piano's sound
+    struct Reflection { int delay; int fromRight; float gain, lpCoeff, state; bool toRight; };
+    std::vector<Reflection> reflections;
+    std::vector<float> roomBufLeft, roomBufRight;
+    int roomPos = 0;
+    float room = 0.35f;
     std::vector<Biquad> lidPanel;                     // the lid ringing as a wooden panel
     std::vector<float> lidPanelGain;
     double beamLpLeft = 0, beamLpRight = 0, beamCoeff = 0; // high frequencies beam towards the open side
@@ -288,8 +297,9 @@ private:
     struct ActionBank
     {
         static constexpr int N = 11;
+        static constexpr int Types = 4;
         std::array<float, N> zr {}, zi {}, pr {}, pi {};
-        std::array<std::array<float, N>, 3> weight {}; // per hit type
+        std::array<std::array<float, N>, Types> weight {}; // per hit type
         float panLeft = 0.7f, panRight = 0.7f;
     } action;
     void buildAction();
@@ -297,6 +307,7 @@ private:
     void runAction (double& force, double& left, double& right);
 
     double bridgeResistance = 0.9e-4;      // m/s per N: the dense high-frequency part of the soundboard
+    double feltScatter = 0.12;            // how unevenly one hammer's felt meets the strings of its unison
     double frameKnockGain = 150.0;          // N per (m/s)^1.5: how hard the hammer blow shakes the iron plate
     double horizontalResistance = 0.6e-4;  // the bridge moves less easily sideways
     double crossResistance = 0.36e-4;      // vertical force -> sideways motion, and back

@@ -18,6 +18,7 @@ OpenPianoAudioProcessor::OpenPianoAudioProcessor()
     damperParam = state.getRawParameterValue (params::damper);
     actionParam = state.getRawParameterValue (params::actionNoise);
     ageParam = state.getRawParameterValue (params::age);
+    roomParam = state.getRawParameterValue (params::room);
     latchParam = state.getRawParameterValue (params::sustainLatch);
     velocitySensParam = state.getRawParameterValue (params::velocitySens);
 }
@@ -54,6 +55,7 @@ void OpenPianoAudioProcessor::updateControls()
     c.damperStrength = damperParam->load();
     c.actionNoise = actionParam->load();
     c.age = ageParam->load();
+    c.room = roomParam->load();
 
     // Snap the defaults exactly, so the default sound matches the regression-tested engine
     if (std::abs (c.dynamicsCurve - 1.0f) < 0.005f) c.dynamicsCurve = 1.0f;

@@ -103,12 +103,14 @@ void PianoInstrument::applyLiveControls()
     piano->setHammerHardness (controls.hammerHardness);
     piano->setDamperStrength (controls.damperStrength * (1.0 - 0.5 * controls.age));
     piano->setActionNoise (controls.actionNoise * (1.0 + 1.5 * controls.age));
+    piano->setRoom (controls.room);
 }
 
 void PianoInstrument::setControls (const PianoControls& c)
 {
     const bool changed = c.hammerHardness != controls.hammerHardness || c.damperStrength != controls.damperStrength
-                         || c.actionNoise != controls.actionNoise || c.age != controls.age;
+                         || c.actionNoise != controls.actionNoise || c.age != controls.age
+                         || c.room != controls.room;
     if (c.age != controls.age)
         ageSettleSamples = (int) (0.25 * sampleRate);
     controls = c;
