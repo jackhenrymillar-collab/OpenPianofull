@@ -53,7 +53,7 @@ namespace
         const double b1s = b1 * (1.0 - 0.25 * std::clamp (octavesAboveA0 - 2.5, 0.0, 1.0));
         // Above 5 kHz the rise slows: the top notes' 2nd and 3rd partials (6 to 12 kHz) still ring
         // for a few hundred ms on recorded notes, and without them the top sounds like a harp
-        const double fe = std::min (f, 5000.0) + 0.6 * std::max (0.0, f - 5000.0);
+        const double fe = std::min (f, 5000.0) + 0.6 * std::clamp (f - 5000.0, 0.0, 4000.0) + 1.5 * std::max (0.0, f - 9000.0);
         return b1s + (b2 * fe * fe + 0.11 * overtone * std::pow (fe / 2000.0, 3));
     }
 
@@ -280,7 +280,7 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
         // 2nd and 3rd partials there sit 10 to 20 dB above the recorded grand's: thin and metallic.
         // The cut peaks at C7 and fades out by F#7: above there the recorded partials are no
         // stronger than ours, and cutting them leaves a bare, harp-like sine.
-        const double topRoll = 15.0 * std::clamp ((keyIndex - 66) / 9.0, 0.0, 1.0) * (0.5 + 0.5 * std::clamp ((81 - keyIndex) / 6.0, 0.0, 1.0));
+        const double topRoll = 15.0 * std::clamp ((keyIndex - 66) / 9.0, 0.0, 1.0) * std::clamp ((81 - keyIndex) / 6.0, 0.0, 1.0);
         for (int j = 0; j < s.count; ++j)
         {
             const size_t q = (size_t) (s.first + j);
