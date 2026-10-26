@@ -51,7 +51,7 @@ namespace
         const double overtone = std::clamp (f / f1 - 1.0, 0.0, 1.0);
         // From the middle up the strings themselves lose a quarter less, which gives the long
         // quiet tail of recorded notes there (about 3 dB/s from C4 to B5)
-        const double b1s = b1 * (1.0 - 0.25 * std::clamp (octavesAboveA0 - 2.5, 0.0, 1.0));
+        const double b1s = b1 * (1.0 - 0.25 * std::clamp (octavesAboveA0 - 5.0, 0.0, 1.0));
         // Above 5 kHz the rise slows: the top notes' 2nd and 3rd partials (6 to 12 kHz) still ring
         // for a few hundred ms on recorded notes, and without them the top sounds like a harp
         const double fe = std::min (f, 5000.0) + 0.6 * std::clamp (f - 5000.0, 0.0, 4000.0) + 1.5 * std::max (0.0, f - 9000.0);
@@ -269,9 +269,9 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     // relative to the middle of the range. Pushing harder on the bridge while feeling its
     // motion less by the same factor keeps the decay and coupling unchanged.
     {
-        static constexpr double voicingDb[30] = { -0.2, -1.5, -3.7, -1.3, -6.0, -4.8, -7.7, 1.9, -1.9, 0.1,
-                                                  4.2, -3.9, -4.0, 7.5, 6.5, 9.4, 0.7, -4.9, 1.6, 5.0,
-                                                  -4.9, -2.8, 2.4, -0.3, -0.8, -5.3, -22.0, -16.3, -16.6, -18.9 }; // every 3 keys from A0
+        static constexpr double voicingDb[30] = { -5.4, -6.4, -8.3, -5.6, -10.7, -8.6, -11.5, 1.1, -4.3, -0.7,
+                                                  2.0, 0.6, -2.9, 4.2, 1.4, 11.4, 1.7, -6.0, 3.1, 4.4,
+                                                  -0.5, -1.1, 7.2, 0.4, 5.5, 1.0, -6.3, -3.0, -1.7, -5.2 }; // every 3 keys from A0
         const double pos = std::clamp ((key.midiNote - kLowestKey) / 3.0, 0.0, 28.999);
         const int i = (int) pos;
         const double db = voicingDb[i] + (voicingDb[i + 1] - voicingDb[i]) * (pos - i);

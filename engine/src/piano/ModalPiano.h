@@ -343,7 +343,7 @@ private:
     // how strongly each part of the bridge couples to the board...
     static constexpr std::array<double, 8> zoneCouplingFit { 0.78, 1.25, 1.1, 1.1, 1.1, 1.0, 0.9, 0.8 };
     // ...and how much of its motion is the dense, resistive part of the board
-    static constexpr std::array<double, 8> zoneResistanceFit { 1.0, 1.2, 1.5, 1.4, 1.0, 0.49, 0.6, 1.6 };
+    static constexpr std::array<double, 8> zoneResistanceFit { 1.0, 1.2, 1.5, 1.4, 2.0, 1.5, 0.6, 1.6 };
     std::array<double, kZones> zoneCoupling {}, zoneResistance {};
     std::array<double, kZones> zoneForce {}, zoneAcceleration {}, lastZoneVelocity {}, zoneBoardVelocity {};
     double lastBridgeVelocity = 0, bridgeAcceleration = 0;
