@@ -2,7 +2,7 @@ name: macOS build
 
 on:
   push:
-    branches: [main, step1-build-and-baseline]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure (universal: Apple silicon and Intel)
+      - name: "Configure (universal: Apple silicon and Intel)"
         run: |
           cmake -B build -G Xcode \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
