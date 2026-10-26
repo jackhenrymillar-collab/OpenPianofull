@@ -170,8 +170,10 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     // its strings a little off the design point (shared by the unison)
     Rng keyRng ((uint32_t) keyIndex * 2654435761u + 77u);
     const double strike = strikeRatio * (1.0 + 0.025 * keyRng.symmetric()) * (1.0 + 0.012 * rng.symmetric());
-    // Strings of one unison come off the same coil of wire: their stiffness is nearly identical
-    const double B = spec.inharmonicity * (1.0 + 0.005 * rng.symmetric());
+    // Strings of one unison come off the same coil, but wire gauge varies by a fraction of a
+    // percent, and stiffness goes with its fourth power: B differs by a few percent. That keeps
+    // the upper partials of a unison from all beating in step, which would dull the tone at once.
+    const double B = spec.inharmonicity * (1.0 + 0.04 * rng.symmetric());
     const double lossScale = (1.0 + 0.1 * rng.symmetric()) * (1.0 + 1.2 * ageFactor);
     const double fFlex = spec.fundamental / std::sqrt (1.0 + B);
     const double L = spec.length;
