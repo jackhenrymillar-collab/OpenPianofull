@@ -97,6 +97,17 @@ void PianoInstrument::setSustain (bool pedalDown)
     piano->setSustain (pedalDown);
 }
 
+void PianoInstrument::setSostenuto (bool pedalDown)
+{
+    piano->setSostenuto (pedalDown);
+}
+
+void PianoInstrument::setSoftPedal (float amount)
+{
+    softAmount = amount;
+    piano->setSoftPedal (amount);
+}
+
 void PianoInstrument::applyLiveControls()
 {
     // An old piano's dampers are worn and let notes ring on; its action knocks and rattles more
@@ -138,6 +149,7 @@ void PianoInstrument::process (float* const* outputs, int numChannels, int numSa
                 if (keyHeld[(size_t) note])
                     piano->setKeyDown (note, true);
             piano->setSustain (pedal);
+            piano->setSoftPedal (softAmount);
         }
     }
 

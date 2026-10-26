@@ -1039,10 +1039,12 @@ void ModalPiano::reset()
     buildFrame();
     dcLeft = dcRight = dcInLeft = dcInRight = 0;
     sustain = false;
+    sostenutoDown = false;
 
     for (auto& k : keyState)
     {
         k.down = false;
+        k.sostenuto = false;
         k.hammer = {};
     }
     for (auto& s : strings)
@@ -1095,7 +1097,7 @@ void ModalPiano::updateDamping (int keyIndex)
 {
     const auto& key = keys[(size_t) keyIndex];
     auto& ks = keyState[(size_t) keyIndex];
-    const bool damped = key.hasDamper && ! ks.down && ks.damperPending <= 0 && ! sustain;
+    const bool damped = key.hasDamper && ! ks.down && ks.damperPending <= 0 && ! sustain && ! ks.sostenuto;
 
     forEachString (ks, [&] (String& s)
     {
@@ -1147,6 +1149,21 @@ void ModalPiano::setSustain (bool down)
     checkActivity();
 }
 
+void ModalPiano::setSostenuto (bool down)
+{
+    if (sostenutoDown == down)
+        return;
+    sostenutoDown = down;
+    for (size_t k = 0; k < keys.size(); ++k)
+    {
+        auto& ks = keyState[k];
+        // The sostenuto rod catches every damper that is lifted when the pedal goes down
+        ks.sostenuto = down && keys[k].hasDamper && (ks.down || ks.damperPending > 0 || sustain);
+        updateDamping ((int) k);
+    }
+    checkActivity();
+}
+
 void ModalPiano::strike (int midiNote, double hammerVelocity)
 {
     const int k = midiNote - kLowestKey;
@@ -1180,6 +1197,18 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
         // unison is pushed a little harder or softer. This uneven start is what leaves the
         // strings swinging partly against each other, the slow, quiet "aftersound" tail.
         ks.hammer.feltScale[(size_t) i] = 1.0 + feltScatter * (2.0 * Rng ((uint32_t) (k * 3 + i) * 7919u + 11u).next() - 1.0);
+        // Una corda: the whole action slides sideways. On a trichord the hammer misses the
+        // first string, which is left to ring in sympathy; on a bichord it only grazes one
+        // string. Every hammer also meets the strings with softer felt between its grooves.
+        if (softPedal > 0)
+        {
+            const double miss = ks.numStrings == 3 ? 1.0 : ks.numStrings == 2 ? 0.6 : 0.0;
+            if (i == 0 && miss > 0)
+            {
+                ks.hammer.feltScale[(size_t) i] *= 1.0 - miss * softPedal;
+                ks.hammer.gap[(size_t) i] += miss * softPedal * 0.3e-3;
+            }
+        }
         double u = 0;
         forModes (s, s.count, [&] (size_t j) { u += m.phi[j] * m.zi[j]; });
         nearest = std::min (nearest, u + ks.hammer.gap[(size_t) i]);
@@ -1245,6 +1274,7 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
     // Above about MIDI velocity 100 the felt is squeezed into its densest state and its
     // force law steepens further, so the hardest blows get disproportionately brighter
     ks.hammer.exponentBoost = 0.5 * std::clamp ((hammerVelocity - 3.3) / 1.7, 0.0, 1.0);
+    ks.hammer.softFelt = softPedal;
 
     ks.hammer.active = true;
     ks.hammer.position = nearest - letOff; // just let off, flying free
@@ -1394,8 +1424,11 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
     // the crown, so a worn hammer sounds brighter and more cutting there.
     const double groove = ageFactor * std::exp (-std::pow ((key.midiNote - 66) / 18.0, 2.0))
                           * (0.7 + 0.6 * Rng ((uint32_t) keyIndex * 131u + 9u).next());
-    const double q0 = key.feltStiffness * hardness * (1.0 + 1.5 * ageFactor) * (1.0 + 0.9 * groove);
-    const double p = key.feltExponent + h.exponentBoost;
+    // The una corda moves the strings onto the unpacked felt beside the grooves: softer and
+    // with a gentler force law, so the tone is darker as well as quieter
+    const double q0 = key.feltStiffness * hardness * (1.0 + 1.5 * ageFactor) * (1.0 + 0.9 * groove * (1.0 - h.softFelt))
+                      * (1.0 - 0.35 * h.softFelt);
+    const double p = key.feltExponent + h.exponentBoost - 0.3 * h.softFelt;
     // Felt has memory (Stulov 1995): squeezed quickly it is stiff; squeezed slowly it has
     // time to relax and gives way. So a gentle touch makes a long, soft contact that only
     // excites the low partials, and a hard blow a short, stiff one that brings out the top.
@@ -1610,7 +1643,7 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         if (ks.damperPending <= 0)
         {
             ks.damperPending = 0;
-            if (keys[k].hasDamper && ! sustain)
+            if (keys[k].hasDamper && ! sustain && ! ks.sostenuto)
             {
                 queueAction (2, 0, 0.3, (int) k);
                 // How much the strings are still moving decides how loud the release is

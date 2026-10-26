@@ -14,7 +14,7 @@ namespace openpiano
 // Threading contract:
 //  - prepare() may allocate and is called from a non-realtime thread.
 //  - All other methods are called from the audio thread only and must not allocate or lock.
-//  - Events (noteOn, noteOff, setSustain) take effect from the next sample rendered by process().
+//  - Events (noteOn, noteOff, the pedals) take effect from the next sample rendered by process().
 //    Callers that want sample-accurate timing split their block at each event.
 class Instrument
 {
@@ -32,6 +32,9 @@ public:
     virtual void noteOn (int midiNote, int velocity) = 0;
     virtual void noteOff (int midiNote) = 0;
     virtual void setSustain (bool pedalDown) = 0;
+    // Middle and left pedals. Instruments without them ignore these.
+    virtual void setSostenuto (bool /*pedalDown*/) {}
+    virtual void setSoftPedal (float /*amount*/) {} // 0 = up, 1 = fully down
 
     // Overwrites numSamples samples in each output channel. numSamples may be any length,
     // including more than the maxBlockSize given to prepare().

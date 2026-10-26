@@ -94,6 +94,12 @@ void OpenPianoAudioProcessor::applyEvent (const juce::MidiMessage& m)
         midiSustain = true;
     else if (m.isSustainPedalOff())
         midiSustain = false;
+    else if (m.isSostenutoPedalOn())
+        piano.setSostenuto (true);
+    else if (m.isSostenutoPedalOff())
+        piano.setSostenuto (false);
+    else if (m.isController() && m.getControllerNumber() == 67) // soft pedal (una corda), half pedalling allowed
+        piano.setSoftPedal (m.getControllerValue() / 127.0f);
     else if (m.isAllNotesOff() || m.isAllSoundOff() || m.isResetAllControllers())
     {
         if (m.isAllSoundOff())
@@ -101,6 +107,11 @@ void OpenPianoAudioProcessor::applyEvent (const juce::MidiMessage& m)
         for (int n = 0; n < 128; ++n)
             piano.noteOff (n);
         midiSustain = false;
+        if (m.isResetAllControllers())
+        {
+            piano.setSostenuto (false);
+            piano.setSoftPedal (0.0f);
+        }
     }
     updateSustain();
 }
