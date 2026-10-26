@@ -15,9 +15,12 @@ namespace theme
 {
     namespace colours
     {
-        inline const juce::Colour skyTop      { 0xff5f9fdc };
-        inline const juce::Colour skyMid      { 0xff9fcdf2 };
-        inline const juce::Colour horizon     { 0xffffe2b0 };
+        inline const juce::Colour skyTop      { 0xff1846c4 }; // deep summer blue overhead
+        inline const juce::Colour skyMid      { 0xff2f74e0 };
+        inline const juce::Colour horizon     { 0xff8cc4f6 }; // paler near the field
+        inline const juce::Colour field       { 0xfff2d01e }; // rapeseed yellow
+        inline const juce::Colour fieldDeep   { 0xffb89a0c };
+        inline const juce::Colour stem        { 0xff5f8f2a };
         inline const juce::Colour sunCore     { 0xfffff8e2 };
         inline const juce::Colour sunGlow     { 0xffffc46a };
         inline const juce::Colour amber       { 0xffef9b2c }; // selected / lit

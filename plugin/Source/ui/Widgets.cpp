@@ -476,7 +476,8 @@ void GlassKeyboard::drawWhiteNote (int note, Graphics& g, Rectangle<float> area,
     const float corner = 5.0f;
 
     // Frosted glass key
-    ColourGradient glass (Colours::white.withAlpha (0.58f), key.getTopLeft(),
+    // Clear glass: mostly see-through, with a faint frost that thickens towards the front
+    ColourGradient glass (Colours::white.withAlpha (0.16f), key.getTopLeft(),
                           Colours::white.withAlpha (0.30f), key.getBottomLeft(), false);
     g.setGradientFill (glass);
     g.fillRoundedRectangle (key, corner);
@@ -497,12 +498,15 @@ void GlassKeyboard::drawWhiteNote (int note, Graphics& g, Rectangle<float> area,
     }
 
     // Bright glass edge, warmer when lit
-    g.setColour (Colours::white.withAlpha (0.9f).interpolatedWith (tc::amber, lit * 0.6f));
+    g.setColour (Colours::white.withAlpha (0.75f).interpolatedWith (tc::amber, lit * 0.6f));
     g.drawRoundedRectangle (key.reduced (0.5f), corner, 1.0f + lit * 0.6f);
+    // A thin highlight down the left edge, like light catching a glass block
+    g.setColour (Colours::white.withAlpha (0.35f));
+    g.fillRect (key.reduced (0.0f, corner).withX (key.getX() + 2.0f).withWidth (1.2f));
 
     if (note % 12 == 0) // label the Cs
     {
-        g.setColour (tc::inkDim.withAlpha (0.8f));
+        g.setColour (Colours::white.withAlpha (0.9f));
         g.setFont (theme::sans (10.0f));
         g.drawText (MidiMessage::getMidiNoteName (note, true, true, 4), key.removeFromBottom (18.0f),
                     Justification::centred, false);
@@ -516,7 +520,7 @@ void GlassKeyboard::drawBlackNote (int note, Graphics& g, Rectangle<float> area,
     const float corner = 4.0f;
 
     // Tinted glass, darker at the front
-    ColourGradient glass (tc::ink.withAlpha (0.62f), key.getTopLeft(), tc::ink.withAlpha (0.82f), key.getBottomLeft(), false);
+    ColourGradient glass (tc::ink.withAlpha (0.38f), key.getTopLeft(), tc::ink.withAlpha (0.58f), key.getBottomLeft(), false);
     g.setGradientFill (glass);
     g.fillRoundedRectangle (key, corner);
 

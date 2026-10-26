@@ -159,8 +159,8 @@ void OpenPianoAudioProcessorEditor::paint (Graphics& g)
     g.drawImage (skyImage, getLocalBounds().toFloat());
 
     // Wordmark
-    sky::paintSunIcon (g, { 40.0f, 25.0f, 26.0f, 26.0f }, tc::ink);
-    g.setColour (tc::ink);
+    sky::paintSunIcon (g, { 40.0f, 25.0f, 26.0f, 26.0f }, Colours::white);
+    g.setColour (Colours::white);
     g.setFont (theme::serif (30.0f, 0.32f));
     g.drawText (String (JucePlugin_Name).toUpperCase(), Rectangle<float> (78.0f, 17.0f, 360.0f, 42.0f), Justification::centredLeft, false);
 
@@ -189,7 +189,7 @@ void OpenPianoAudioProcessorEditor::paint (Graphics& g)
     theme::drawGlassPanel (g, shelf, 5.0f, 0.9f);
 
     // The control deck: one large frosted panel
-    theme::drawGlassPanel (g, deckBounds(), 18.0f, 0.85f);
+    theme::drawGlassPanel (g, deckBounds(), 18.0f, 0.95f);
 
     // Divider between the main knobs and the reserved smaller ones
     const auto first = smallKnobSlots.front().getBounds().toFloat();

@@ -36,60 +36,129 @@ static void cloud (Graphics& g, Point<float> c, float size, float alpha)
     }
 }
 
+static void cumulus (Graphics& g, Point<float> c, float size, float alpha)
+{
+    // A bright, crisp-edged summer cumulus: many small dense puffs over a few big ones,
+    // with a faint blue-grey shade along the flat base
+    Random rng ((int64) (c.x * 31 + c.y * 17));
+    for (int i = 0; i < 7; ++i)
+    {
+        const float dx = (rng.nextFloat() - 0.5f) * size * 1.7f;
+        const float r = size * (0.32f + rng.nextFloat() * 0.25f);
+        softBlob (g, c.translated (dx, size * 0.18f), r, r * 0.55f, Colour (0xffc9d6ea).withAlpha (alpha * 0.55f));
+    }
+    for (int i = 0; i < 16; ++i)
+    {
+        const float dx = (rng.nextFloat() - 0.5f) * size * 1.6f;
+        const float dy = -rng.nextFloat() * size * 0.55f;
+        const float r = size * (0.22f + rng.nextFloat() * 0.25f);
+        softBlob (g, c.translated (dx, dy), r, r * 0.9f, Colours::white.withAlpha (alpha));
+        softBlob (g, c.translated (dx, dy), r * 0.6f, r * 0.55f, Colours::white.withAlpha (alpha * 0.8f));
+    }
+}
+
+static void wisp (Graphics& g, Point<float> c, float size, float alpha)
+{
+    Random rng ((int64) (c.x * 13 + c.y * 7));
+    for (int i = 0; i < 6; ++i)
+        softBlob (g, c.translated ((rng.nextFloat() - 0.5f) * size * 1.8f, (rng.nextFloat() - 0.5f) * size * 0.5f),
+                  size * (0.3f + 0.2f * rng.nextFloat()), size * 0.18f, Colours::white.withAlpha (alpha));
+}
+
+static void field (Graphics& g, Rectangle<float> area)
+{
+    // A field of rapeseed in flower, seen from inside it: a soft yellow mass at the bottom,
+    // then stems and clusters of four-petalled flowers rising against the sky
+    const float w = area.getWidth(), h = area.getHeight();
+    const float top = area.getBottom() - h * 0.17f;
+    Random rng (20240607);
+
+    // Distant, out-of-focus yellow
+    softBlob (g, { w * 0.5f, area.getBottom() - h * 0.05f }, w * 0.85f, h * 0.12f, tc::field.withAlpha (0.85f));
+    {
+        ColourGradient base (tc::field.withAlpha (0.0f), 0.0f, top + h * 0.06f, tc::field, 0.0f, area.getBottom() - h * 0.08f, false);
+        base.addColour (0.7, tc::field.interpolatedWith (tc::fieldDeep, 0.25f));
+        g.setGradientFill (base);
+        g.fillRect (area.withTop (top + h * 0.06f));
+    }
+
+    // Stems swaying a little, each topped with a loose cluster of flowers
+    for (int i = 0; i < 90; ++i)
+    {
+        const float x = rng.nextFloat() * w;
+        const float tipY = top + rng.nextFloat() * h * 0.10f;
+        const float lean = (rng.nextFloat() - 0.5f) * 30.0f;
+        Path stem;
+        stem.startNewSubPath (x, area.getBottom());
+        stem.quadraticTo (x + lean * 0.3f, (tipY + area.getBottom()) * 0.5f, x + lean, tipY);
+        g.setColour (tc::stem.withAlpha (0.55f + 0.3f * rng.nextFloat()));
+        g.strokePath (stem, PathStrokeType (1.0f + rng.nextFloat()));
+
+        const int flowers = 4 + rng.nextInt (6);
+        for (int f = 0; f < flowers; ++f)
+        {
+            const auto p = Point<float> (x + lean + (rng.nextFloat() - 0.5f) * 22.0f, tipY + rng.nextFloat() * 30.0f - 6.0f);
+            const float r = 2.6f + rng.nextFloat() * 3.4f;
+            const auto petal = tc::field.interpolatedWith (Colour (0xfffff27a), rng.nextFloat() * 0.6f);
+            for (int k = 0; k < 4; ++k)
+            {
+                const float a = MathConstants<float>::halfPi * (float) k + rng.nextFloat() * 0.4f;
+                g.setColour (petal);
+                g.fillEllipse (Rectangle<float> (r * 1.1f, r * 1.1f).withCentre (p.getPointOnCircumference (r * 0.5f, a)));
+            }
+            g.setColour (tc::fieldDeep.withAlpha (0.7f));
+            g.fillEllipse (Rectangle<float> (r * 0.5f, r * 0.5f).withCentre (p));
+        }
+    }
+}
+
 void paint (Graphics& g, Rectangle<float> area)
 {
     const float w = area.getWidth(), h = area.getHeight();
 
-    // Sky: deep blue overhead, warming to a golden horizon at the bottom
+    // Sky: deep saturated blue overhead, paler towards the horizon
     ColourGradient skyFill (tc::skyTop, area.getTopLeft(), tc::horizon, area.getBottomLeft(), false);
-    skyFill.addColour (0.55, tc::skyMid);
-    skyFill.addColour (0.82, tc::skyMid.interpolatedWith (tc::horizon, 0.55f));
+    skyFill.addColour (0.45, tc::skyMid);
     g.setGradientFill (skyFill);
     g.fillRect (area);
 
-    // The sun, centred below the bottom edge so only its upper rim shows
-    const Point<float> sun (area.getCentreX(), area.getBottom() + h * 0.10f);
-    const float sunR = h * 0.20f;
+    // The sun, high in the sky just above the keyboard, with a bright starburst
+    const Point<float> sun (w * 0.47f, h * 0.075f);
+    const float sunR = 15.0f;
+    softBlob (g, sun, w * 0.40f, h * 0.40f, Colour (0xff9ccaff).withAlpha (0.45f)); // blue-white haze
+    softBlob (g, sun, 120.0f, 120.0f, Colours::white.withAlpha (0.45f));
 
-    // Wide atmospheric glow
-    softBlob (g, sun, w * 0.75f, h * 0.85f, tc::sunGlow.withAlpha (0.55f));
-    softBlob (g, sun, w * 0.42f, h * 0.55f, tc::sunGlow.withAlpha (0.45f));
-
-    // Long, faint rays fanning upwards
+    // Sparkle: thin tapering rays of different lengths
     {
-        Graphics::ScopedSaveState s (g);
-        const int rays = 14;
+        Random rng (77);
+        const int rays = 28;
         for (int i = 0; i < rays; ++i)
         {
-            const float angle = MathConstants<float>::pi * (1.08f + 0.84f * (float) i / (rays - 1)); // left to right, upper half
-            const float spread = 0.035f + 0.02f * (float) (i % 3);
+            const float angle = MathConstants<float>::twoPi * ((float) i + 0.3f * rng.nextFloat()) / rays;
+            const float len = (i % 2 == 0 ? 150.0f : 85.0f) * (0.7f + 0.6f * rng.nextFloat());
+            const float half = 0.022f + 0.01f * rng.nextFloat();
             Path ray;
-            ray.startNewSubPath (sun);
-            ray.lineTo (sun + Point<float> (std::cos (angle - spread), std::sin (angle - spread)) * h * 1.3f);
-            ray.lineTo (sun + Point<float> (std::cos (angle + spread), std::sin (angle + spread)) * h * 1.3f);
+            ray.startNewSubPath (sun.getPointOnCircumference (sunR * 0.6f, angle - half * 6.0f));
+            ray.lineTo (sun.getPointOnCircumference (len, angle));
+            ray.lineTo (sun.getPointOnCircumference (sunR * 0.6f, angle + half * 6.0f));
             ray.closeSubPath();
-            ColourGradient fade (tc::sunCore.withAlpha (0.16f), sun, tc::sunCore.withAlpha (0.0f),
-                                 sun.translated (0, -h * 1.0f), true);
+            ColourGradient fade (Colours::white.withAlpha (0.85f), sun, Colours::white.withAlpha (0.0f),
+                                 sun.getPointOnCircumference (len, angle), true);
             g.setGradientFill (fade);
             g.fillPath (ray);
         }
     }
-
-    // Disc and bright corona
-    softBlob (g, sun, sunR * 1.9f, sunR * 1.9f, tc::sunCore.withAlpha (0.65f));
-    ColourGradient disc (Colours::white, sun.translated (0, -sunR * 0.3f), tc::sunCore, sun.translated (0, -sunR), true);
-    g.setGradientFill (disc);
+    softBlob (g, sun, sunR * 3.2f, sunR * 3.2f, Colours::white.withAlpha (0.8f));
+    g.setColour (Colours::white);
     g.fillEllipse (sun.x - sunR, sun.y - sunR, sunR * 2, sunR * 2);
 
-    // Clouds drifting across the upper sky, lit warmly lower down
-    cloud (g, { w * 0.10f, h * 0.10f }, 70.0f, 0.38f);
-    cloud (g, { w * 0.88f, h * 0.07f }, 90.0f, 0.34f);
-    cloud (g, { w * 0.62f, h * 0.15f }, 55.0f, 0.22f);
-    cloud (g, { w * 0.03f, h * 0.55f }, 80.0f, 0.30f);
-    cloud (g, { w * 0.97f, h * 0.50f }, 95.0f, 0.32f);
+    // Clouds: a big cumulus on the left, a smaller one on the right, a few wisps up high
+    cumulus (g, { w * 0.09f, h * 0.36f }, 120.0f, 0.55f);
+    cumulus (g, { w * 0.97f, h * 0.48f }, 70.0f, 0.5f);
+    wisp (g, { w * 0.86f, h * 0.05f }, 60.0f, 0.35f);
+    wisp (g, { w * 0.70f, h * 0.10f }, 30.0f, 0.3f);
 
-    // A low haze band where the light is strongest
-    softBlob (g, { area.getCentreX(), area.getBottom() - h * 0.08f }, w * 0.7f, h * 0.10f, Colours::white.withAlpha (0.18f));
+    field (g, area);
 }
 
 void paintSunIcon (Graphics& g, Rectangle<float> area, Colour colour)
