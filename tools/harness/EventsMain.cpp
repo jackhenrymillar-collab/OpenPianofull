@@ -51,6 +51,7 @@ int main (int argc, char** argv)
     openpiano::PianoControls controls;
     controls.age = argc > 4 ? (float) std::atof (argv[4]) : 0.0f;
     piano.setControls (controls);
+    if (std::getenv ("CLOSE_MICS")) piano.setCloseMics (true);
     piano.prepare (rate, block);
 
     const int total = (int) (seconds * rate);

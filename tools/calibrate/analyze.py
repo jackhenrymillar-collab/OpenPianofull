@@ -133,6 +133,40 @@ def analyze(x, rate, midi):
             if (xv > 0).any():
                 B = max(0.0, float(np.sum(xv * yv) / np.sum(xv * xv)))
 
+    # Refine B on a long, zero-padded window (0.05-1.5 s) with interpolated peaks, fitting
+    # f_n^2 / n^2 = F^2 (1 + B n^2) without trusting the (often weak) fundamental in the bass
+    seg = x[int(0.05 * rate):int(min(1.5, dur) * rate)]
+    if len(seg) > rate // 4 and len(found) >= 6:
+        nz = 1 << 18
+        S = np.abs(np.fft.rfft(seg * np.hanning(len(seg)), nz))
+        fz = np.fft.rfftfreq(nz, 1 / rate)
+        dz = fz[1]
+        ns_, fs_ = [], []
+        for n, fk, _ in found:
+            if n > 25:
+                break
+            lo_, hi_ = fk - 2.5 * df, fk + 2.5 * df
+            band = np.where((fz >= lo_) & (fz <= hi_))[0]
+            if len(band) < 3:
+                continue
+            j = band[np.argmax(S[band])]
+            if 0 < j < len(S) - 1:
+                a_, b_, c_ = np.log(S[j - 1] + 1e-12), np.log(S[j] + 1e-12), np.log(S[j + 1] + 1e-12)
+                d_ = 0.5 * (a_ - c_) / (a_ - 2 * b_ + c_) if (a_ - 2 * b_ + c_) != 0 else 0.0
+                ns_.append(n); fs_.append(fz[j] + d_ * dz)
+        if len(ns_) >= 6:
+            ns_ = np.array(ns_, float); y_ = (np.array(fs_) / ns_) ** 2
+            for _ in range(2):
+                A_ = np.vstack([np.ones_like(ns_), ns_ ** 2]).T
+                c0, c1 = np.linalg.lstsq(A_, y_, rcond=None)[0]
+                r_ = y_ - (c0 + c1 * ns_ ** 2)
+                keep = np.abs(r_) <= 2.5 * np.median(np.abs(r_)) + 1e-12
+                if keep.sum() < 6 or keep.all():
+                    break
+                ns_, y_ = ns_[keep], y_[keep]
+            if c0 > 0:
+                B = max(0.0, float(c1 / c0))
+
     def partial_track(k):
         band = slice(max(0, k - 2), k + 3)
         return P[band, :].max(axis=0)

@@ -270,13 +270,19 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     // relative to the middle of the range. Pushing harder on the bridge while feeling its
     // motion less by the same factor keeps the decay and coupling unchanged.
     {
-        static constexpr double voicingDb[30] = { -5.4, -6.4, -8.3, -5.6, -10.7, -8.6, -11.5, 1.1, -4.3, -0.7,
-                                                  2.0, 0.6, -2.9, 4.2, 1.4, 11.4, 1.7, -6.0, 3.1, 4.4,
-                                                  -0.5, -1.1, 7.2, 0.4, 5.5, 1.0, -6.3, -3.0, -1.7, -5.2 }; // every 3 keys from A0
+        static constexpr double voicingDb[30] = { 0.5, -1.7, -4.5, -2.1, -4.7, -1.2, -6.3, -0.7, 9.0, 2.3,
+                                               6.3, -10.1, 0.3, 1.1, 3.1, 6.3, 3.4, 4.7, -2.9, 10.2,
+                                               -0.7, -1.2, -11.8, -3.9, -0.8, -1.2, -21.7, -14.7, -6.1, -11.5 }; // every 3 keys from A0
         const double pos = std::clamp ((key.midiNote - kLowestKey) / 3.0, 0.0, 28.999);
         const int i = (int) pos;
         const double db = voicingDb[i] + (voicingDb[i + 1] - voicingDb[i]) * (pos - i);
         const float g = (float) std::pow (10.0, db / 20.0);
+        // Tone voicing (needling or hardening the felt): the slope of the upper partials, in dB
+        // per octave of partial number, fitted note by note to the recorded grand's brightness
+        static constexpr double toneDb[30] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -5.4, -8.3,
+                                               -4.8, 4.2, -2.2, -0.3, -7.9, -10.5, -15.0, -13.3, -7.6, -15.0,
+                                               -8.4, 4.3, -7.6, -12.1, -6.8, 0.0, 0.0, 0.0, 0.0, 0.0 }; // every 3 keys from A0
+        const double tone = toneDb[i] + (toneDb[i + 1] - toneDb[i]) * (pos - i);
         // In the top octave and a half the bridge and board give way less and less to the upper
         // partials (up to 15 dB less per octave of partial number from C7 up). Without this the
         // 2nd and 3rd partials there sit 10 to 20 dB above the recorded grand's: thin and metallic.
@@ -286,7 +292,7 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
         for (int j = 0; j < s.count; ++j)
         {
             const size_t q = (size_t) (s.first + j);
-            const float gj = g * (float) std::pow (10.0, -topRoll * std::log2 (j + 1.0) / 20.0);
+            const float gj = g * (float) std::pow (10.0, (tone - topRoll) * std::log2 (j + 1.0) / 20.0);
             m.fk[q] *= gj; m.bgr[q] /= gj; m.bgi[q] /= gj;
         }
     }
@@ -609,6 +615,34 @@ void ModalPiano::buildSoundboard()
         rawL[i] = settings.closeMics ? src.micLeft : src.radLeft;
         rawR[i] = settings.closeMics ? src.micRight : src.radRight;
         rawV[i] = src.volume;
+    }
+    // At the seat the board's edge short circuit leaves the low end ~10 dB thinner than the
+    // close pair hears it. A player sits in a room whose walls and floor fill that back in, and
+    // the recordings were made close, so the seat keeps the close pair's octave-band balance
+    // below 1 kHz (smoothly, mode by mode), and its own detail and stereo image.
+    if (! settings.closeMics)
+    {
+        constexpr int kBands = 8;   // octaves from 31 Hz
+        double seat[kBands] {}, mic[kBands] {};
+        for (size_t i = 0; i < n; ++i)
+        {
+            const auto& src = kBoardModes[modes[i].n];
+            const int b = std::clamp ((int) std::floor (std::log2 (modes[i].f / 31.25)), 0, kBands - 1);
+            seat[b] += src.radLeft * src.radLeft + src.radRight * src.radRight;
+            mic[b] += src.micLeft * src.micLeft + src.micRight * src.micRight;
+        }
+        double ratio[kBands];
+        for (int b = 0; b < kBands; ++b)
+            ratio[b] = seat[b] > 0 && mic[b] > 0 ? std::sqrt (mic[b] / seat[b]) : 1.0;
+        const double ref = ratio[5];   // 1-2 kHz: leave the seat's level there as it is
+        for (size_t i = 0; i < n; ++i)
+        {
+            const double pos = std::clamp (std::log2 (modes[i].f / 31.25) - 0.5, 0.0, kBands - 1.0);
+            const int b = std::min ((int) pos, kBands - 2);
+            const double r = ratio[b] + (ratio[b + 1] - ratio[b]) * (pos - b);
+            const double g = modes[i].f < 1000.0 ? std::max (1.0, r / ref) : 1.0;
+            rawL[i] *= g; rawR[i] *= g;
+        }
     }
     {
         double sum = 0; int count = 0;
