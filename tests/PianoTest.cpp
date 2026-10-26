@@ -164,6 +164,48 @@ int main()
         check (after < before * 5.6e-3, "released note decays by 45 dB within a second");
     }
 
+    // 3b. Sostenuto: C4 held when the pedal goes down keeps ringing after release; E4 played
+    //     afterwards is damped as usual
+    {
+        PianoInstrument piano;
+        piano.prepare (kRate, 256);
+        piano.noteOn (60, 100);
+        render (piano, kRate / 10);
+        piano.setSostenuto (true);
+        piano.noteOff (60);
+        piano.noteOn (64, 100);
+        auto a = render (piano, kRate / 2);
+        piano.noteOff (64);
+        auto b = render (piano, kRate);
+        const double c4 = powerAt (b, b.size() - 24000, 24000, 261.6), e4 = powerAt (b, b.size() - 24000, 24000, 329.6);
+        const double e4Before = powerAt (a, a.size() - 12000, 12000, 329.6);
+        std::printf ("sostenuto: held C4 vs later E4 after release %.1f dB; E4 %.1f dB down\n",
+                     10 * std::log10 (c4 / e4), 10 * std::log10 (e4 / e4Before));
+        check (c4 > 1000 * e4, "sostenuto holds the note that was down and not the later one");
+        piano.setSostenuto (false);
+        auto c = render (piano, kRate);
+        check (rms (c, c.size() - 4800, c.size()) < 0.01 * rms (b, b.size() - 4800, b.size()), "releasing sostenuto damps the held note");
+    }
+
+    // 3c. Una corda: softer and darker on a trichord at the same velocity
+    {
+        double level[2], bright[2];
+        for (int soft = 0; soft < 2; ++soft)
+        {
+            PianoInstrument piano;
+            piano.prepare (kRate, 256);
+            piano.setSoftPedal (soft ? 1.0f : 0.0f);
+            piano.noteOn (69, 100);
+            const auto x = render (piano, kRate / 2);
+            level[soft] = rms (x, 0, x.size());
+            bright[soft] = powerAt (x, 1200, 9600, 440.0 * 4.02) / powerAt (x, 1200, 9600, 440.0);
+        }
+        std::printf ("una corda: %.1f dB quieter, 4th partial %.1f dB weaker relative to the 1st\n",
+                     20 * std::log10 (level[0] / level[1]), 10 * std::log10 (bright[0] / bright[1]));
+        check (level[1] < level[0] * 0.9 && level[1] > level[0] * 0.3, "una corda is a little quieter");
+        check (bright[1] < bright[0], "una corda is darker");
+    }
+
     // 4. Sympathetic resonance: C3 struck short with C4 E4 G4 silently held, versus not held
     {
         double level[2];

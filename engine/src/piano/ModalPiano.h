@@ -87,6 +87,11 @@ public:
     void strike (int midiNote, double hammerVelocity);
     void setKeyDown (int midiNote, bool down);
     void setSustain (bool down);
+    // Sostenuto (middle pedal): pressed, it holds up the dampers that are up at that moment
+    // (keys down, or all of them with the sustain pedal down); later notes are damped as usual
+    void setSostenuto (bool down);
+    // Una corda (left pedal), 0 = up, 1 = fully down. Applies to notes struck from then on.
+    void setSoftPedal (double amount) { softPedal = std::clamp (amount, 0.0, 1.0); }
 
     void setHammerHardness (double scale) { hardness = scale; }
     void setDamperStrength (double scale);
@@ -146,6 +151,7 @@ private:
         std::array<double, 3> forceSum {};     // per string, over the current sample
         std::array<double, 3> feltScale { 1, 1, 1 }; // each string meets slightly different felt
         double exponentBoost = 0;              // the felt's exponent rises on the hardest blows
+        double softFelt = 0;                   // una corda: struck with the softer, unworn felt
     };
 
     struct KeyState
@@ -157,6 +163,7 @@ private:
         long long releasedAt = -1;   // sample clock when the key was let go
         int damperPending = 0;       // samples until the rising key lets the damper land
         bool down = false;
+        bool sostenuto = false;      // damper held up by the sostenuto pedal
         Hammer hammer;
     };
 
@@ -217,6 +224,8 @@ private:
     double ageFactor = 0;
     double damperStrength = 1.0;
     bool sustain = false;
+    bool sostenutoDown = false;
+    double softPedal = 0;
 
     std::vector<KeySpec> keys;
     std::vector<KeyState> keyState;

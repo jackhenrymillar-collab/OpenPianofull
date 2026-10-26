@@ -9,7 +9,8 @@ Licensed under the GNU Affero General Public License v3 or later (see LICENSE).
 //   openpiano-events EVENTS OUT.wav SECONDS [AGE]
 //
 // Each line of EVENTS is "<seconds> on <note> <velocity>", "<seconds> off <note> 0" or
-// "<seconds> ped <0|1> 0", in time order. Rendered at 48 kHz in 256-sample blocks with the
+// "<seconds> ped <0|1> 0", "<seconds> sost <0|1> 0" or "<seconds> soft <0-127> 0" (sostenuto
+// and una corda), in time order. Rendered at 48 kHz in 256-sample blocks with the
 // default controls (Age from the optional last argument).
 
 #include "Harness.h"
@@ -63,6 +64,8 @@ int main (int argc, char** argv)
             if (e.kind == "on") piano.noteOn (e.a, e.b);
             else if (e.kind == "off") piano.noteOff (e.a);
             else if (e.kind == "ped") piano.setSustain (e.a != 0);
+            else if (e.kind == "sost") piano.setSostenuto (e.a != 0);
+            else if (e.kind == "soft") piano.setSoftPedal ((float) e.a / 127.0f);
         }
         const int n = std::min (block, total - pos);
         float* ch[] = { left.data() + pos, right.data() + pos };

@@ -35,6 +35,8 @@ public:
     void noteOn (int midiNote, int velocity) override;
     void noteOff (int midiNote) override;
     void setSustain (bool pedalDown) override;
+    void setSostenuto (bool pedalDown) override;
+    void setSoftPedal (float amount) override;
 
     // Lifts a key's dampers without striking (a key pressed too gently to sound)
     void holdKeySilently (int midiNote);
@@ -67,6 +69,7 @@ private:
     double sampleRate = 48000;
     float builtAge = 0.0f;
     bool pedal = false;
+    float softAmount = 0.0f;
     int ageSettleSamples = 0;
     void applyLiveControls();
 };
