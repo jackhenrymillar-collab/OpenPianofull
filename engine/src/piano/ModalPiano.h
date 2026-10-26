@@ -56,7 +56,7 @@ public:
         bool horizontal = true;             // second (sideways) vibration direction
         bool longitudinal = true;           // lengthwise waves and phantom partials
         bool duplex = true;                 // undamped string segments behind the treble bridge
-        double longitudinalCoupling = 0.7;  // share of the lengthwise force that reaches the board (via bridge tilt)
+        double longitudinalCoupling = 1.4;  // share of the lengthwise force that reaches the board (via bridge tilt)
         int longitudinalOrders = 16;        // lengthwise modes per string
         int longitudinalPartials = 64;     // transverse partials that drive them
         double longitudinalLoss = 40.0;     // decay of free lengthwise ringing [1/s]
@@ -70,9 +70,10 @@ public:
         double outerFelt = 0.02;            // stiffness of the soft outer felt, relative to the core
         double outerFeltScale = 1.0;        // scales how deep the outer felt is
         double farEnd = 1.0;                // agraffe / pressure-bar end moves with the iron frame
-        double nonlinear = 1.0;             // instantaneous tension feedback on every partial
+        double nonlinear = 0.1;             // instantaneous tension feedback on every partial (stronger makes
+                                            // loud mid notes flash bright and fade at once, a plucked start)
         double tensionGlide = 0.0;          // loud notes start sharp as the tension spike stretches the string
-        double tensionLoss = 0.025;         // and lose their high partials faster while it lasts
+        double tensionLoss = 0.0;         // and lose their high partials faster while it lasts
         double air = 1.0;                   // air trapped under the board, between the rim and the floor
         double lid = 1.0;                   // lid opening (0 = closed, 1 = fully open)
         double age = 0.0;                   // 0 = new piano, 1 = old and worn (see prepare)
@@ -337,11 +338,11 @@ private:
     // less there and the strings couple more weakly. Fitted to recorded notes (tools/calibrate):
     // the middle of the treble bridge (about C4 to C5) couples most strongly, which gives those
     // notes their fast first decay and long quiet tail
-    static constexpr std::array<double, kZones> zoneCoupling { 0.78, 1.25, 1.25, 1.12, 1.38, 0.98, 0.9, 0.8 };
+    static constexpr std::array<double, kZones> zoneCoupling { 0.78, 1.25, 1.1, 1.0, 0.95, 0.98, 0.9, 0.8 };
     // How much of each zone's bridge motion is the dense, resistive part of the board: high
     // from the tenor to C5 (fast first decay there), low in the upper treble. Fitted to
     // recorded notes (tools/calibrate)
-    static constexpr std::array<double, kZones> zoneResistance { 1.0, 1.6, 1.6, 1.6, 2.24, 0.49, 0.6, 1.6 };
+    static constexpr std::array<double, kZones> zoneResistance { 1.0, 1.6, 1.0, 1.0, 0.8, 0.49, 0.6, 1.6 };
     std::array<double, kZones> zoneForce {}, zoneAcceleration {}, lastZoneVelocity {}, zoneBoardVelocity {};
     double lastBridgeVelocity = 0, bridgeAcceleration = 0;
     double lastHorizontalVelocity = 0, horizontalAcceleration = 0;
