@@ -51,7 +51,10 @@ namespace
         // From the middle up the strings themselves lose a quarter less, which gives the long
         // quiet tail of recorded notes there (about 3 dB/s from C4 to B5)
         const double b1s = b1 * (1.0 - 0.25 * std::clamp (octavesAboveA0 - 2.5, 0.0, 1.0));
-        return b1s + (b2 * f * f + 0.11 * overtone * std::pow (f / 2000.0, 3));
+        // Above 5 kHz the rise slows: the top notes' 2nd and 3rd partials (6 to 12 kHz) still ring
+        // for a few hundred ms on recorded notes, and without them the top sounds like a harp
+        const double fe = std::min (f, 5000.0) + 0.6 * std::max (0.0, f - 5000.0);
+        return b1s + (b2 * fe * fe + 0.11 * overtone * std::pow (fe / 2000.0, 3));
     }
 
     // Extra decay with the felt damper resting on the string
@@ -275,7 +278,9 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
         // In the top octave and a half the bridge and board give way less and less to the upper
         // partials (up to 15 dB less per octave of partial number from C7 up). Without this the
         // 2nd and 3rd partials there sit 10 to 20 dB above the recorded grand's: thin and metallic.
-        const double topRoll = 15.0 * std::clamp ((keyIndex - 66) / 9.0, 0.0, 1.0);
+        // The cut peaks at C7 and fades out by F#7: above there the recorded partials are no
+        // stronger than ours, and cutting them leaves a bare, harp-like sine.
+        const double topRoll = 15.0 * std::clamp ((keyIndex - 66) / 9.0, 0.0, 1.0) * (0.5 + 0.5 * std::clamp ((81 - keyIndex) / 6.0, 0.0, 1.0));
         for (int j = 0; j < s.count; ++j)
         {
             const size_t q = (size_t) (s.first + j);
