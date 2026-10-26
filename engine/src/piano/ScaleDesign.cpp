@@ -26,8 +26,8 @@ namespace openpiano::piano
 //   mass m = 11.074 - 0.074 n + 0.0001 n^2 grams
 //   felt force F = Q0 * x^p, x = felt compression in mm, Q0 = 183 e^(0.045 n), p = 2.5 to 4 from bass to treble
 // Wire: steel E = 2.0e11 Pa, density 7850 kg/m^3; copper winding 8960 kg/m^3.
-//   Plain strings use standard piano-wire gauges in 0.025 mm steps, chosen for a tension near
-//   800 N falling to 700 N in the top octave, which reproduces published diameters
+//   Plain strings use standard piano-wire gauges in 0.025 mm steps, chosen for a tension of
+//   690 N falling to 560 N at the top, fitted to the stiffness of a recorded grand
 //   (about 1.0 mm at C4 and 0.8 mm at C8). Inharmonicity B = pi^3 E d^4 / (64 T L^2) from the
 //   steel core, the standard result for stiff strings (Fletcher 1964).
 // Tuning: A4 = 440 Hz. A3-A4 is the temperament octave; every other octave is tuned
@@ -131,7 +131,9 @@ namespace
         // Plain wire: pick the standard gauge that gives the target tension
         d.wound = false;
         const double t = (key - kLastWoundKey - 1) / double (88 - kLastWoundKey - 1);
-        d.plainTargetTension = lerp (800.0, 700.0, t);
+        // Tension falls from 690 N to 560 N at the top: with the gauges this gives, the plain strings'
+        // stiffness matches the recorded grand within about 10% (fitted with tools/calibrate/strings.py)
+        d.plainTargetTension = lerp (690.0, 560.0, t);
         const double mu = d.plainTargetTension / std::pow (2.0 * length * frequency, 2);
         double diameter = std::sqrt (4.0 * mu / (M_PI * kSteelDensity));
         diameter = std::round (diameter / 0.025e-3) * 0.025e-3;     // standard gauges
@@ -239,13 +241,12 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         // Unisons drift apart after tuning: like the recorded Yamaha, a key's strings end up 1 to 3
         // cents apart (each outer string 0.5 to 1.5 cents from the centre; the two strings of a
         // bass bichord a little closer, about 0.75 to 2.3 cents, as wider ones pull its pitch off)
-        // From A4 to B6 the unisons sit closer (half as far apart up to A#5, three quarters above).
+        // From A4 up the unisons sit closer (half as far apart up to A#5, three quarters to B6,
+        // 0.3 in the top octave).
         // Close strings share the bridge motion strongly: the in-step vibration drains fast and the
         // out-of-step one is left ringing, which gives the recorded notes there their fast first
         // drop and long tail
-        // From A2 to G#4 they sit closer too, or their upper partials beat against each other
-        // within the first quarter second and the tone dulls at once after a loud blow
-        const double close = k >= 25 && k < 63 ? 0.5 : k >= 63 && k < 75 ? 0.75 : 1.0;
+        const double close = k >= 49 && k < 63 ? 0.5 : k >= 63 && k < 75 ? 0.75 : k >= 75 ? 0.3 : 1.0;
         const double spread = unisonSpreadCents * (1.0 + 0.5 * keyNoise (k, 1)) * close;
         // Every key's pattern differs: which string is high or low, and by how much
         const double offsets3[3] = { -spread * (1.0 + 0.15 * keyNoise (k, 3)), 0.25 * spread * keyNoise (k, 2),

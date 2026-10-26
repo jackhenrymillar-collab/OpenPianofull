@@ -40,7 +40,7 @@ namespace
         const double octavesAboveA0 = std::log2 (std::max (f1, 27.5) / 27.5);
         // The top two octaves also lose more in the string and its terminations: recorded
         // notes there fall 45 dB within one or two seconds
-        const double b1 = 0.157 + 0.367 * octavesAboveA0 / 7.25 + 0.3 * std::pow (std::max (0.0, octavesAboveA0 - 5.0), 2.0);
+        const double b1 = 0.157 + 0.367 * octavesAboveA0 / 7.25 + 0.12 * std::pow (std::max (0.0, octavesAboveA0 - 5.0), 2.0);
         // Air and internal friction take the upper partials much faster (Bank 2000; Chaigne & Askenfelt 1994)
         const double b2 = wound ? 2.4e-7 : 1.2e-7;
         // Above about 2 kHz the losses climb faster still. Measured on recorded notes, overtones
