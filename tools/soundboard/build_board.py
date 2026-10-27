@@ -47,6 +47,7 @@ TREBLE_W, BASS_W = 0.030, 0.035          # width = height [m]
 # towards the rim: it adds mass and ties the bridge's tail end to the rim through the board edge
 APRON_M, APRON_K = 0.35, 4.0e5           # [kg], [N/m]
 F_TOP = 5000.0
+STRING_LOAD = __import__('os').environ.get('NOSTRLOAD') is None
 # The body around the board (a Yamaha C5): the rim it is glued into, the braces under it,
 # the iron frame bolted on the rim, the legs, and the air in the case above the board.
 RIM_EI = 12e9 * 0.035 * 0.26 ** 3 / 12.0 * 3.0   # laminated maple, 26 cm deep; x3: the bolted iron frame ties it
@@ -70,7 +71,7 @@ DOWNBEARING = 3000.0       # [N], shared along both bridges (a quarter on the ba
 # beech ~0.012, maple ~0.010, cast iron ~0.002, glue lines ~0.05, castor cups on the floor ~0.25.
 ETA = {"along": 0.007, "across": 0.018, "shear": 0.018, "rib": 0.007, "bridge": 0.012, "crown": 0.010,
        "rim": 0.010, "rimtwist": 0.010, "glue": 0.05, "leg": 0.25, "brace": 0.010, "tie": 0.05,
-       "frame": 0.002, "bolt": 0.02}
+       "frame": 0.002, "bolt": 0.02, "strings": float(__import__("os").environ.get("ETA_STR", "0.1"))}
 PLANK_W, PLANK_SPREAD = 0.12, 0.08   # the board is glued from ~12 cm planks; each plank's stiffness varies ~8%
 RIM_GJ = 1.1e9 * 0.26 * 0.035 ** 3 / 3.0 * 0.92 * 3.0   # rim twisting stiffness (maple, x3 for the bolted frame) [N m^2]
 RIM_IP = 650.0 * 0.035 * 0.26 * (0.035 ** 2 + 0.26 ** 2) / 12.0   # rim rotary inertia per length [kg m]
@@ -363,6 +364,27 @@ def main():
                 tail = interp_rows(xs[-1:], ys[-1:])
                 M = M + tail.T @ tail * APRON_M
                 K = K + part("bridge", tail.T @ tail * APRON_K)
+
+    # --- The strings themselves. Every string under tension T is a spring on the bridge where it
+    # crosses it: T / L for its speaking length and T / Lb for the short back length behind the
+    # bridge to the hitch pin. Together (about 230 strings) they stiffen the bridge about as much
+    # as the board does at low frequencies, which lifts the lowest modes and lowers their peaks
+    # (Conklin 1996: adding strings and frame raised the first modes and cut their peaks ~15 dB).
+    # Dampers rest on the speaking lengths and felt mutes the back lengths, so this load is lossy.
+    if STRING_LOAD:
+        sx, sy, sk = [], [], []
+        for key in range(1, 89):
+            ns = 1 if key <= 8 else 2 if key <= 20 else 3
+            T = 1600.0 if key <= 20 else 1100.0 if key <= 30 else 750.0
+            Lb = 0.14 if key <= 20 else 0.10 if key <= 40 else 0.06
+            if key <= 20:
+                x_, y_ = bass_bridge((20 - key) / 19.0)
+            else:
+                x_, y_ = treble_bridge((88 - key) / (88 - 21))
+            sx.append(float(x_)); sy.append(float(y_)); sk.append(ns * T * (1.0 / LEN[key - 1] + 1.0 / Lb))
+        Sr = interp_rows(np.array(sx), np.array(sy))
+        K = K + part("strings", Sr.T @ sp.diags(np.array(sk)) @ Sr)
+        print(f"string load on the bridges: {sum(sk) / 1e6:.2f} MN/m in all (bass bridge {sum(sk[:20]) / 1e6:.2f})")
 
     # --- Crown and downbearing (see the constants above)
     cR, sR = -s_, c                                         # rib direction (across the grain)

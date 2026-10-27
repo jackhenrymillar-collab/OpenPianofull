@@ -278,9 +278,9 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     // relative to the middle of the range. Pushing harder on the bridge while feeling its
     // motion less by the same factor keeps the decay and coupling unchanged.
     {
-        static constexpr double voicingDb[30] = { -2.8, -2.5, -2.7, -4.0, -11.5, -8.2, -2.3, -1.8, -1.0, -6.3,
-                                               -7.3, -2.3, -6.8, 2.8, -0.1, 2.7, 2.8, -4.9, -5.0, 12.2,
-                                               -4.1, -1.3, -12.1, 1.3, -4.6, -2.5, -17.0, -14.3, -3.5, -6.0 }; // every 3 keys from A0
+        static constexpr double voicingDb[30] = { 0.3, -1.4, -2.1, -5.4, -11.3, -9.1, -3.6, 3.1, 1.0, 4.1,
+                                               -0.7, -2.9, -14.2, -5.8, -3.6, -0.4, 5.9, 4.3, -4.4, 12.9,
+                                               -6.2, -1.3, -12.7, -3.5, -4.4, -3.2, -16.9, -14.4, -4.1, -6.0 }; // every 3 keys from A0
         const double pos = std::clamp ((key.midiNote - kLowestKey) / 3.0, 0.0, 28.999);
         const int i = (int) pos;
         const double db = voicingDb[i] + (voicingDb[i + 1] - voicingDb[i]) * (pos - i);
@@ -628,32 +628,6 @@ void ModalPiano::buildSoundboard()
         rawL[i] = settings.closeMics ? src.micLeft : src.radLeft;
         rawR[i] = settings.closeMics ? src.micRight : src.radRight;
         rawV[i] = src.volume;
-    }
-    // Low-end balance of the radiated sound, fitted to the recorded grand's bass notes (octave
-    // bands from 31 Hz, partial power relative to the note's whole). The solved body has few
-    // modes below 200 Hz and puts them in the wrong places for this piano: its 46 Hz mode
-    // radiates F#1's fundamental too strongly (left alone: cutting it thins A0-C1), and it has a gap from 80 to 125 Hz
-    // where the recorded bass has its strongest partials.
-    {
-        const double centres[4] = { 44.2, 88.4, 176.8, 353.6 };
-        const double db[4] = { 0.0, 22.0, -3.0, 0.0 };
-        for (size_t i = 0; i < n; ++i)
-        {
-            const double lf = std::log2 (modes[i].f);
-            double g = 0;
-            if (lf <= std::log2 (centres[0])) g = db[0];
-            else if (lf >= std::log2 (centres[3])) g = 0;
-            else
-                for (int b = 0; b < 3; ++b)
-                    if (lf < std::log2 (centres[b + 1]))
-                    {
-                        const double t = (lf - std::log2 (centres[b])) / (std::log2 (centres[b + 1]) - std::log2 (centres[b]));
-                        g = db[b] + (db[b + 1] - db[b]) * t;
-                        break;
-                    }
-            const double gain = std::pow (10.0, g / 20.0);
-            rawL[i] *= gain; rawR[i] *= gain;
-        }
     }
     // At the seat the board's edge short circuit leaves the low end ~10 dB thinner than the
     // close pair hears it. A player sits in a room whose walls and floor fill that back in, and
