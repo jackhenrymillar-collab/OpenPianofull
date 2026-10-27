@@ -136,6 +136,7 @@ private:
         float restTension = 1;
         float outScale = 1;       // loudness lift for soft notes (bridge force up, bridge input down)
         int zone = 0;             // bridge zone the string presses on
+        float sympTopF = 0;       // frequency of the highest mode kept while only resonating [Hz]
         float strikeBase = 0;     // where the hammer meets it, as a fraction of the length
         float halfWidthOverL = 0; // hammer width / (2 L)
         bool damped = true;
@@ -188,7 +189,7 @@ private:
     int tensionCounter = 0;
     long long sampleClock = 0;
     std::vector<double> tuneFactor;
-    static constexpr std::array<double, 88> kTunerCents { 0.4, 0.6, -0.4, 0.2, -0.4, -0.5, -0.8, -0.9, 1.0, 0.0, 0.5, 0.5, -0.1, -0.5, 0.4, 0.5, 0.0, 0.0, 0.7, 0.0, -2.24, -3.36, -3.74, 0.28, -1.57, -0.58, -0.84, -0.18, 0.3, 0.6, 0.68, -0.22, -0.66, -0.16, -0.08, 0.56, 0.5, -0.44, -0.4, -0.5, 0.08, 0.1, -0.42, -1.0, -2.02, -1.5, -1.14, 1.52, 0.26, 0.82, 1.08, -1.22, 1.06, 1.14, 0.06, -0.04, -1.36, -1.12, -1.46, -1.36, -1.2, 0.68, 0.64, 0.8, -0.8, -0.96, -0.66, 0.6, 1.0, 0.68, 0.58, 0.72, 0.54, 0.17, 0.6, 0.38, -0.5, 0.44, 0.0, 0.92, 1.76, 1.42, -0.3, 0.24, 0.26, -0.08, 0.12, 0.14 };   // filled by the tuning pass   // the tuner's correction per key, for the body's pull on its pitch
+    static constexpr std::array<double, 88> kTunerCents { 0.4, 0.6, -0.4, 0.2, -0.4, -0.6, -0.8, -0.9, 1.0, 0.0, 0.6, 0.7, 0.0, -0.4, 0.4, 0.3, -0.1, -0.2, 0.1, -0.2, -2.16, -3.54, 0.34, 0.22, -0.7, -0.72, -0.86, -0.22, 0.2, 0.6, 0.82, -0.18, -0.64, 0.26, 1.08, 0.74, 0.8, -0.36, -0.6, -1.6, 0.02, 0.4, -0.58, -0.5, -2.08, 1.7, -1.11, 1.28, -0.46, -1.42, 0.82, -0.58, -1.86, 1.26, 0.44, 1.34, 1.46, 1.32, 0.76, -1.04, -0.8, -0.58, 0.46, 0.8, -0.9, -1.04, -0.64, 0.6, 1.0, 0.72, 0.62, 0.68, 0.56, 0.77, 0.5, 0.42, -0.5, 0.46, 0.0, 0.88, 1.74, 1.38, -0.3, 0.16, 0.24, -0.12, 0.08, 0.26 };   // filled by the tuning pass   // the tuner's correction per key, for the body's pull on its pitch
 
     // Each string's modes are stored in two parts: the low ones it keeps while only
     // resonating sit in one region, back to back with every other string's, and the rest
@@ -256,6 +257,7 @@ private:
         std::vector<float> pt, wa;          // the same at a single point, and the width term (see runHammerKey)
         std::vector<float> prOs, piOs, gOsr, gOsi; // oversampled pole and input gain
         std::vector<float> sigmaInternal, omega;
+        std::vector<float> damperShift;     // (damped frequency / free frequency) - 1: the damper felt and mass loading the string
 
         void clear();
         size_t size() const { return zr.size(); }
@@ -335,8 +337,12 @@ private:
     double bridgeResistance = 0.9e-4;      // m/s per N: the dense high-frequency part of the soundboard
     double feltScatter = 0.12;            // how unevenly one hammer's felt meets the strings of its unison
     double frameKnockGain = 150.0;          // N per (m/s)^1.5: how hard the hammer blow shakes the iron plate
-    double horizontalResistance = 1.2e-4;  // the bridge moves less easily sideways
-    double crossResistance = 0.72e-4;      // vertical force -> sideways motion, and back
+    double horizontalResistance = 0.36e-4; // the bridge's own sideways give; most of the sideways loss now goes through the leaning pins (sideBearing)
+    // Side bearing: the strings zig-zag round the bridge pins, which lean outwards. Pressed
+    // against a leaning pin, a string's sideways pull has an upward part, and the bridge's
+    // up-and-down motion moves the string's end sideways by the same share (about tan of the
+    // pins' lean). This couples the two directions of vibration at the bridge itself.
+    double sideBearing = 0.15;
     // The bridge is split into zones along its length (three on the bass bridge, thirteen on the
     // treble bridge); each key's strings press on their own zone, and every board mode moves each
     // zone by its own amount
@@ -345,7 +351,13 @@ private:
     std::array<double, kZones> bridgeMassCoeff {}, bridgeMassState {};
     double actionSpread = 0;                    // the action's push, spread along the bridge
     std::array<uint8_t, kZones> zoneLive {};   // zones with a string being run this block
+    std::array<uint8_t, kZones> zoneSideLive {};   // zones with a sideways string being run this block
     std::array<double, kZones> zoneSideForce {}, zoneSideAccel {}, lastZoneSideVel {};
+    std::array<double, kZones> zoneSideBoardVel {};   // the board's own sideways motion at each zone
+    // How many of the board's modes (sorted by frequency) each zone needs this block: all of them
+    // under a struck string, but only those up to the highest partial kept by strings that are
+    // merely resonating. A resting string's few low partials cannot push or hear the modes above.
+    std::array<int, kZones> zoneModesV {}, zoneModesS {};
     std::array<double, kZones> highAdmittance {}, highPassState {}, highPassState2 {};   // the many-mode board above the solved modes
     double highPassCoeff = 0, highRadiation = 0, highLeftState = 0, highRightState = 0, highLeftState2 = 0, highRightState2 = 0;
     // Where a zone sits along the bridges on the scale of the earlier eight-zone layout (0..7):
@@ -381,7 +393,7 @@ private:
     // Neighbouring strings whose modes sit back to back are stepped in one go
     struct Run { int first, count; float panLeft, panRight; bool side; int zone; };
     std::vector<Run> runs;
-    struct Segment { int first, count; float panLeft, panRight; bool side; int zone; };
+    struct Segment { int first, count; float panLeft, panRight; bool side; int zone; float topF; };
     std::vector<Segment> segmentScratch;
 };
 

@@ -97,7 +97,7 @@ namespace
 void ModalPiano::Modes::clear()
 {
     for (auto* v : { &zr, &zi, &pr, &pi, &prFree, &piFree, &prDamp, &piDamp, &gr, &gi, &bgr, &bgi, &fk, &beta,
-                     &phi, &pt, &wa, &prOs, &piOs, &gOsr, &gOsi, &sigmaInternal, &omega, &alt })
+                     &phi, &pt, &wa, &prOs, &piOs, &gOsr, &gOsi, &sigmaInternal, &omega, &alt, &damperShift })
         v->clear();
 }
 
@@ -260,6 +260,20 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
         m.gOsr.push_back ((float) gainOs.real()); m.gOsi.push_back ((float) gainOs.imag());
         m.sigmaInternal.push_back ((float) sigma);
         m.omega.push_back ((float) w);
+        {
+            // The damper resting on the string: its felt (a soft spring, kd per string) carrying
+            // the damper head's mass (Md, shared by the key's strings), pressing just behind the
+            // hammer line. Below the felt-and-head resonance the head's mass pulls the partials
+            // down; above it the felt's spring pushes them up, towards the pitch of the length
+            // behind the damper. The hard limit is that length's pitch (the felt as a node).
+            const double xd = std::clamp (strike + 0.07, 0.1, 0.3);
+            const double kd = 3000.0, eta = 0.6, Md = 0.012 / std::max (1, key.numStrings);
+            const cd kf (kd, kd * eta);
+            const cd keff = kf * (-w * w * Md) / (kf - w * w * Md);
+            const double sn = std::sin (n * M_PI * xd);
+            const double shift = keff.real() * sn * sn / (w * w * spec.linearDensity * L);
+            m.damperShift.push_back ((float) std::clamp (shift, -0.3, 1.0 / (1.0 - xd) - 1.0));
+        }
 
         ++s.count;
         if (f < 4000.0)
@@ -272,6 +286,7 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     const int sympatheticCap = segment || ! key.hasDamper ? s.count : kind == Kind::Horizontal ? 6 : 16;
     s.sympatheticCount = ! key.hasDamper || segment ? s.count
                                                                  : std::clamp (sympathetic, 1, std::min (s.count, sympatheticCap));
+    s.sympTopF = m.omega[(size_t) (s.first + s.sympatheticCount - 1)] / (float) (2.0 * M_PI);
 
     // Voicing: a technician evens out a piano's loudness note by note (hammer needling,
     // string levelling). This curve was fitted to the recorded grand's level, note by note
@@ -517,7 +532,7 @@ void ModalPiano::relayoutModes()
             order.push_back ((size_t) (strings[i].first + k));
     }
     for (auto* v : { &m.zr, &m.zi, &m.pr, &m.pi, &m.prFree, &m.piFree, &m.prDamp, &m.piDamp, &m.gr, &m.gi, &m.bgr,
-                     &m.bgi, &m.fk, &m.beta, &m.phi, &m.pt, &m.wa, &m.prOs, &m.piOs, &m.gOsr, &m.gOsi, &m.sigmaInternal, &m.omega, &m.alt })
+                     &m.bgi, &m.fk, &m.beta, &m.phi, &m.pt, &m.wa, &m.prOs, &m.piOs, &m.gOsr, &m.gOsi, &m.sigmaInternal, &m.omega, &m.alt, &m.damperShift })
     {
         std::vector<float> moved (order.size());
         for (size_t j = 0; j < order.size(); ++j)
@@ -539,7 +554,7 @@ void ModalPiano::setDamperStrength (double scale)
 
     for (size_t j = 0; j < m.omega.size(); ++j)
     {
-        const double w = m.omega[j];
+        const double w = m.omega[j] * (1.0 + m.damperShift[j]);
         const double sigma = m.sigmaInternal[j] + damperDecay (w / (2.0 * M_PI), damperStrength);
         const cd pole = std::exp (cd (-sigma, w) * Ts);
         m.prDamp[j] = (float) pole.real();
@@ -605,6 +620,7 @@ void ModalPiano::buildSoundboard()
         modes.push_back (md);
     }
 
+    std::sort (modes.begin(), modes.end(), [] (const Mode& a, const Mode& b) { return a.f < b.f; });   // (zoneModesV/S count a prefix)
     const size_t n = modes.size();
     for (auto* v : { &board.wr, &board.wi, &board.qr, &board.qi, &board.hr, &board.hi, &board.omega, &board.sigma,
                      &board.radLeft, &board.radRight, &board.volume })
@@ -1062,6 +1078,7 @@ void ModalPiano::reset()
     std::fill (board.wi.begin(), board.wi.end(), 0.0f);
     lastBridgeVelocity = bridgeAcceleration = 0;
     zoneForce.fill (0); zoneAcceleration.fill (0); lastZoneVelocity.fill (0); zoneBoardVelocity.fill (0);
+    zoneSideForce.fill (0); zoneSideAccel.fill (0); lastZoneSideVel.fill (0); zoneSideBoardVel.fill (0);
     lastHorizontalVelocity = horizontalAcceleration = 0;
     resistiveLpLeft = resistiveLpRight = resistiveLp2Left = resistiveLp2Right = resistiveLp3Left = resistiveLp3Right = 0;
     buildBody();
@@ -1425,15 +1442,42 @@ void ModalPiano::checkActivity()
     {
         const auto& s = strings[(size_t) index];
         const bool side = s.kind == Kind::Horizontal;
-        segments.push_back ({ s.first, s.sympatheticCount, s.panLeft, s.panRight, side, s.zone });
-        if (s.activity == Activity::Full && s.count > s.sympatheticCount)
-            segments.push_back ({ s.highFirst, s.count - s.sympatheticCount, s.panLeft, s.panRight, side, s.zone });
+        const bool full = s.activity == Activity::Full;
+        segments.push_back ({ s.first, s.sympatheticCount, s.panLeft, s.panRight, side, s.zone, full ? 1e9f : s.sympTopF });
+        if (full && s.count > s.sympatheticCount)
+            segments.push_back ({ s.highFirst, s.count - s.sympatheticCount, s.panLeft, s.panRight, side, s.zone, 1e9f });
     }
     std::sort (segments.begin(), segments.end(), [] (const Segment& a, const Segment& b) { return a.first < b.first; });
 
     zoneLive.fill (0);
+    zoneSideLive.fill (0);
+    std::array<float, kZones> topV {}, topS {};
     for (const auto& g : segments)
+    {
         zoneLive[(size_t) g.zone] = 1;
+        if (g.side)
+            zoneSideLive[(size_t) g.zone] = 1;
+        auto& top = g.side ? topS[(size_t) g.zone] : topV[(size_t) g.zone];
+        top = std::max (top, g.topF);
+    }
+    // A string under the hammer is stepped by the hammer code, not from a segment: its zone
+    // still needs the whole board
+    for (int k : hammerList)
+    {
+        zoneLive[(size_t) keyZone[(size_t) k]] = 1;
+        topV[(size_t) keyZone[(size_t) k]] = 1e9f;
+    }
+    for (int z = 0; z < kZones; ++z)
+    {
+        // modes up to a third above the highest resonating partial (the board modes just above
+        // it still shape the bridge there); all of them under a struck string
+        auto count = [&] (float topF) {
+            const float wTop = (float) (2.0 * M_PI) * topF * 1.33f;
+            return (int) (std::upper_bound (board.omega.begin(), board.omega.end(), wTop) - board.omega.begin());
+        };
+        zoneModesV[(size_t) z] = zoneLive[(size_t) z] ? count (topV[(size_t) z]) : 0;
+        zoneModesS[(size_t) z] = zoneSideLive[(size_t) z] ? count (topS[(size_t) z]) : 0;
+    }
     runs.clear();
     int runSegments = 0;
     for (const auto& g : segments)
@@ -1814,6 +1858,12 @@ void ModalPiano::process (float* left, float* right, int numSamples)
             forceRight += f * s.panRight;
         }
 
+        // Side bearing: the strings' sideways pull on the leaning bridge pins has an upward part
+        if (sideBearing > 0)
+            for (int z = 0; z < kZones; ++z)
+                if (zoneSideForce[(size_t) z] != 0.0)
+                    zoneForce[(size_t) z] += sideBearing * zoneSideForce[(size_t) z];
+
         // The far ends of the strings, on the iron frame
         double frameLeft = 0, frameRight = 0;
         if (settings.farEnd > 0)
@@ -1849,14 +1899,15 @@ void ModalPiano::process (float* left, float* right, int numSamples)
             // read and written a quarter as often
             const float* rows[2 * kZones];
             float amounts[2 * kZones];
+            int lens[2 * kZones];
             int nr = 0;
             for (int z = 0; z < kZones; ++z)
             {
                 const float fz = (float) zoneForce[(size_t) z];
-                if (fz != 0.0f) { rows[nr] = phi + (size_t) z * (size_t) nb; amounts[nr++] = fz; }
+                if (fz != 0.0f) { rows[nr] = phi + (size_t) z * (size_t) nb; amounts[nr] = fz; lens[nr++] = zoneLive[(size_t) z] ? zoneModesV[(size_t) z] : nb; }
                 // The strings' sideways pull tilts the bridge (its shapes along the bridge)
                 const float sz = (float) zoneSideForce[(size_t) z];
-                if (sz != 0.0f) { rows[nr] = phH + (size_t) z * (size_t) nb; amounts[nr++] = sz; }
+                if (sz != 0.0f) { rows[nr] = phH + (size_t) z * (size_t) nb; amounts[nr] = sz; lens[nr++] = zoneModesS[(size_t) z]; }
             }
             int r0 = 0;
             for (; r0 + 4 <= nr; r0 += 4)
@@ -1864,14 +1915,22 @@ void ModalPiano::process (float* left, float* right, int numSamples)
                 const float* __restrict p0 = rows[r0]; const float* __restrict p1 = rows[r0 + 1];
                 const float* __restrict p2 = rows[r0 + 2]; const float* __restrict p3 = rows[r0 + 3];
                 const float a0 = amounts[r0], a1 = amounts[r0 + 1], a2 = amounts[r0 + 2], a3 = amounts[r0 + 3];
-                for (int i = 0; i < nb; ++i)
+                const int common = std::min (std::min (lens[r0], lens[r0 + 1]), std::min (lens[r0 + 2], lens[r0 + 3]));
+                for (int i = 0; i < common; ++i)
                     F[i] += p0[i] * a0 + p1[i] * a1 + p2[i] * a2 + p3[i] * a3;
+                for (int q = 0; q < 4; ++q)
+                {
+                    const float* __restrict p = rows[r0 + q];
+                    const float a = amounts[r0 + q];
+                    for (int i = common; i < lens[r0 + q]; ++i)
+                        F[i] += p[i] * a;
+                }
             }
             for (; r0 < nr; ++r0)
             {
                 const float* __restrict p0 = rows[r0];
                 const float a0 = amounts[r0];
-                for (int i = 0; i < nb; ++i)
+                for (int i = 0; i < lens[r0]; ++i)
                     F[i] += p0[i] * a0;
             }
             float* __restrict wr = board.wr.data();
@@ -1905,8 +1964,10 @@ void ModalPiano::process (float* left, float* right, int numSamples)
             int nd = 0;
             for (int z = 0; z < kZones; ++z)
             {
-                if (zoneLive[(size_t) z]) { rows[nd] = phi + (size_t) z * (size_t) nb; ++nd; }
-                if (zoneLive[(size_t) z] && zoneSideForce[(size_t) z] != 0.0) { rows[nd] = phH + (size_t) z * (size_t) nb; ++nd; }
+                if (zoneLive[(size_t) z]) { rows[nd] = phi + (size_t) z * (size_t) nb; lens[nd++] = zoneModesV[(size_t) z]; }
+                // (wherever a sideways string runs, not only where one already pushes: a
+                // resting sideways string must hear the board to resonate in sympathy)
+                if (zoneSideLive[(size_t) z]) { rows[nd] = phH + (size_t) z * (size_t) nb; lens[nd++] = zoneModesS[(size_t) z]; }
             }
             int d0 = 0;
             for (; d0 + 4 <= nd; d0 += 4)
@@ -1914,10 +1975,20 @@ void ModalPiano::process (float* left, float* right, int numSamples)
                 const float* __restrict p0 = rows[d0]; const float* __restrict p1 = rows[d0 + 1];
                 const float* __restrict p2 = rows[d0 + 2]; const float* __restrict p3 = rows[d0 + 3];
                 float c0 = 0, c1 = 0, c2 = 0, c3 = 0;
-                for (int i = 0; i < nb; ++i)
+                const int common = std::min (std::min (lens[d0], lens[d0 + 1]), std::min (lens[d0 + 2], lens[d0 + 3]));
+                for (int i = 0; i < common; ++i)
                 {
                     const float v = V[i];
                     c0 += p0[i] * v; c1 += p1[i] * v; c2 += p2[i] * v; c3 += p3[i] * v;
+                }
+                float* cs[4] = { &c0, &c1, &c2, &c3 };
+                for (int q = 0; q < 4; ++q)
+                {
+                    const float* __restrict p = rows[d0 + q];
+                    float c = 0;
+                    for (int i = common; i < lens[d0 + q]; ++i)
+                        c += p[i] * V[i];
+                    *cs[q] += c;
                 }
                 dotOut[d0] = c0; dotOut[d0 + 1] = c1; dotOut[d0 + 2] = c2; dotOut[d0 + 3] = c3;
             }
@@ -1925,7 +1996,7 @@ void ModalPiano::process (float* left, float* right, int numSamples)
             {
                 const float* __restrict p0 = rows[d0];
                 float c0 = 0;
-                for (int i = 0; i < nb; ++i)
+                for (int i = 0; i < lens[d0]; ++i)
                     c0 += p0[i] * V[i];
                 dotOut[d0] = c0;
             }
@@ -1939,17 +2010,8 @@ void ModalPiano::process (float* left, float* right, int numSamples)
                     continue;
                 }
                 zoneBoardVelocity[(size_t) z] = dotOut[di++];
-                if (zoneSideForce[(size_t) z] != 0.0)
-                {
-                    const double vs = dotOut[di++] + 0.25 * horizontalResistance * zoneSideForce[(size_t) z];
-                    zoneSideAccel[(size_t) z] = (vs - lastZoneSideVel[(size_t) z]) * sampleRate;
-                    lastZoneSideVel[(size_t) z] = vs;
-                }
-                else
-                {
-                    zoneSideAccel[(size_t) z] = -lastZoneSideVel[(size_t) z] * sampleRate;
-                    lastZoneSideVel[(size_t) z] = 0;
-                }
+                zoneSideBoardVel[(size_t) z] = zoneSideLive[(size_t) z]
+                    ? dotOut[di++] + 0.25 * horizontalResistance * zoneSideForce[(size_t) z] : 0.0;
             }
             radiatedLeft = l;
             radiatedRight = r;
@@ -1981,6 +2043,14 @@ void ModalPiano::process (float* left, float* right, int numSamples)
             const double v = high + zoneBoardVelocity[(size_t) z];
             zoneAcceleration[(size_t) z] = (v - lastZoneVelocity[(size_t) z]) * sampleRate;
             lastZoneVelocity[(size_t) z] = v;
+            // Sideways: the board's motion along the bridge, plus the up-and-down motion that the
+            // leaning pins turn sideways (side bearing)
+            if (zoneLive[(size_t) z])
+            {
+                const double vs = zoneSideBoardVel[(size_t) z] + sideBearing * v;
+                zoneSideAccel[(size_t) z] = (vs - lastZoneSideVel[(size_t) z]) * sampleRate;
+                lastZoneSideVel[(size_t) z] = vs;
+            }
         }
 
         // Sound: soundboard modes plus the direct (dense high-frequency) bridge path
