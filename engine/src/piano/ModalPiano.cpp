@@ -1867,23 +1867,34 @@ void ModalPiano::process (float* left, float* right, int numSamples)
                     F[i] = ps[i] * sp;
             }
             const float* __restrict phH = board.phiH.data();
+            // Every zone's push (and sideways pull) times its shape, four rows per pass so F is
+            // read and written a quarter as often
+            const float* rows[2 * kZones];
+            float amounts[2 * kZones];
+            int nr = 0;
             for (int z = 0; z < kZones; ++z)
             {
                 const float fz = (float) zoneForce[(size_t) z];
-                if (fz != 0.0f)
-                {
-                    const float* __restrict ph = phi + (size_t) z * (size_t) nb;
-                    for (int i = 0; i < nb; ++i)
-                        F[i] += ph[i] * fz;
-                }
+                if (fz != 0.0f) { rows[nr] = phi + (size_t) z * (size_t) nb; amounts[nr++] = fz; }
                 // The strings' sideways pull tilts the bridge (its shapes along the bridge)
                 const float sz = (float) zoneSideForce[(size_t) z];
-                if (sz != 0.0f)
-                {
-                    const float* __restrict ph = phH + (size_t) z * (size_t) nb;
-                    for (int i = 0; i < nb; ++i)
-                        F[i] += ph[i] * sz;
-                }
+                if (sz != 0.0f) { rows[nr] = phH + (size_t) z * (size_t) nb; amounts[nr++] = sz; }
+            }
+            int r0 = 0;
+            for (; r0 + 4 <= nr; r0 += 4)
+            {
+                const float* __restrict p0 = rows[r0]; const float* __restrict p1 = rows[r0 + 1];
+                const float* __restrict p2 = rows[r0 + 2]; const float* __restrict p3 = rows[r0 + 3];
+                const float a0 = amounts[r0], a1 = amounts[r0 + 1], a2 = amounts[r0 + 2], a3 = amounts[r0 + 3];
+                for (int i = 0; i < nb; ++i)
+                    F[i] += p0[i] * a0 + p1[i] * a1 + p2[i] * a2 + p3[i] * a3;
+            }
+            for (; r0 < nr; ++r0)
+            {
+                const float* __restrict p0 = rows[r0];
+                const float a0 = amounts[r0];
+                for (int i = 0; i < nb; ++i)
+                    F[i] += p0[i] * a0;
             }
             float* __restrict wr = board.wr.data();
             float* __restrict wi = board.wi.data();
@@ -1910,24 +1921,49 @@ void ModalPiano::process (float* left, float* right, int numSamples)
                 r += rrt[i] * vel;
                 vol += bv[i] * vel;
             }
+            // Bridge motion at each zone that has strings being run (and sideways, where
+            // sideways strings ring): four shapes per pass over the modes' velocities
+            float dotOut[2 * kZones];
+            int nd = 0;
             for (int z = 0; z < kZones; ++z)
             {
-                // Only zones with strings being run need their motion
-                if (! zoneLive[(size_t) z])
-                    continue;
-                const float* __restrict ph = phi + (size_t) z * (size_t) nb;
-                float acc = 0;
+                if (zoneLive[(size_t) z]) { rows[nd] = phi + (size_t) z * (size_t) nb; ++nd; }
+                if (zoneLive[(size_t) z] && zoneSideForce[(size_t) z] != 0.0) { rows[nd] = phH + (size_t) z * (size_t) nb; ++nd; }
+            }
+            int d0 = 0;
+            for (; d0 + 4 <= nd; d0 += 4)
+            {
+                const float* __restrict p0 = rows[d0]; const float* __restrict p1 = rows[d0 + 1];
+                const float* __restrict p2 = rows[d0 + 2]; const float* __restrict p3 = rows[d0 + 3];
+                float c0 = 0, c1 = 0, c2 = 0, c3 = 0;
                 for (int i = 0; i < nb; ++i)
-                    acc += ph[i] * V[i];
-                zoneBoardVelocity[(size_t) z] = acc;
-                // Sideways motion of the bridge top, where a zone has sideways strings ringing
+                {
+                    const float v = V[i];
+                    c0 += p0[i] * v; c1 += p1[i] * v; c2 += p2[i] * v; c3 += p3[i] * v;
+                }
+                dotOut[d0] = c0; dotOut[d0 + 1] = c1; dotOut[d0 + 2] = c2; dotOut[d0 + 3] = c3;
+            }
+            for (; d0 < nd; ++d0)
+            {
+                const float* __restrict p0 = rows[d0];
+                float c0 = 0;
+                for (int i = 0; i < nb; ++i)
+                    c0 += p0[i] * V[i];
+                dotOut[d0] = c0;
+            }
+            int di = 0;
+            for (int z = 0; z < kZones; ++z)
+            {
+                if (! zoneLive[(size_t) z])
+                {
+                    zoneSideAccel[(size_t) z] = -lastZoneSideVel[(size_t) z] * sampleRate;
+                    lastZoneSideVel[(size_t) z] = 0;
+                    continue;
+                }
+                zoneBoardVelocity[(size_t) z] = dotOut[di++];
                 if (zoneSideForce[(size_t) z] != 0.0)
                 {
-                    const float* __restrict phs = phH + (size_t) z * (size_t) nb;
-                    float accS = 0;
-                    for (int i = 0; i < nb; ++i)
-                        accS += phs[i] * V[i];
-                    const double vs = accS + 0.25 * horizontalResistance * zoneSideForce[(size_t) z];
+                    const double vs = dotOut[di++] + 0.25 * horizontalResistance * zoneSideForce[(size_t) z];
                     zoneSideAccel[(size_t) z] = (vs - lastZoneSideVel[(size_t) z]) * sampleRate;
                     lastZoneSideVel[(size_t) z] = vs;
                 }
