@@ -59,10 +59,13 @@ namespace
         return b1s + (b2 * fe * fe + 0.11 * overtone * std::pow (fe / 2000.0, 3));
     }
 
-    // Extra decay with the felt damper resting on the string
+    // Extra decay with the felt damper resting on the string. A real damper takes a note
+    // 25-30 dB down within the first 0.3 s after release (Salamander's release samples); that
+    // needs about 50 nepers/s on the low partials. 10 left the damped note ringing 10-15 dB
+    // louder than the recordings under the following notes.
     double damperDecay (double f, double strength)
     {
-        return strength * 10.0 * (1.0 + f / 2000.0);
+        return strength * 50.0 * (1.0 + f / 2000.0);
     }
 
     // One sample of a run of string modes driven by the bridge acceleration a.
@@ -267,7 +270,10 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
             // down; above it the felt's spring pushes them up, towards the pitch of the length
             // behind the damper. The hard limit is that length's pitch (the felt as a node).
             const double xd = std::clamp (strike + 0.07, 0.1, 0.3);
-            const double kd = 3000.0, eta = 0.6, Md = 0.012 / std::max (1, key.numStrings);
+            // (The felt is soft under the damper's own light weight: a few hundred N/m per
+            // string. 3000 N/m shifted the tenor's damped partials by up to 165 cents, heard
+            // as an off-pitch flick on every release.)
+            const double kd = 800.0, eta = 0.6, Md = 0.012 / std::max (1, key.numStrings);
             const cd kf (kd, kd * eta);
             const cd keff = kf * (-w * w * Md) / (kf - w * w * Md);
             const double sn = std::sin (n * M_PI * xd);
@@ -293,9 +299,9 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     // relative to the middle of the range. Pushing harder on the bridge while feeling its
     // motion less by the same factor keeps the decay and coupling unchanged.
     {
-        static constexpr double voicingDb[30] = { 0.6, -2.3, -0.6, -4.0, -8.3, -10.6, -3.8, 5.5, 0.2, 2.2,
-                                               -0.1, -1.8, -13.9, -4.0, -1.7, -0.6, 4.2, -1.2, -4.8, 2.0,
-                                               -9.8, -5.0, -12.4, 0.6, -1.5, -5.4, -19.1, -8.7, -4.0, -4.8 }; // every 3 keys from A0
+        static constexpr double voicingDb[30] = { 0.2, -2.5, -1.0, -5.0, -8.7, -10.4, -4.3, 3.5, -0.1, 2.7,
+                                               1.1, -1.9, -14.9, -5.2, 1.2, 4.9, 1.8, 0.1, -3.6, 2.4,
+                                               -9.4, -3.3, -12.2, -4.6, -2.1, -2.5, -19.4, -10.6, -3.6, -6.8 }; // every 3 keys from A0
         const double pos = std::clamp ((key.midiNote - kLowestKey) / 3.0, 0.0, 28.999);
         const int i = (int) pos;
         const double db = voicingDb[i] + (voicingDb[i + 1] - voicingDb[i]) * (pos - i);
@@ -552,13 +558,19 @@ void ModalPiano::setDamperStrength (double scale)
         return;
     damperStrength = scale;
 
-    for (size_t j = 0; j < m.omega.size(); ++j)
+    for (const auto& s : strings)
     {
-        const double w = m.omega[j] * (1.0 + m.damperShift[j]);
-        const double sigma = m.sigmaInternal[j] + damperDecay (w / (2.0 * M_PI), damperStrength);
-        const cd pole = std::exp (cd (-sigma, w) * Ts);
-        m.prDamp[j] = (float) pole.real();
-        m.piDamp[j] = (float) pole.imag();
+        // Treble dampers are smaller and lighter: the recordings' released notes sit about
+        // 6 dB higher there than in the tenor, so the felt's grip tapers from C4 to C6.
+        const double taper = 1.0 - 0.4 * std::clamp ((s.key - 39) / 24.0, 0.0, 1.0);
+        forModes (s, s.count, [&] (size_t j)
+        {
+            const double w = m.omega[j] * (1.0 + m.damperShift[j]);
+            const double sigma = m.sigmaInternal[j] + taper * damperDecay (w / (2.0 * M_PI), damperStrength);
+            const cd pole = std::exp (cd (-sigma, w) * Ts);
+            m.prDamp[j] = (float) pole.real();
+            m.piDamp[j] = (float) pole.imag();
+        });
     }
 
     for (auto& s : strings)
