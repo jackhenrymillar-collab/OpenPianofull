@@ -360,7 +360,7 @@ private:
     std::array<double, kZones> zoneForce {}, zoneAcceleration {}, lastZoneVelocity {}, zoneBoardVelocity {};
     double lastBridgeVelocity = 0, bridgeAcceleration = 0;
     double lastHorizontalVelocity = 0, horizontalAcceleration = 0;
-    double resistiveLpLeft = 0, resistiveLpRight = 0, lpCoeff = 0;
+    double resistiveLpLeft = 0, resistiveLpRight = 0, lpCoeff = 0, resistiveLp2Left = 0, resistiveLp2Right = 0, resistiveLp3Left = 0, resistiveLp3Right = 0, lp2Coeff = 0;
     double dcLeft = 0, dcRight = 0, dcInLeft = 0, dcInRight = 0, dcCoeff = 0;
     double outputGain = 1.0;
     double airLoad = 5.0; // N per unit of air pressure on the board

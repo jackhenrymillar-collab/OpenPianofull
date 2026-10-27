@@ -169,6 +169,7 @@ void ModalPiano::prepare (double newSampleRate, const Settings& newSettings)
 
     // Output filters: gentle top-end roll-off on the direct bridge path, and a DC blocker
     lpCoeff = std::exp (-2.0 * M_PI * 3500.0 / sampleRate);
+    lp2Coeff = std::exp (-2.0 * M_PI * 4000.0 / sampleRate);
     dcCoeff = std::exp (-2.0 * M_PI * 20.0 / sampleRate);
 
     fullList.reserve (strings.size());
@@ -1088,7 +1089,7 @@ void ModalPiano::reset()
     lastBridgeVelocity = bridgeAcceleration = 0;
     zoneForce.fill (0); zoneAcceleration.fill (0); lastZoneVelocity.fill (0); zoneBoardVelocity.fill (0);
     lastHorizontalVelocity = horizontalAcceleration = 0;
-    resistiveLpLeft = resistiveLpRight = 0;
+    resistiveLpLeft = resistiveLpRight = resistiveLp2Left = resistiveLp2Right = resistiveLp3Left = resistiveLp3Right = 0;
     buildBody();
     buildFrame();
     dcLeft = dcRight = dcInLeft = dcInRight = 0;
@@ -2025,6 +2026,12 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         for (auto& b : highBoardRight) dr = b.process (dr);
         resistiveLpLeft = dl + lpCoeff * (resistiveLpLeft - dl);
         resistiveLpRight = dr + lpCoeff * (resistiveLpRight - dr);
+        // Two more poles: the many-mode board's sound falls off steeply above ~8 kHz (the
+        // recordings have ~20 dB less there than one pole leaves, heard as a scuff on loud treble notes)
+        resistiveLp2Left = resistiveLpLeft + lp2Coeff * (resistiveLp2Left - resistiveLpLeft);
+        resistiveLp2Right = resistiveLpRight + lp2Coeff * (resistiveLp2Right - resistiveLpRight);
+        resistiveLp3Left = resistiveLp2Left + lp2Coeff * (resistiveLp3Left - resistiveLp2Left);
+        resistiveLp3Right = resistiveLp2Right + lp2Coeff * (resistiveLp3Right - resistiveLp2Right);
         // Air under the board: driven by what the board pushes out, heard in both ears,
         // and pressing back on the board through the bridge on the next sample
         double air = 0;
@@ -2041,8 +2048,8 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         }
         airPressure = air;
 
-        double outL = radiatedLeft + resistiveLpLeft + air + frameLeft;
-        double outR = radiatedRight + resistiveLpRight + 0.9 * air + frameRight;
+        double outL = radiatedLeft + resistiveLp3Left + air + frameLeft;
+        double outR = radiatedRight + resistiveLp3Right + 0.9 * air + frameRight;
 
         // Directivity: the high part beams out past the open side
         beamLpLeft = outL + beamCoeff * (beamLpLeft - outL);
