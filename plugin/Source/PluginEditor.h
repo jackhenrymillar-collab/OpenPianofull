@@ -22,9 +22,6 @@ public:
     // For screenshots: light some keys as if just played
     void previewGlow();
 
-    // For screenshots: pick one of the keybed looks
-    void setKeybedStyle (widgets::KeybedStyle s) { keyboard.setStyle (s); repaint(); }
-
     static constexpr int kWidth = 1040;
     static constexpr int kHeight = 720;
 

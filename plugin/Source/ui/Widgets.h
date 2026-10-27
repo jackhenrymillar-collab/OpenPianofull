@@ -123,10 +123,7 @@ private:
     juce::StringArray keys, values;
 };
 
-// The three keybed looks offered for the dusk theme
-enum class KeybedStyle { smokedGlass, silhouette, horizon };
-
-// A see-through glass keyboard. Played keys light up with sunlight and, once released,
+// A smoked-glass keyboard. Played keys light up with sunset orange and, once released,
 // leave a glowing remnant that fades away. Notes from the host light it too.
 class GlassKeyboard final : public juce::MidiKeyboardComponent
 {
@@ -139,9 +136,6 @@ public:
 
     // For previews: light a key as if it had just been released
     void setGlow (int note, float level);
-
-    void setStyle (KeybedStyle);
-    KeybedStyle getStyle() const { return style; }
 
     // Called whenever the glow changes, so the parent can repaint its bloom
     std::function<void()> onGlowChanged;
@@ -171,7 +165,6 @@ private:
     void updateGlow();
 
     juce::MidiKeyboardState& state;
-    KeybedStyle style = KeybedStyle::smokedGlass;
     GlowDriver driver { *this };
     std::array<std::atomic<bool>, 128> struck {};
     std::array<float, 128> glow {};
