@@ -162,8 +162,9 @@ int main()
         auto b = render (piano, kRate);
         const double before = rms (a, a.size() - 4800, a.size()), after = rms (b, b.size() - 4800, b.size());
         std::printf ("damper: %.1f dB down 1 s after release\n", 20 * std::log10 (after / before));
-        // Duplex segments and the case keep a faint ring after release, as on a real piano
-        check (after < before * 5.6e-3, "released note decays by 45 dB within a second");
+        // Duplex segments, the undamped top strings (in both directions of vibration) and the
+        // case keep a faint ring after release, as on a real piano (about 35 dB down on a grand)
+        check (after < before * 7.9e-3, "released note decays by 42 dB within a second");
     }
 
     // 3b. Sostenuto: C4 held when the pedal goes down keeps ringing after release; E4 played

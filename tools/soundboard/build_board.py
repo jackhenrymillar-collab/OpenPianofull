@@ -70,7 +70,7 @@ DOWNBEARING = 3000.0       # [N], shared along both bridges (a quarter on the ba
 # beech ~0.012, maple ~0.010, cast iron ~0.002, glue lines ~0.05, castor cups on the floor ~0.25.
 ETA = {"along": 0.007, "across": 0.018, "shear": 0.018, "rib": 0.007, "bridge": 0.012, "crown": 0.010,
        "rim": 0.010, "rimtwist": 0.010, "glue": 0.05, "leg": 0.25, "brace": 0.010, "tie": 0.05,
-       "frame": 0.002, "bolt": 0.02, "str_damped": float(os.environ.get("ETA_SD", "0.3")), "str_free": float(os.environ.get("ETA_SF", "0.02"))}
+       "frame": 0.002, "bolt": 0.02, "pinblock": 0.05, "str_damped": float(os.environ.get("ETA_SD", "0.3")), "str_free": float(os.environ.get("ETA_SF", "0.02"))}
 PLANK_W, PLANK_SPREAD = 0.12, 0.08   # the board is glued from ~12 cm planks; each plank's stiffness varies ~8%
 RIM_GJ = 1.1e9 * 0.26 * 0.035 ** 3 / 3.0 * 0.92 * 3.0   # rim twisting stiffness (maple, x3 for the bolted frame) [N m^2]
 RIM_IP = 650.0 * 0.035 * 0.26 * (0.035 ** 2 + 0.26 ** 2) / 12.0   # rim rotary inertia per length [kg m]
@@ -145,6 +145,7 @@ IRON_E, IRON_RHO = 1.1e11, 7200.0
 FRAME_A, FRAME_I = 0.0022, 2.6e-6          # bar section [m^2], bending [m^4] (8 cm deep ribbed bars)
 FRONT_Y = -0.05                             # the front bar, just ahead of the belly rail
 BOLT_K = 2.0e7                              # each bolt into the rim [N/m]
+PINBLOCK_K = float(os.environ.get("PINBLOCK_K", "5e7"))   # the pin block under each front-bar node [N/m]
 
 
 def frame_bars():
@@ -484,6 +485,13 @@ def main():
     # Frame bolts onto the nearest point of the rim
     bo = spring_rows([[(pos_of[rlin[nearest_ring(*Cfr[b_])]], 1.0), (oF + int(b_), -1.0)] for b_ in bolts])
     gparts["bolt"] = bo.T @ bo * BOLT_K
+    # The pin block: a laminated maple block, glued to the stretcher across the whole front,
+    # that the plate's front flange is screwed down onto every few cm. It holds the front bar
+    # (and the strings' far ends on it) along its whole length, not just at the end bolts: a
+    # stiff, lossy wooden support (screw joints and wood, eta ~0.05)
+    if not os.environ.get('NO_PINBLOCK'):
+        pb = spring_rows([[(pos_of[rlin[nearest_ring(*Cfr[fn])]], 1.0), (oF + int(fn), -1.0)] for fn in frontNodes])
+        gparts["pinblock"] = pb.T @ pb * PINBLOCK_K
     # The strings themselves. Every string under tension T is a spring between the bridge and
     # the iron frame: T / L along its speaking length to the agraffe or capo bar on the front bar,
     # and T / Lb along its short back length to the hitch pin on the frame behind the bridge.
