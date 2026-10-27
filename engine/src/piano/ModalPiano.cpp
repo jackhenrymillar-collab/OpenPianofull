@@ -1529,7 +1529,10 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
                 : 0.0;
             auto& history = h.feltHistory[(size_t) i];
             history += (elastic - history) * relax;
-            const double f = compression > 0 ? std::max (0.0, q0 * h.feltScale[(size_t) i] * (elastic - memory * history)) : 0.0;
+            // The relaxed part never takes more than 70% of the push: squeezed felt always pushes
+            // back a little, so the contact unloads smoothly. (Letting the force drop to zero
+            // while still squeezed made loud bass hammers leave the strings and strike again.)
+            const double f = compression > 0 ? q0 * h.feltScale[(size_t) i] * std::max (0.3 * elastic, elastic - memory * history) : 0.0;
 
             // The felt crown is round: squeezed by d, it flattens into a patch about
             // 2 sqrt(2 R d) long. A light touch meets the string almost at a point; a hard
