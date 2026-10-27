@@ -21,7 +21,7 @@ damping are applied in ModalPiano, as they change with the piano's age.
 
 Needs numpy and scipy.
 """
-import argparse, math
+import argparse, math, os
 import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as sla
@@ -47,7 +47,6 @@ TREBLE_W, BASS_W = 0.030, 0.035          # width = height [m]
 # towards the rim: it adds mass and ties the bridge's tail end to the rim through the board edge
 APRON_M, APRON_K = 0.35, 4.0e5           # [kg], [N/m]
 F_TOP = 5000.0
-STRING_LOAD = __import__('os').environ.get('NOSTRLOAD') is None
 # The body around the board (a Yamaha C5): the rim it is glued into, the braces under it,
 # the iron frame bolted on the rim, the legs, and the air in the case above the board.
 RIM_EI = 12e9 * 0.035 * 0.26 ** 3 / 12.0 * 3.0   # laminated maple, 26 cm deep; x3: the bolted iron frame ties it
@@ -71,7 +70,7 @@ DOWNBEARING = 3000.0       # [N], shared along both bridges (a quarter on the ba
 # beech ~0.012, maple ~0.010, cast iron ~0.002, glue lines ~0.05, castor cups on the floor ~0.25.
 ETA = {"along": 0.007, "across": 0.018, "shear": 0.018, "rib": 0.007, "bridge": 0.012, "crown": 0.010,
        "rim": 0.010, "rimtwist": 0.010, "glue": 0.05, "leg": 0.25, "brace": 0.010, "tie": 0.05,
-       "frame": 0.002, "bolt": 0.02, "strings": float(__import__("os").environ.get("ETA_STR", "0.1"))}
+       "frame": 0.002, "bolt": 0.02, "str_damped": float(os.environ.get("ETA_SD", "0.3")), "str_free": float(os.environ.get("ETA_SF", "0.02"))}
 PLANK_W, PLANK_SPREAD = 0.12, 0.08   # the board is glued from ~12 cm planks; each plank's stiffness varies ~8%
 RIM_GJ = 1.1e9 * 0.26 * 0.035 ** 3 / 3.0 * 0.92 * 3.0   # rim twisting stiffness (maple, x3 for the bolted frame) [N m^2]
 RIM_IP = 650.0 * 0.035 * 0.26 * (0.035 ** 2 + 0.26 ** 2) / 12.0   # rim rotary inertia per length [kg m]
@@ -349,6 +348,12 @@ def main():
         Bm = interp_rows(xs, ys)
         D2 = sp.diags([np.ones(n - 2), -2 * np.ones(n - 2), np.ones(n - 2)], [0, 1, 2], shape=(n - 2, n)) / ds ** 2
         C = D2 @ Bm
+        if bi_ >= 2:
+            # Ribs are planed down towards their ends, where they run into the rim (about 25 mm
+            # tall in the middle, ~18 mm at the ends: EI falls to ~40% over the last 15 cm)
+            sc = np.linspace(0, L, n)[1:-1]
+            dend = np.minimum(sc, L - sc)
+            if not os.environ.get('NO_TAPER'): C = sp.diags(np.sqrt(0.4 + 0.6 * np.clip(dend / 0.15, 0.0, 1.0))) @ C
         K = K + part("bridge" if bi_ < 2 else "rib", C.T @ C * (EI * ds))
         M = M + Bm.T @ sp.diags(np.full(n, mlin * ds)) @ Bm
         if bi_ < 2:
@@ -364,27 +369,6 @@ def main():
                 tail = interp_rows(xs[-1:], ys[-1:])
                 M = M + tail.T @ tail * APRON_M
                 K = K + part("bridge", tail.T @ tail * APRON_K)
-
-    # --- The strings themselves. Every string under tension T is a spring on the bridge where it
-    # crosses it: T / L for its speaking length and T / Lb for the short back length behind the
-    # bridge to the hitch pin. Together (about 230 strings) they stiffen the bridge about as much
-    # as the board does at low frequencies, which lifts the lowest modes and lowers their peaks
-    # (Conklin 1996: adding strings and frame raised the first modes and cut their peaks ~15 dB).
-    # Dampers rest on the speaking lengths and felt mutes the back lengths, so this load is lossy.
-    if STRING_LOAD:
-        sx, sy, sk = [], [], []
-        for key in range(1, 89):
-            ns = 1 if key <= 8 else 2 if key <= 20 else 3
-            T = 1600.0 if key <= 20 else 1100.0 if key <= 30 else 750.0
-            Lb = 0.14 if key <= 20 else 0.10 if key <= 40 else 0.06
-            if key <= 20:
-                x_, y_ = bass_bridge((20 - key) / 19.0)
-            else:
-                x_, y_ = treble_bridge((88 - key) / (88 - 21))
-            sx.append(float(x_)); sy.append(float(y_)); sk.append(ns * T * (1.0 / LEN[key - 1] + 1.0 / Lb))
-        Sr = interp_rows(np.array(sx), np.array(sy))
-        K = K + part("strings", Sr.T @ sp.diags(np.array(sk)) @ Sr)
-        print(f"string load on the bridges: {sum(sk) / 1e6:.2f} MN/m in all (bass bridge {sum(sk[:20]) / 1e6:.2f})")
 
     # --- Crown and downbearing (see the constants above)
     cR, sR = -s_, c                                         # rib direction (across the grain)
@@ -500,6 +484,55 @@ def main():
     # Frame bolts onto the nearest point of the rim
     bo = spring_rows([[(pos_of[rlin[nearest_ring(*Cfr[b_])]], 1.0), (oF + int(b_), -1.0)] for b_ in bolts])
     gparts["bolt"] = bo.T @ bo * BOLT_K
+    # The strings themselves. Every string under tension T is a spring between the bridge and
+    # the iron frame: T / L along its speaking length to the agraffe or capo bar on the front bar,
+    # and T / Lb along its short back length to the hitch pin on the frame behind the bridge.
+    # Together (~230 strings, ~3.6 MN/m) they stiffen the bridges about as much as the board
+    # does at low frequencies, lifting the lowest modes and flattening their peaks (Conklin
+    # 1996), and they tie the board to the frame. Dampers rest on the speaking lengths up to F6
+    # and felt mutes the bass and tenor back lengths: those parts of the load are lossy.
+    frontC = Cfr[frontNodes]
+    def frame_node_near(x, y, cands=None):
+        idx = np.arange(len(Cfr)) if cands is None else np.array(cands)
+        d = np.hypot(Cfr[idx, 0] - x, Cfr[idx, 1] - y)
+        return int(idx[np.argmin(d)]), float(d.min())
+    rows_d, rows_f, kd, kf_ = [], [], [], []
+    n_rim = 0
+    for key in range(1, 89):
+        ns = 1 if key <= 8 else 2 if key <= 20 else 3
+        T = 1600.0 if key <= 20 else 1100.0 if key <= 30 else 750.0
+        Lb = 0.14 if key <= 20 else 0.10 if key <= 40 else 0.06
+        Ls = LEN[key - 1]
+        if os.environ.get('REAL_T'):
+            # tensions as in ScaleDesign (engine): bass 1800->1420 N, tenor 1150->1030, plain ~640
+            T = 1800.0 - 380.0 * (key - 1) / 19 if key <= 20 else (1150.0 - 120.0 * (key - 21) / 7 if key <= 28 else 640.0)
+            # back length bridge->hitch grows with the speaking length (rear duplex ~1/5 L)
+            Lb = float(np.clip(0.2 * Ls, 0.03, 0.25))
+        if key <= 20:
+            bx_, by_ = bass_bridge((20 - key) / 19.0); ang = math.radians(25.0)
+        else:
+            bx_, by_ = treble_bridge((88 - key) / (88 - 21)); ang = 0.0
+        bx_, by_ = float(bx_), float(by_)
+        Br = interp_rows(np.array([bx_]), np.array([by_]))
+        bterms = [(int(pos_of[c_]), float(v_)) for c_, v_ in zip(Br.indices, Br.data) if pos_of[c_] >= 0]
+        # speaking length: to the front bar, along the string
+        fn_, _ = frame_node_near(bx_ - Ls * math.sin(ang), FRONT_Y, frontNodes)
+        # back length: to the frame behind the bridge, or the rim if no bar is near
+        hx, hy = bx_ + Lb * math.sin(ang), by_ + Lb * math.cos(ang)
+        hn_, hd = frame_node_near(hx, hy)
+        hterm = [(oF + hn_, -1.0)] if hd < 0.15 else [(int(pos_of[rlin[nearest_ring(hx, hy)]]), -1.0)]
+        if hd >= 0.15: n_rim += 1
+        if hd >= 0.15 and os.environ.get('NO_RIMBACK'): hterm = [(oF + hn_, -1.0)]
+        sp_row = bterms + [(oF + fn_, -1.0)]
+        bk_row = bterms + hterm
+        damped_speak = key <= 69
+        felted_back = key <= 40
+        (rows_d if damped_speak else rows_f).append(sp_row); (kd if damped_speak else kf_).append(ns * T / Ls)
+        (rows_d if felted_back else rows_f).append(bk_row); (kd if felted_back else kf_).append(ns * T / Lb)
+    Sd = spring_rows(rows_d); Sf = spring_rows(rows_f)
+    gparts["str_damped"] = Sd.T @ sp.diags(np.array(kd)) @ Sd
+    gparts["str_free"] = Sf.T @ sp.diags(np.array(kf_)) @ Sf
+    print(f"back lengths to rim: {n_rim}; string load: {(sum(kd) + sum(kf_)) / 1e6:.2f} MN/m ({sum(kd) / 1e6:.2f} through dampers or felt)")
     Kf = sum(gparts.values())
     # The downbearing's compression along the ribs softens bending (stored energy, no loss of its own)
     Kf = Kf + emb(P.T @ (-Gr.T @ sp.diags(np.full(len(pts), Nc * area)) @ Gr) @ P, 0, nf)
@@ -532,6 +565,7 @@ def main():
     # The frame's shapes where the strings end (front bar), kept for the frame table
     frontX = Cfr[frontNodes, 0]
     vfront = vecs[oF + np.array(frontNodes), :]
+    vtwist = vecs[oT:oF, :]
     vecs = vecs[:nf]
 
     # --- The air in the case above the board, coupled to the structure. Pressure modes of the
@@ -619,6 +653,7 @@ def main():
           f"rim-heavy modes {(rimShare > 0.3).sum()}, air-heavy {(airE > 0.5).sum()}, frame-heavy {(frameShare > 0.5).sum()}")
     full = full_s @ Q                                       # (nx*ny, n)
     frontV = vfront @ Q                                     # frame front bar, per coupled mode
+    twistQ = vtwist @ Q                                     # rim twist angle at each ring node, per coupled mode
 
     # Bridge zone points: the middle of each group of keys along each bridge, on the line of the
     # front bridge pins where the strings actually bear (a little in front of the bridge's
@@ -663,8 +698,12 @@ def main():
     nodes3 = np.stack([bx, by_, np.zeros_like(bx)], 1)
     img_lid = lid_image(nodes3)
     img_floor = np.stack([bx, by_, np.full_like(bx, -2 * (FLOOR_GAP + 0.13))], 1)
+    RIM_H = 0.26
+    ds_ring = ds
+    ringXY = np.stack([rp[:, 0] * DX, rp[:, 1] * DX, np.full(len(rp), 0.5 * 0.26 - 0.1)], 1)
     def pressure_at(pt, lid=True, floor=True):
         pt = np.array(pt)
+        rr1 = np.linalg.norm(ringXY - pt, axis=1)
         r1 = np.linalg.norm(nodes3 - pt, axis=1)
         r2 = r1 + dE
         r3 = np.linalg.norm(img_floor - pt, axis=1) + 0.5 * dE
@@ -674,6 +713,11 @@ def main():
             w = full[bn, i] * area
             kk = k[i]
             p_ = np.sum(w * (np.exp(-1j * kk * r1) / r1 - np.exp(-1j * kk * r2) / r2))
+            # The rim's walls: twisting, a wall swings its top in and out (half its height times
+            # the angle) and pushes air on both faces; outside and inside are in opposite phase,
+            # the inside path longer by about the wall's height
+            wr_ = twistQ[:, i] * (0.5 * RIM_H) * (RIM_H * ds_ring)
+            if not os.environ.get('NO_RIMRAD'): p_ += np.sum(wr_ * (np.exp(-1j * kk * rr1) / rr1 - np.exp(-1j * kk * (rr1 + RIM_H)) / (rr1 + RIM_H)))
             if floor:
                 p_ -= FLOOR_REFL * 0.5 * np.sum(w * np.exp(-1j * kk * r3) / r3)
             if lid:
