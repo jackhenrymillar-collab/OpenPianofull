@@ -304,6 +304,14 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
             // (a lighter, harder head leaves the string sooner: brighter)
             key.hammerMass /= hardness[i] + (hardness[i + 1] - hardness[i]) * (pos - i);
         }
+        // The lowest two octaves' hammers are big and soft, so loud bass notes stay round and
+        // full rather than wiry: up to 60% heavier and 30% softer felt at A0, fading out by G#2
+        if (k <= 24)
+        {
+            const double w = (24 - k) / 23.0;
+            key.hammerMass *= 1.0 + 0.6 * w;
+            key.feltStiffness *= 1.0 - 0.3 * w;
+        }
         key.feltExponent = 2.5 + 1.5 * (n - 1) / 87.0; // softer-curving felt: 2.5 in the bass to 4 in the treble
         key.outerFeltDepth = lerp (1.0e-3, 0.1e-3, std::pow ((k - 1) / 87.0, 0.7));
         key.strikeRatio = k <= 40 ? lerp (0.122, 0.115, (k - 1) / 39.0) : lerp (0.115, 0.08, (k - 40) / 48.0);
