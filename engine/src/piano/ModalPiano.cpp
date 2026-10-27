@@ -1029,7 +1029,6 @@ void ModalPiano::buildAction()
         for (int t = 0; t < ActionBank::Types; ++t)
             action.weight[(size_t) t][(size_t) i] = (float) shapes[t][i];
     }
-    action.caseGain = 5e-4f;
     actionHits.clear();
     actionHits.reserve (512);
 }
@@ -1056,11 +1055,6 @@ void ModalPiano::runAction (double& force, double& left, double& right)
         h = actionHits.back();
         actionHits.pop_back();
     }
-    // The keybed and key frame sit on the case, which the strings' pull through the rim keeps
-    // shaking: the last three (keybed, legs, floor) are also driven by the force the strings
-    // put into the body right now
-    for (size_t j = 8; j < (size_t) ActionBank::N; ++j)
-        action.zr[j] += (float) (action.caseGain * force) * action.weight[0][j];
     float f = 0;
     for (size_t j = 0; j < (size_t) ActionBank::N; ++j)
     {

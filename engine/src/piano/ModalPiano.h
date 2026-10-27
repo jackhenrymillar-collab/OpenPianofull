@@ -326,7 +326,6 @@ private:
         std::array<float, N> zr {}, zi {}, pr {}, pi {};
         std::array<std::array<float, N>, Types> weight {}; // per hit type
         float panLeft = 0.7f, panRight = 0.7f;
-        float caseGain = 0;                 // how much the strings' push on the case shakes the keybed
     } action;
     void buildAction();
     void queueAction (int type, int delaySamples, double amount, int keyIndex);
