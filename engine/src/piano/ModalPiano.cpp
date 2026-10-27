@@ -610,6 +610,7 @@ void ModalPiano::buildSoundboard()
         v->assign (n, 0.0f);
     board.phi.assign (n * Z, 0.0f);
     board.phiH.assign (n * Z, 0.0f);
+    board.phiSum.assign (n, 0.0f);
         // The solved sideways shapes come from the bridge rocking on a rigid cap; the cap and pins
     // give, so about half of that reaches the strings (fitted to the recorded tail decays)
     const double sideScale = 0.45;
@@ -626,6 +627,32 @@ void ModalPiano::buildSoundboard()
         rawL[i] = settings.closeMics ? src.micLeft : src.radLeft;
         rawR[i] = settings.closeMics ? src.micRight : src.radRight;
         rawV[i] = src.volume;
+    }
+    // Low-end balance of the radiated sound, fitted to the recorded grand's bass notes (octave
+    // bands from 31 Hz, partial power relative to the note's whole). The solved body has few
+    // modes below 200 Hz and puts them in the wrong places for this piano: its 46 Hz mode
+    // radiates the bass fundamentals ~10 dB too strongly, and it has a gap from 80 to 125 Hz
+    // where the recorded bass has its strongest partials.
+    {
+        const double centres[4] = { 44.2, 88.4, 176.8, 353.6 };
+        const double db[4] = { -14.4, 17.8, -6.1, 0.0 };
+        for (size_t i = 0; i < n; ++i)
+        {
+            const double lf = std::log2 (modes[i].f);
+            double g = 0;
+            if (lf <= std::log2 (centres[0])) g = db[0];
+            else if (lf >= std::log2 (centres[3])) g = 0;
+            else
+                for (int b = 0; b < 3; ++b)
+                    if (lf < std::log2 (centres[b + 1]))
+                    {
+                        const double t = (lf - std::log2 (centres[b])) / (std::log2 (centres[b + 1]) - std::log2 (centres[b]));
+                        g = db[b] + (db[b + 1] - db[b]) * t;
+                        break;
+                    }
+            const double gain = std::pow (10.0, g / 20.0);
+            rawL[i] *= gain; rawR[i] *= gain;
+        }
     }
     // At the seat the board's edge short circuit leaves the low end ~10 dB thinner than the
     // close pair hears it. A player sits in a room whose walls and floor fill that back in, and
@@ -692,6 +719,7 @@ void ModalPiano::buildSoundboard()
             const double fc = 2000.0 * std::pow (1.22, layoutPosition (z)), ratio = modes[i].f / fc;
             board.phi[(size_t) z * n + i] = (float) (phiScale * zoneCoupling[(size_t) z] * modes[i].phi[(size_t) z] / std::sqrt (1.0 + ratio * ratio));
             board.phiH[(size_t) z * n + i] = (float) (sideScale * phiScale * zoneCoupling[(size_t) z] * kBoardModes[modes[i].n].phiH[z] / std::sqrt (1.0 + ratio * ratio));
+            board.phiSum[i] += board.phi[(size_t) z * n + i];
         }
         board.radLeft[i] = (float) rawL[i];
         board.radRight[i] = (float) rawR[i];
@@ -1434,6 +1462,9 @@ void ModalPiano::checkActivity()
     }
     std::sort (segments.begin(), segments.end(), [] (const Segment& a, const Segment& b) { return a.first < b.first; });
 
+    zoneLive.fill (0);
+    for (const auto& g : segments)
+        zoneLive[(size_t) g.zone] = 1;
     runs.clear();
     int runSegments = 0;
     for (const auto& g : segments)
@@ -1821,9 +1852,7 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         {
             const double before = forceSum;
             runAction (forceSum, forceLeft, forceRight);
-            const double spread = (forceSum - before) / kZones;
-            for (auto& z : zoneForce)
-                z += spread;
+            actionSpread = (forceSum - before) / kZones;
         }
 
         // Soundboard and frame modes. Each mode is pushed by every zone's force times its
@@ -1836,8 +1865,13 @@ void ModalPiano::process (float* left, float* right, int numSamples)
             float* __restrict F = board.scratchF.data();
             float* __restrict V = board.scratchV.data();
             const float* __restrict phi = board.phi.data();
-            for (int i = 0; i < nb; ++i)
-                F[i] = 0;
+            {
+                // The action's knocks reach the board through the frame, evenly along the bridge
+                const float* __restrict ps = board.phiSum.data();
+                const float sp = (float) actionSpread;
+                for (int i = 0; i < nb; ++i)
+                    F[i] = ps[i] * sp;
+            }
             const float* __restrict phH = board.phiH.data();
             for (int z = 0; z < kZones; ++z)
             {
@@ -1884,6 +1918,9 @@ void ModalPiano::process (float* left, float* right, int numSamples)
             }
             for (int z = 0; z < kZones; ++z)
             {
+                // Only zones with strings being run need their motion
+                if (! zoneLive[(size_t) z])
+                    continue;
                 const float* __restrict ph = phi + (size_t) z * (size_t) nb;
                 float acc = 0;
                 for (int i = 0; i < nb; ++i)
@@ -1924,7 +1961,7 @@ void ModalPiano::process (float* left, float* right, int numSamples)
             const double c = zoneCoupling[(size_t) z];
             // Above the solved modes: the many-mode board's smooth resistance (high-passed at
             // the top mode, so it takes over where the modes stop), local to the zone
-            const double fz = zoneForce[(size_t) z];
+            const double fz = zoneForce[(size_t) z] + actionSpread;
             auto& hp = highPassState[(size_t) z];
             hp = fz + highPassCoeff * (hp - fz);
             auto& hp2 = highPassState2[(size_t) z];

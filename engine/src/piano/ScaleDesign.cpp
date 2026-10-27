@@ -293,9 +293,10 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         key.hammerMass = (11.074 - 0.074 * n + 0.0001 * n * n) * 1e-3;
         key.feltStiffness = 183.0 * std::exp (0.045 * n);
         // Hammer voicing for loud playing: a technician hardens or needles each felt so the
-        // fortissimo brightness is even; fitted note by note to the recorded grand (every 3 keys from A0)
+        // fortissimo brightness is even; fitted note by note to the recorded grand (every 3 keys from A0;
+        // A0 to C2 fitted on the loud-against-soft brightness, with the low-end balance in place)
         {
-            static constexpr double hardness[30] = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.5, 0.5, 0.5, 0.5,
+            static constexpr double hardness[30] = { 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.5, 0.5, 0.5, 0.5,
                                                      0.5, 2.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.67, 0.5,
                                                      0.5, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
             const double pos = std::clamp ((k - 1) / 3.0, 0.0, 28.999);

@@ -278,7 +278,8 @@ private:
         std::vector<float> wr, wi, qr, qi, hr, hi, omega, sigma, radLeft, radRight;
         std::vector<float> phi;    // mode shape at each bridge zone, zone by zone
         std::vector<float> scratchF, scratchV;
-        std::vector<float> phiH;   // sideways shapes at the zones (bridge tilt), same layout as phi
+        std::vector<float> phiH;
+        std::vector<float> phiSum; // every zone's shape added up: a push spread evenly along the bridge   // sideways shapes at the zones (bridge tilt), same layout as phi
         std::vector<float> volume; // net volume each mode pushes (drives the air under the board)
     } board;
 
@@ -343,6 +344,8 @@ private:
     static constexpr int kZones = 32, kBassZones = 4;   // about 2.4 keys per zone on the treble bridge, 5 on the bass bridge
     std::vector<int> keyZone;
     std::array<double, kZones> bridgeMassCoeff {}, bridgeMassState {};
+    double actionSpread = 0;                    // the action's push, spread along the bridge
+    std::array<uint8_t, kZones> zoneLive {};   // zones with a string being run this block
     std::array<double, kZones> zoneSideForce {}, zoneSideAccel {}, lastZoneSideVel {};
     std::array<double, kZones> highAdmittance {}, highPassState {}, highPassState2 {};   // the many-mode board above the solved modes
     double highPassCoeff = 0, highRadiation = 0, highLeftState = 0, highRightState = 0, highLeftState2 = 0, highRightState2 = 0;
