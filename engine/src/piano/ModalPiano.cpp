@@ -609,6 +609,10 @@ void ModalPiano::buildSoundboard()
                      &board.radLeft, &board.radRight, &board.volume })
         v->assign (n, 0.0f);
     board.phi.assign (n * Z, 0.0f);
+    board.phiH.assign (n * Z, 0.0f);
+        // The solved sideways shapes come from the bridge rocking on a rigid cap; the cap and pins
+    // give, so about half of that reaches the strings (fitted to the recorded tail decays)
+    const double sideScale = 0.45;
     board.scratchF.assign (n, 0.0f);
     board.scratchV.assign (n, 0.0f);
 
@@ -687,6 +691,7 @@ void ModalPiano::buildSoundboard()
         {
             const double fc = 2000.0 * std::pow (1.22, layoutPosition (z)), ratio = modes[i].f / fc;
             board.phi[(size_t) z * n + i] = (float) (phiScale * zoneCoupling[(size_t) z] * modes[i].phi[(size_t) z] / std::sqrt (1.0 + ratio * ratio));
+            board.phiH[(size_t) z * n + i] = (float) (sideScale * phiScale * zoneCoupling[(size_t) z] * kBoardModes[modes[i].n].phiH[z] / std::sqrt (1.0 + ratio * ratio));
         }
         board.radLeft[i] = (float) rawL[i];
         board.radRight[i] = (float) rawR[i];
@@ -825,7 +830,10 @@ void ModalPiano::runFrame (double& left, double& right)
     }
     for (int z = 0; z < kZones; ++z)
     {
-        const double vz = v[(size_t) z] + 3e-6 * frame.force[(size_t) z];
+        // The far end's own give: the agraffes in the bass hold the string firmly, the capo
+        // bar in the treble and the bearing on the pinblock felt let it move and lose more
+        const double farR = 3e-6 * (0.7 + 0.6 * z / (kZones - 1.0));
+        const double vz = v[(size_t) z] + farR * frame.force[(size_t) z];
         frame.accel[(size_t) z] = (vz - frame.lastVel[(size_t) z]) * sampleRate;
         frame.lastVel[(size_t) z] = vz;
     }
@@ -925,19 +933,31 @@ void ModalPiano::buildBody()
         roomPos = 0;
     }
 
-    // The lid is a large spruce panel that the sound hits; it rings faintly at its own modes
+    // The lid is a large panel (about 1.6 m by 1.4 m, 19 mm of veneered spruce core) that the
+    // board's sound presses on. Its bending modes, as a plate held at the hinges and prop:
+    // f_mn = (pi/2) sqrt(D / rho h) ((m/a)^2 + (n/b)^2). An even push only drives the odd-odd
+    // modes, by 16 / (pi^2 m n), and all share the same modal mass.
     lidPanel.clear(); lidPanelGain.clear();
     {
-        const double fs[] = { 68.0, 112.0, 171.0, 247.0, 352.0, 488.0 };
-        for (double f : fs)
-        {
-            const double w = 2.0 * M_PI * f / sampleRate, alpha = std::sin (w) / (2.0 * 18.0), a0 = 1.0 + alpha;
-            Biquad b;
-            b.b0 = (float) (alpha / a0); b.b1 = 0; b.b2 = (float) (-alpha / a0);
-            b.a1 = (float) (-2.0 * std::cos (w) / a0); b.a2 = (float) ((1.0 - alpha) / a0);
-            lidPanel.push_back (b);
-            lidPanelGain.push_back (0.05f);
-        }
+        const double a = 1.6, b = 1.4, h = 0.019, E = 8e9, rho = 550, nu = 0.3;
+        const double D = E * h * h * h / (12.0 * (1.0 - nu * nu)), rh = rho * h;
+        const double c = 0.5 * M_PI * std::sqrt (D / rh);
+        for (int mi = 1; mi <= 9; mi += 2)
+            for (int ni = 1; ni <= 9; ni += 2)
+            {
+                const double f = c * ((mi / a) * (mi / a) + (ni / b) * (ni / b));
+                if (f > 700.0 || f > 0.4 * sampleRate)
+                    continue;
+                // Radiation and the wood's own loss: Q falls from about 25 to 12 with frequency
+                const double Q = 25.0 / (1.0 + f / 300.0);
+                const double w = 2.0 * M_PI * f / sampleRate, alpha = std::sin (w) / (2.0 * Q), a0 = 1.0 + alpha;
+                Biquad bq;
+                bq.b0 = (float) (alpha / a0); bq.b1 = 0; bq.b2 = (float) (-alpha / a0);
+                bq.a1 = (float) (-2.0 * std::cos (w) / a0); bq.a2 = (float) ((1.0 - alpha) / a0);
+                lidPanel.push_back (bq);
+                // Scaled so the lowest mode answers like the old fixed panel (0.05)
+                lidPanelGain.push_back ((float) (0.05 * (1.0 / (mi * ni))* std::sqrt (Q / 18.0)));
+            }
     }
     // Sound from the board spreads evenly at low frequencies but beams above a couple of kHz,
     // mostly out past the open lid (the right ear here)
@@ -981,6 +1001,7 @@ void ModalPiano::buildAction()
         for (int t = 0; t < ActionBank::Types; ++t)
             action.weight[(size_t) t][(size_t) i] = (float) shapes[t][i];
     }
+    action.caseGain = 5e-4f;
     actionHits.clear();
     actionHits.reserve (512);
 }
@@ -1007,6 +1028,11 @@ void ModalPiano::runAction (double& force, double& left, double& right)
         h = actionHits.back();
         actionHits.pop_back();
     }
+    // The keybed and key frame sit on the case, which the strings' pull through the rim keeps
+    // shaking: the last three (keybed, legs, floor) are also driven by the force the strings
+    // put into the body right now
+    for (size_t j = 8; j < (size_t) ActionBank::N; ++j)
+        action.zr[j] += (float) (action.caseGain * force) * action.weight[0][j];
     float f = 0;
     for (size_t j = 0; j < (size_t) ActionBank::N; ++j)
     {
@@ -1700,8 +1726,8 @@ void ModalPiano::process (float* left, float* right, int numSamples)
 
     for (int n = 0; n < numSamples; ++n)
     {
-        const float ah = (float) horizontalAcceleration;
         zoneForce.fill (0);
+        zoneSideForce.fill (0);
         double forceSum = 0, forceLeft = 0, forceRight = 0;  // vertical
         double sideSum = 0, sideLeft = 0, sideRight = 0;     // horizontal
 
@@ -1710,10 +1736,11 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         {
             const int j = r.first;
             const float f = stepModes (zr + j, zi + j, pr + j, pi + j, bgr + j, bgi + j, fk + j, r.count,
-                                       r.side ? ah : (float) zoneAcceleration[(size_t) r.zone]);
+                                       (float) (r.side ? zoneSideAccel[(size_t) r.zone] : zoneAcceleration[(size_t) r.zone]));
             if (r.side)
             {
                 sideSum += f;
+                zoneSideForce[(size_t) r.zone] += f;
                 sideLeft += f * r.panLeft;
                 sideRight += f * r.panRight;
             }
@@ -1811,12 +1838,24 @@ void ModalPiano::process (float* left, float* right, int numSamples)
             const float* __restrict phi = board.phi.data();
             for (int i = 0; i < nb; ++i)
                 F[i] = 0;
+            const float* __restrict phH = board.phiH.data();
             for (int z = 0; z < kZones; ++z)
             {
                 const float fz = (float) zoneForce[(size_t) z];
-                const float* __restrict ph = phi + (size_t) z * (size_t) nb;
-                for (int i = 0; i < nb; ++i)
-                    F[i] += ph[i] * fz;
+                if (fz != 0.0f)
+                {
+                    const float* __restrict ph = phi + (size_t) z * (size_t) nb;
+                    for (int i = 0; i < nb; ++i)
+                        F[i] += ph[i] * fz;
+                }
+                // The strings' sideways pull tilts the bridge (its shapes along the bridge)
+                const float sz = (float) zoneSideForce[(size_t) z];
+                if (sz != 0.0f)
+                {
+                    const float* __restrict ph = phH + (size_t) z * (size_t) nb;
+                    for (int i = 0; i < nb; ++i)
+                        F[i] += ph[i] * sz;
+                }
             }
             float* __restrict wr = board.wr.data();
             float* __restrict wi = board.wi.data();
@@ -1850,6 +1889,22 @@ void ModalPiano::process (float* left, float* right, int numSamples)
                 for (int i = 0; i < nb; ++i)
                     acc += ph[i] * V[i];
                 zoneBoardVelocity[(size_t) z] = acc;
+                // Sideways motion of the bridge top, where a zone has sideways strings ringing
+                if (zoneSideForce[(size_t) z] != 0.0)
+                {
+                    const float* __restrict phs = phH + (size_t) z * (size_t) nb;
+                    float accS = 0;
+                    for (int i = 0; i < nb; ++i)
+                        accS += phs[i] * V[i];
+                    const double vs = accS + 0.25 * horizontalResistance * zoneSideForce[(size_t) z];
+                    zoneSideAccel[(size_t) z] = (vs - lastZoneSideVel[(size_t) z]) * sampleRate;
+                    lastZoneSideVel[(size_t) z] = vs;
+                }
+                else
+                {
+                    zoneSideAccel[(size_t) z] = -lastZoneSideVel[(size_t) z] * sampleRate;
+                    lastZoneSideVel[(size_t) z] = 0;
+                }
             }
             radiatedLeft = l;
             radiatedRight = r;
@@ -1878,13 +1933,10 @@ void ModalPiano::process (float* left, float* right, int numSamples)
             const double high = highAdmittance[(size_t) z] * (h1 - hp2);   // two poles: little leaks below
             (void) c; (void) weightedForce;
             highZoneVelocity += high;
-            const double v = high + crossResistance * sideSum + zoneBoardVelocity[(size_t) z];
+            const double v = high + zoneBoardVelocity[(size_t) z];
             zoneAcceleration[(size_t) z] = (v - lastZoneVelocity[(size_t) z]) * sampleRate;
             lastZoneVelocity[(size_t) z] = v;
         }
-        const double sideVelocity = horizontalResistance * sideSum + crossResistance * forceSum;
-        horizontalAcceleration = (sideVelocity - lastHorizontalVelocity) * sampleRate;
-        lastHorizontalVelocity = sideVelocity;
 
         // Sound: soundboard modes plus the direct (dense high-frequency) bridge path
         // (the many-mode board above the solved modes, then the sideways motion)
@@ -1896,8 +1948,8 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         const double hl = forceLeft - highLeftState, hr = forceRight - highRightState;
         highLeftState2 = hl + highPassCoeff * (highLeftState2 - hl);
         highRightState2 = hr + highPassCoeff * (highRightState2 - hr);
-        const double directLeft = highRadiation * meanHigh * (hl - highLeftState2) + sideLeft * crossResistance;
-        const double directRight = highRadiation * meanHigh * (hr - highRightState2) + sideRight * crossResistance;
+        const double directLeft = highRadiation * meanHigh * (hl - highLeftState2);
+        const double directRight = highRadiation * meanHigh * (hr - highRightState2);
         (void) highZoneVelocity;
         float dl = (float) directLeft, dr = (float) directRight;
         for (auto& d : diffLeft) dl = d.process (dl);

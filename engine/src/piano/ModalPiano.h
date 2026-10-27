@@ -188,7 +188,7 @@ private:
     int tensionCounter = 0;
     long long sampleClock = 0;
     std::vector<double> tuneFactor;
-    static constexpr std::array<double, 88> kTunerCents { 0.1, 0.3, -2.1, 0.0, -1.1, -2.7, -2.2, 1.1, 1.0, 0.3, 0.6, 0.2, 0.8, 0.4, 0.3, -0.3, -0.5, -0.4, -1.5, -0.9, -1.52, -2.68, -3.32, -0.36, -1.32, -0.44, -0.82, -0.14, -0.0, 0.2, 0.84, 0.04, -0.08, 0.22, 0.66, 0.38, 0.4, -0.02, -0.0, 0.2, -0.16, 0.1, -0.36, -0.1, -2.26, -2.4, -1.57, 1.26, -0.42, 0.76, 1.04, -0.76, 1.48, 1.12, 0.48, 0.78, 1.42, 1.24, 0.82, 0.22, -0.2, -0.06, 0.52, 0.8, -0.5, 0.92, 0.22, 0.6, 1.0, 0.64, 0.44, -0.24, 0.52, 0.2, 0.5, 0.44, -0.5, -0.18, -0.3, 0.86, 1.68, 1.16, -0.3, 0.12, 0.28, 0.16, 0.26, 0.02 };   // filled by the tuning pass   // the tuner's correction per key, for the body's pull on its pitch
+    static constexpr std::array<double, 88> kTunerCents { 0.2, 0.3, -1.0, 0.0, -0.6, -0.7, -1.3, 1.0, 0.9, 0.6, 0.6, 0.4, -0.2, 0.3, 0.0, 0.3, 0.0, -0.1, -0.1, -0.3, -1.95, -2.45, -2.45, -0.4, -1.85, -0.55, -0.9, -0.15, 0.1, 0.4, 0.8, -0.05, -0.15, 0.25, 0.85, 0.35, 0.3, -0.15, -0.2, -0.2, 0.4, 0.7, -0.85, -0.3, -2.35, -2.75, -1.94, 1.4, -0.3, 0.85, 1.05, -0.95, 1.5, 1.1, 0.25, -0.55, 0.95, -1.2, 0.75, 0.55, -0.85, 0.7, 0.5, 0.8, -0.75, -0.95, -0.65, 0.65, 0.95, 0.75, 0.6, 0.65, 0.6, 0.68, 0.55, 0.35, -0.5, -0.85, -0.3, 0.95, 1.8, 1.6, 0.3, 0.15, 0.2, -0.1, 0.2, 0.05 };   // filled by the tuning pass   // the tuner's correction per key, for the body's pull on its pitch
 
     // Each string's modes are stored in two parts: the low ones it keeps while only
     // resonating sit in one region, back to back with every other string's, and the rest
@@ -278,6 +278,7 @@ private:
         std::vector<float> wr, wi, qr, qi, hr, hi, omega, sigma, radLeft, radRight;
         std::vector<float> phi;    // mode shape at each bridge zone, zone by zone
         std::vector<float> scratchF, scratchV;
+        std::vector<float> phiH;   // sideways shapes at the zones (bridge tilt), same layout as phi
         std::vector<float> volume; // net volume each mode pushes (drives the air under the board)
     } board;
 
@@ -324,6 +325,7 @@ private:
         std::array<float, N> zr {}, zi {}, pr {}, pi {};
         std::array<std::array<float, N>, Types> weight {}; // per hit type
         float panLeft = 0.7f, panRight = 0.7f;
+        float caseGain = 0;                 // how much the strings' push on the case shakes the keybed
     } action;
     void buildAction();
     void queueAction (int type, int delaySamples, double amount, int keyIndex);
@@ -341,6 +343,7 @@ private:
     static constexpr int kZones = 32, kBassZones = 4;   // about 2.4 keys per zone on the treble bridge, 5 on the bass bridge
     std::vector<int> keyZone;
     std::array<double, kZones> bridgeMassCoeff {}, bridgeMassState {};
+    std::array<double, kZones> zoneSideForce {}, zoneSideAccel {}, lastZoneSideVel {};
     std::array<double, kZones> highAdmittance {}, highPassState {}, highPassState2 {};   // the many-mode board above the solved modes
     double highPassCoeff = 0, highRadiation = 0, highLeftState = 0, highRightState = 0, highLeftState2 = 0, highRightState2 = 0;
     // Where a zone sits along the bridges on the scale of the earlier eight-zone layout (0..7):

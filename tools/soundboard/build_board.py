@@ -38,6 +38,14 @@ RIB_EI = 2.0 * E_L * RIB_W * RIB_T ** 3 / 12.0     # x2: glued on the plate, the
 RIB_M = RHO * RIB_W * RIB_T
 TREBLE_EI, TREBLE_M = 14e9 * 0.030 * 0.030 ** 3 / 12.0, 750.0 * 0.030 * 0.030   # beech bridge
 BASS_EI, BASS_M = 14e9 * 0.035 * 0.035 ** 3 / 12.0, 750.0 * 0.035 * 0.035
+# The bridges also twist (rocking across their width, under the strings' lengthwise pull) and
+# tilt along their length (under the strings' sideways pull, applied at the bridge top, a lever
+# of about its height above the board). Torsion of a square beech section: GJ = G 0.141 a^4.
+BRIDGE_G = 1.0e9
+TREBLE_W, BASS_W = 0.030, 0.035          # width = height [m]
+# The bass bridge stands on an apron, a thin plank glued under its end that carries it out
+# towards the rim: it adds mass and ties the bridge's tail end to the rim through the board edge
+APRON_M, APRON_K = 0.35, 4.0e5           # [kg], [N/m]
 F_TOP = 5000.0
 # The body around the board (a Yamaha C5): the rim it is glued into, the braces under it,
 # the iron frame bolted on the rim, the legs, and the air in the case above the board.
@@ -342,6 +350,19 @@ def main():
         C = D2 @ Bm
         K = K + part("bridge" if bi_ < 2 else "rib", C.T @ C * (EI * ds))
         M = M + Bm.T @ sp.diags(np.full(n, mlin * ds)) @ Bm
+        if bi_ < 2:
+            # Twist: the slope across the bridge's width, its rate of change along it (stiffness)
+            # and its rotary inertia
+            w_ = TREBLE_W if bi_ == 0 else BASS_W
+            Tw = (interp_rows(xs, ys + 0.5 * w_) - interp_rows(xs, ys - 0.5 * w_)) / w_
+            D1 = sp.diags([-np.ones(n - 1), np.ones(n - 1)], [0, 1], shape=(n - 1, n)) / ds
+            K = K + part("bridge", (D1 @ Tw).T @ (D1 @ Tw) * (BRIDGE_G * 0.141 * w_ ** 4 * ds))
+            M = M + Tw.T @ Tw * (750.0 * w_ * w_ * (2 * w_ * w_) / 12.0 * ds)
+            if bi_ == 1:
+                # The apron at the bass bridge's tail end (A0, t = 1)
+                tail = interp_rows(xs[-1:], ys[-1:])
+                M = M + tail.T @ tail * APRON_M
+                K = K + part("bridge", tail.T @ tail * APRON_K)
 
     # --- Crown and downbearing (see the constants above)
     cR, sR = -s_, c                                         # rib direction (across the grain)
@@ -591,6 +612,12 @@ def main():
         zx.append(tx[k]); zy.append(ty[k] - PIN_OFFSET)
     Z = interp_rows(np.array(zx), np.array(zy))
     phi = (Z @ full)                                        # (zones, n)
+    # Sideways: the strings' sideways pull acts at the bridge top, one bridge height above the
+    # board, and tilts the bridge along its length: the board's slope along the bridge there
+    hz = np.array([BASS_W] * N_BASS + [TREBLE_W] * N_TREBLE) + 0.5 * H_MID
+    ex = 0.012
+    phiH = hz[:, None] * ((interp_rows(np.array(zx) + ex, np.array(zy)) - interp_rows(np.array(zx) - ex, np.array(zy))) @ full) / (2 * ex)
+    print(f"sideways bridge shapes: {np.abs(phiH).mean() / np.abs(phi).mean() * 100:.1f}% of the up-and-down ones")
     # The bridge's slope across its width at each zone (its rocking), for reference
     Zb = interp_rows(np.array(zx), np.array(zy) + 2 * PIN_OFFSET)
     rock = np.abs(Z @ full - Zb @ full).mean() / max(np.abs(phi).mean(), 1e-12)
@@ -671,12 +698,12 @@ def main():
         fo.write("// materials it strains), air (leaving the open case); and the rim and air shares of the mode.\n")
         fo.write(f"static constexpr int kBoardModeCount = {int(keepB.sum())};\n")
         fo.write(f"static constexpr int kBoardZones = {N_BASS + N_TREBLE};\n")
-        fo.write("struct BoardModeData { float f; float phi[%d]; float radLeft, radRight, micLeft, micRight, volume, "
-                 "radiationLoss, structLoss, airLoss, rimShare, airShare; };\n" % (N_BASS + N_TREBLE))
+        fo.write("struct BoardModeData { float f; float phi[%d]; float phiH[%d]; float radLeft, radRight, micLeft, micRight, volume, "
+                 "radiationLoss, structLoss, airLoss, rimShare, airShare; };\n" % (N_BASS + N_TREBLE, N_BASS + N_TREBLE))
         fo.write("static const BoardModeData kBoardModes[kBoardModeCount] = {\n")
         for i in np.flatnonzero(keepB):
-            fo.write("    { %.2ff, { %s }, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s },\n" % (
-                f[i], ", ".join(lit(v) for v in phi[:, i]), lit(radL[i]), lit(radR[i]), lit(micL[i]), lit(micR[i]),
+            fo.write("    { %.2ff, { %s }, { %s }, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s },\n" % (
+                f[i], ", ".join(lit(v) for v in phi[:, i]), ", ".join(lit(v) for v in phiH[:, i]), lit(radL[i]), lit(radR[i]), lit(micL[i]), lit(micR[i]),
                 lit(vol[i]), lit(etaRad[i]), lit(etaStruct[i]), lit(etaAir[i]), lit(rimShare[i] + braceShare[i]), lit(airE[i])))
         fo.write("};\n")
     print("wrote", args.out)
