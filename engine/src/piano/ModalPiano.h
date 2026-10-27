@@ -11,6 +11,7 @@ Licensed under the GNU Affero General Public License v3 or later (see LICENSE).
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <complex>
 #include <vector>
 
 namespace openpiano::piano
@@ -170,6 +171,7 @@ private:
         long long struckAt = -1;     // and when it was last struck
         double feltSet = 0;          // how far the felt is still squeezed from earlier blows (0-1)
         int damperPending = 0;       // samples until the rising key lets the damper land
+        int damperRamp = 0;          // samples left while the landed felt settles into its full grip
         bool down = false;
         bool sostenuto = false;      // damper held up by the sostenuto pedal
         Hammer hammer;
@@ -181,6 +183,8 @@ private:
     void addLongitudinal (String& s, const StringSpec& spec);
     void buildSoundboard();
     void updateDamping (int keyIndex);
+    // The pole a string's mode rests at now: free, damped, or part way while the felt settles
+    std::complex<double> restingPole (const String& s, const KeyState& ks, size_t j) const;
     void setActivity (String& s, Activity a);
     void runHammerKey (int keyIndex, double bridgeAcceleration, double& forceSum, double& forceLeft, double& forceRight);
     double runLongitudinal (const String& s);
