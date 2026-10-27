@@ -8,7 +8,7 @@ Licensed under the GNU Affero General Public License v3 or later (see LICENSE).
 // for comparing the model with recorded single-note samples (tools/calibrate).
 //
 //   openpiano-notes [--notes 21,33,45] [--vel 40,60,92,124] [--seconds S] [--out DIR]
-//                   [--rate HZ] [--threads N]
+//                   [--rate HZ] [--threads N] [--close-mics]
 //
 // Each note is struck at time 0 and its key held until the end. Files are
 // DIR/n<midi>_v<velocity>.wav (stereo, 32-bit float).
@@ -41,6 +41,7 @@ static std::vector<int> parseList (const std::string& text)
 
 int main (int argc, char** argv)
 {
+    bool closeMics = false;
     std::vector<int> notes { 21, 33, 45, 57, 69, 81, 93, 105 };
     std::vector<int> velocities { 40, 60, 92, 124 };
     double seconds = 8.0;
@@ -61,6 +62,7 @@ int main (int argc, char** argv)
         else if (arg == "--seconds") seconds = std::atof (next().c_str());
         else if (arg == "--out") outDir = next();
         else if (arg == "--rate") rate = std::atoi (next().c_str());
+        else if (arg == "--close-mics") closeMics = true;
         else if (arg == "--threads") threads = (unsigned) std::max (1, std::atoi (next().c_str()));
         else
         {
@@ -85,6 +87,7 @@ int main (int argc, char** argv)
         {
             const auto [note, vel] = jobs[j];
             PianoInstrument piano;
+            piano.setCloseMics (closeMics);
             piano.prepare (rate, block);
             piano.noteOn (note, vel);
             const auto total = (size_t) (seconds * rate);

@@ -1,3 +1,4 @@
+#include <cstdlib>
 /*
 OpenPiano: an open source piano engine based on physical modeling
 Copyright (C) 2021-2022 Michele Perrone, and contributors
@@ -39,6 +40,7 @@ void PianoInstrument::prepare (double sampleRate, int maxBlockSize)
     this->sampleRate = sampleRate;
     piano::ModalPiano::Settings settings;
     settings.age = controls.age;
+    settings.closeMics = closeMics;
     piano->prepare (sampleRate, settings);
     builtAge = controls.age;
     ageSettleSamples = 0;
@@ -56,10 +58,13 @@ void PianoInstrument::reset()
 
 double PianoInstrument::hammerVelocityFor (int velocity) const
 {
+    // A keyboard rarely sends above ~100, so the plugin's Dynamics knob defaults to 0.8 (lighter touch)
     // Hammer speed from 0.6 m/s (pianissimo) to 5 m/s (fortissimo), which gives about the
     // loudness range of recorded grands (10 dB in the bass to 15-18 dB in the treble).
     const double x = std::pow (std::clamp (velocity, 1, 127) / 127.0, (double) controls.dynamicsCurve);
-    return 0.6 * std::pow (5.0 / 0.6, x);
+    // The 0.8 bends the middle velocities up so loudness against velocity follows the
+    // recorded grand's layers (fitted at velocities 40, 60, 92 and 124)
+    return 0.6 * std::pow (5.0 / 0.6, std::pow (x, 0.8));
 }
 
 void PianoInstrument::noteOn (int midiNote, int velocity)
@@ -142,6 +147,7 @@ void PianoInstrument::process (float* const* outputs, int numChannels, int numSa
             // Rebuild with the new age. Sounding notes stop; held keys and the pedal carry over.
             piano::ModalPiano::Settings settings;
             settings.age = controls.age;
+            settings.closeMics = closeMics;
             piano->prepare (sampleRate, settings);
             builtAge = controls.age;
             applyLiveControls();

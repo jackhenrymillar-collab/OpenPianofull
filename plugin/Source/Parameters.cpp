@@ -30,7 +30,7 @@ AudioProcessorValueTreeState::ParameterLayout createLayout()
             .withStringFromValueFunction ([] (float v, int) { return String (v, 1) + " dB"; })));
 
     layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { dynamics, 1 }, "Dynamics", scaleRange (0.5f, 2.0f), 1.0f,
+        ParameterID { dynamics, 1 }, "Dynamics", scaleRange (0.5f, 2.0f), 0.8f,
         AudioParameterFloatAttributes()
             .withStringFromValueFunction ([] (float v, int)
             {
@@ -78,11 +78,11 @@ AudioProcessorValueTreeState::ParameterLayout createLayout()
 const std::vector<FactoryPreset>& factoryPresets()
 {
     static const std::vector<FactoryPreset> presets {
-        { "Open Grand",     0.0f, 1.0f, 1.0f,  1.0f },
+        { "Open Grand",     0.0f, 0.8f, 1.0f,  1.0f },
         { "Soft Felt",      2.0f, 1.3f, 0.45f, 1.0f },
-        { "Bright Hammers", -3.0f, 1.0f, 2.2f, 1.0f },
+        { "Bright Hammers", -3.0f, 0.8f, 2.2f, 1.0f },
         { "Gentle Touch",   0.0f, 1.6f, 0.8f,  1.0f },
-        { "Quick Dampers",  0.0f, 1.0f, 1.0f,  3.0f },
+        { "Quick Dampers",  0.0f, 0.8f, 1.0f,  3.0f },
     };
     return presets;
 }

@@ -38,6 +38,10 @@ public:
     void setSostenuto (bool pedalDown) override;
     void setSoftPedal (float amount) override;
 
+    // Listening position: false = the player's seat, true = a close stereo mic pair over the
+    // strings, as on studio sample recordings. Takes effect at the next prepare().
+    void setCloseMics (bool on) { closeMics = on; }
+
     // Lifts a key's dampers without striking (a key pressed too gently to sound)
     void holdKeySilently (int midiNote);
 
@@ -58,6 +62,7 @@ public:
     const piano::ModalPiano& model() const { return *piano; }
 
 private:
+    bool closeMics = false;
     std::unique_ptr<piano::ModalPiano> piano;
     std::vector<float> scratch;
     PianoControls controls;

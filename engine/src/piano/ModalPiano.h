@@ -56,7 +56,7 @@ public:
         bool horizontal = true;             // second (sideways) vibration direction
         bool longitudinal = true;           // lengthwise waves and phantom partials
         bool duplex = true;                 // undamped string segments behind the treble bridge
-        double longitudinalCoupling = 1.4;  // share of the lengthwise force that reaches the board (via bridge tilt)
+        double longitudinalCoupling = 0.2;  // share of the lengthwise force that reaches the board (via bridge tilt); 0.2 fits the recorded bass's loud brightness
         int longitudinalOrders = 16;        // lengthwise modes per string
         int longitudinalPartials = 64;     // transverse partials that drive them
         double longitudinalLoss = 40.0;     // decay of free lengthwise ringing [1/s]
@@ -76,6 +76,7 @@ public:
         double tensionLoss = 0.0;         // and lose their high partials faster while it lasts
         double air = 1.0;                   // air trapped under the board, between the rim and the floor
         double lid = 1.0;                   // lid opening (0 = closed, 1 = fully open)
+        bool closeMics = false;             // listen from a close stereo mic pair (as on studio sample sets) instead of the player's seat
         double age = 0.0;                   // 0 = new piano, 1 = old and worn (see prepare)
         double shankFlex = 1.0;             // hammer shank bending and head rocking (0 = rigid hammer)
         double softLift = 0.3;              // lifts the volume of soft bass notes without changing their tone, fading to none at the top (0 = off)
@@ -148,6 +149,7 @@ private:
         double headPos = 0, headVel = 0;   // the head's wooden core, which rocks against the tip
         double shankPos = 0, shankVel = 0; // the shank, which bends under the head
         int samplesSinceStrike = 0, samplesApart = 0;
+        double feltSet = 0;        // copied from the key at the strike
         std::array<double, 3> gap {};          // hammer not perfectly level across the unison
         std::array<double, 3> lastCompression {};
         std::array<double, 3> feltHistory {};  // relaxing part of the felt force, per string
@@ -164,6 +166,8 @@ private:
         int duplexString = -1;
         bool tensionApplied = false;
         long long releasedAt = -1;   // sample clock when the key was let go
+        long long struckAt = -1;     // and when it was last struck
+        double feltSet = 0;          // how far the felt is still squeezed from earlier blows (0-1)
         int damperPending = 0;       // samples until the rising key lets the damper land
         bool down = false;
         bool sostenuto = false;      // damper held up by the sostenuto pedal
@@ -183,6 +187,8 @@ private:
     void applyTension();
     int tensionCounter = 0;
     long long sampleClock = 0;
+    std::vector<double> tuneFactor;
+    static constexpr std::array<double, 88> kTunerCents { 0.4, 0.6, -0.4, 0.2, -0.3, -0.4, -0.7, -1.0, 1.4, 0.2, 0.6, 0.6, -0.1, -0.9, 0.6, 0.6, 0.1, -0.1, -0.7, -0.2, -2.22, -3.28, -3.62, 1.04, 1.75, -0.54, -0.82, -0.24, -0.0, 0.4, 0.84, -0.06, -0.18, 0.52, 0.96, 0.48, 0.6, -0.02, -0.0, -0.1, -0.16, -0.2, -0.96, -1.3, -1.96, -1.0, -1.16, 1.56, -0.22, 0.06, 0.94, -0.86, -2.02, 1.02, 0.18, -0.12, -1.38, -1.16, 0.72, 0.72, -0.9, 0.74, 0.52, 0.9, -0.8, -0.98, -0.68, 0.6, 1.0, 0.74, 0.54, -0.34, 0.62, 0.68, 0.6, 0.44, -0.5, -0.78, -0.3, 0.96, 1.78, 0.26, -0.2, 0.22, 0.28, -0.04, 0.16, 0.02 };   // filled by the tuning pass   // the tuner's correction per key, for the body's pull on its pitch
 
     // Each string's modes are stored in two parts: the low ones it keeps while only
     // resonating sit in one region, back to back with every other string's, and the rest
@@ -272,6 +278,8 @@ private:
         std::vector<float> wr, wi, qr, qi, hr, hi, omega, sigma, radLeft, radRight;
         std::vector<float> phi;    // mode shape at each bridge zone, zone by zone
         std::vector<float> scratchF, scratchV;
+        std::vector<float> phiH;
+        std::vector<float> phiSum; // every zone's shape added up: a push spread evenly along the bridge   // sideways shapes at the zones (bridge tilt), same layout as phi
         std::vector<float> volume; // net volume each mode pushes (drives the air under the board)
     } board;
 
@@ -332,22 +340,27 @@ private:
     // The bridge is split into zones along its length (three on the bass bridge, thirteen on the
     // treble bridge); each key's strings press on their own zone, and every board mode moves each
     // zone by its own amount
-    static constexpr int kZones = 16, kBassZones = 3;
+    static constexpr int kZones = 32, kBassZones = 4;   // about 2.4 keys per zone on the treble bridge, 5 on the bass bridge
     std::vector<int> keyZone;
     std::array<double, kZones> bridgeMassCoeff {}, bridgeMassState {};
+    double actionSpread = 0;                    // the action's push, spread along the bridge
+    std::array<uint8_t, kZones> zoneLive {};   // zones with a string being run this block
+    std::array<double, kZones> zoneSideForce {}, zoneSideAccel {}, lastZoneSideVel {};
+    std::array<double, kZones> highAdmittance {}, highPassState {}, highPassState2 {};   // the many-mode board above the solved modes
+    double highPassCoeff = 0, highRadiation = 0, highLeftState = 0, highRightState = 0, highLeftState2 = 0, highRightState2 = 0;
     // Where a zone sits along the bridges on the scale of the earlier eight-zone layout (0..7):
     // 0..1 the bass bridge, 2..7 the treble bridge from its low end to the top
     static double layoutPosition (int zone);
     // Fitted to recorded notes (tools/calibrate), on the eight-zone layout and interpolated:
     // how strongly each part of the bridge couples to the board...
-    static constexpr std::array<double, 8> zoneCouplingFit { 0.78, 1.25, 1.1, 1.1, 1.1, 1.0, 0.9, 0.8 };
+    static constexpr std::array<double, 8> zoneCouplingFit { 0.39, 0.62, 0.6, 0.77, 0.99, 0.9, 0.5, 0.56 };
     // ...and how much of its motion is the dense, resistive part of the board
-    static constexpr std::array<double, 8> zoneResistanceFit { 1.0, 1.2, 1.5, 1.4, 1.0, 0.49, 0.6, 1.6 };
+    static constexpr std::array<double, 8> zoneResistanceFit { 1.0, 1.2, 1.5, 1.4, 2.0, 1.5, 0.6, 1.6 };
     std::array<double, kZones> zoneCoupling {}, zoneResistance {};
     std::array<double, kZones> zoneForce {}, zoneAcceleration {}, lastZoneVelocity {}, zoneBoardVelocity {};
     double lastBridgeVelocity = 0, bridgeAcceleration = 0;
     double lastHorizontalVelocity = 0, horizontalAcceleration = 0;
-    double resistiveLpLeft = 0, resistiveLpRight = 0, lpCoeff = 0;
+    double resistiveLpLeft = 0, resistiveLpRight = 0, lpCoeff = 0, resistiveLp2Left = 0, resistiveLp2Right = 0, resistiveLp3Left = 0, resistiveLp3Right = 0, lp2Coeff = 0;
     double dcLeft = 0, dcRight = 0, dcInLeft = 0, dcInRight = 0, dcCoeff = 0;
     double outputGain = 1.0;
     double airLoad = 5.0; // N per unit of air pressure on the board
@@ -360,8 +373,9 @@ private:
     // The iron frame at the strings' far ends (agraffes, pressure bar): a stiff, heavy,
     // barely damped structure. Its few modes are pushed by every sounding string's far end
     // and move those ends back, coupling the strings a second way.
-    struct Frame { std::vector<float> wr, wi, qr, qi, hr, hi, omega, sigma, rad; double accel = 0, lastVel = 0, knock = 0, knockDecay = 0; } frame;
+    struct Frame { std::vector<float> wr, wi, qr, qi, hr, hi, omega, sigma, rad, phi; std::array<double, kZones> accel {}, lastVel {}, force {}; double knock = 0, knockDecay = 0; } frame;
     void buildFrame();
+    double radScale = 1.0;   // output units of the body model's radiation (set in buildSoundboard)
     void runFrame (double& left, double& right);
 
     // Neighbouring strings whose modes sit back to back are stepped in one go
