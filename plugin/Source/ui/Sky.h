@@ -10,10 +10,10 @@ Licensed under the GNU Affero General Public License v3 or later (see LICENSE).
 
 namespace sky
 {
-    // Paints the daylight sky: gradient, drifting clouds, and the sun peeking up from
-    // below the bottom edge. Expensive: render once into an image and reuse it.
+    // Paints the dusk sky: night fading to a sunset band, faint streaks of cloud, a few stars,
+    // a crescent moon and a black mountain ridge. Expensive: render once into an image and reuse it.
     void paint (juce::Graphics& g, juce::Rectangle<float> area);
 
-    // A small sun icon for the wordmark.
-    void paintSunIcon (juce::Graphics& g, juce::Rectangle<float> area, juce::Colour colour);
+    // A small crescent moon for the wordmark.
+    void paintMoonIcon (juce::Graphics& g, juce::Rectangle<float> area, juce::Colour colour);
 }

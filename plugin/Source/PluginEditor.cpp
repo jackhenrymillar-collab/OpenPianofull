@@ -74,6 +74,7 @@ OpenPianoAudioProcessorEditor::OpenPianoAudioProcessorEditor (OpenPianoAudioProc
         addAndMakeVisible (s);
     smallKnobSlots[0].setVisible (false);
     smallKnobSlots[1].setVisible (false);
+    smallKnobSlots[2].setVisible (false);
     addAndMakeVisible (action);
     addAndMakeVisible (age);
     addAndMakeVisible (room);
@@ -161,8 +162,8 @@ void OpenPianoAudioProcessorEditor::paint (Graphics& g)
     g.drawImage (skyImage, getLocalBounds().toFloat());
 
     // Wordmark
-    sky::paintSunIcon (g, { 40.0f, 25.0f, 26.0f, 26.0f }, Colours::white);
-    g.setColour (Colours::white);
+    sky::paintMoonIcon (g, { 40.0f, 25.0f, 26.0f, 26.0f }, tc::moon);
+    g.setColour (tc::ink);
     g.setFont (theme::serif (30.0f, 0.32f));
     g.drawText (String (JucePlugin_Name).toUpperCase(), Rectangle<float> (78.0f, 17.0f, 360.0f, 42.0f), Justification::centredLeft, false);
 
@@ -195,7 +196,7 @@ void OpenPianoAudioProcessorEditor::paint (Graphics& g)
 
     // Divider between the main knobs and the reserved smaller ones
     const auto first = smallKnobSlots.front().getBounds().toFloat();
-    g.setColour (Colours::white.withAlpha (0.7f));
+    g.setColour (Colours::white.withAlpha (0.22f));
     g.fillRect (Rectangle<float> (first.getX() - 22.0f, first.getY() + 6.0f, 1.0f, first.getHeight() - 20.0f));
 }
 

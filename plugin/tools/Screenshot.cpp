@@ -4,7 +4,7 @@ Copyright (C) 2021-2022 Michele Perrone, and contributors
 Licensed under the GNU Affero General Public License v3 or later (see LICENSE).
 */
 
-// Saves a PNG of the plugin window without a host: openpiano-screenshot out.png [scale]
+// Saves a PNG of the plugin window without a host: openpiano-screenshot out.png [scale] [keybed 0-2]
 // Useful for reviewing UI changes on a build machine. On Linux, run it under xvfb-run.
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -26,7 +26,11 @@ int main (int argc, char** argv)
     std::unique_ptr<juce::AudioProcessorEditor> editor (processor->createEditor());
     editor->setVisible (true);
     if (auto* e = dynamic_cast<OpenPianoAudioProcessorEditor*> (editor.get()))
+    {
         e->previewGlow(); // show lit and fading keys
+        if (argc > 3) // keybed look: 0 smoked glass, 1 silhouette, 2 horizon
+            e->setKeybedStyle ((widgets::KeybedStyle) juce::jlimit (0, 2, std::atoi (argv[3])));
+    }
 
     juce::Image image (juce::Image::ARGB, juce::roundToInt (editor->getWidth() * scale),
                        juce::roundToInt (editor->getHeight() * scale), true);

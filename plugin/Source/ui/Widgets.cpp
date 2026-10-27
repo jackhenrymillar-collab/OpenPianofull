@@ -18,7 +18,7 @@ SkyLookAndFeel::SkyLookAndFeel()
 {
     setColour (TextButton::textColourOffId, tc::ink);
     setColour (TextButton::textColourOnId, tc::ink);
-    setColour (TooltipWindow::backgroundColourId, Colour (0xf2ffffff));
+    setColour (TooltipWindow::backgroundColourId, Colour (0xf2141834));
     setColour (TooltipWindow::textColourId, tc::ink);
     setColour (TooltipWindow::outlineColourId, tc::glassBorder);
 }
@@ -32,7 +32,7 @@ void SkyLookAndFeel::drawPearlKnob (Graphics& g, Rectangle<float> bounds, float 
     // Soft cast shadow, slightly cool
     for (int i = 6; i >= 1; --i)
     {
-        g.setColour (tc::ink.withAlpha (0.035f));
+        g.setColour (tc::shade.withAlpha (0.07f));
         g.fillEllipse (disc.expanded ((float) i * 0.8f).translated (0, (float) i * 0.9f));
     }
 
@@ -54,9 +54,9 @@ void SkyLookAndFeel::drawPearlKnob (Graphics& g, Rectangle<float> bounds, float 
     g.fillEllipse (disc.reduced (r * 0.12f));
 
     // Rim
-    g.setColour (hot ? tc::amber.withAlpha (0.7f) : Colours::white.withAlpha (0.95f));
+    g.setColour (hot ? tc::amber.withAlpha (0.8f) : Colours::white.withAlpha (0.55f));
     g.drawEllipse (disc.reduced (0.5f), hot ? 1.4f : 1.0f);
-    g.setColour (tc::ink.withAlpha (0.10f));
+    g.setColour (tc::shade.withAlpha (0.35f));
     g.drawEllipse (disc.expanded (0.5f), 0.8f);
 
     if (! showPointer)
@@ -88,14 +88,14 @@ void SkyLookAndFeel::drawLinearSlider (Graphics& g, int x, int y, int width, int
     const auto track = area.withSizeKeepingCentre (area.getWidth() - 16.0f, trackH);
 
     // Groove
-    g.setColour (tc::ink.withAlpha (0.12f));
+    g.setColour (tc::shade.withAlpha (0.45f));
     g.fillRoundedRectangle (track, trackH * 0.5f);
-    g.setColour (Colours::white.withAlpha (0.8f));
+    g.setColour (Colours::white.withAlpha (0.25f));
     g.drawRoundedRectangle (track.expanded (0.5f), trackH * 0.5f, 0.8f);
 
     // Filled part warms from pale gold to amber
     const auto filled = track.withRight (jlimit (track.getX(), track.getRight(), sliderPos));
-    ColourGradient fill (Colour (0xffffe0a0), filled.getTopLeft(), tc::amber, filled.getTopRight(), false);
+    ColourGradient fill (Colour (0xff8a4a6a), filled.getTopLeft(), tc::amber, filled.getTopRight(), false);
     g.setGradientFill (fill);
     g.fillRoundedRectangle (filled, trackH * 0.5f);
 
@@ -122,7 +122,7 @@ void SkyLookAndFeel::drawButtonBackground (Graphics& g, Button& button, const Co
     theme::drawGlassPanel (g, r, corner, jmin (1.0f, opacity));
     if (opacity > 1.0f)
     {
-        g.setColour (Colours::white.withAlpha ((opacity - 1.0f) * 0.5f));
+        g.setColour (Colours::white.withAlpha ((opacity - 1.0f) * 0.25f));
         g.fillRoundedRectangle (r, corner);
     }
 
@@ -153,9 +153,9 @@ void SkyLookAndFeel::drawButtonText (Graphics& g, TextButton& button, bool, bool
         AttributedString as;
         as.setJustification (Justification::centred);
         const auto f = theme::sans (15.0f, 0.1f);
-        as.append ("A", f, b ? tc::inkDim : tc::amber.darker (0.15f));
+        as.append ("A", f, b ? tc::inkDim : tc::amber);
         as.append ("  /  ", f, tc::inkDim);
-        as.append ("B", f, b ? tc::amber.darker (0.15f) : tc::inkDim);
+        as.append ("B", f, b ? tc::amber : tc::inkDim);
         as.draw (g, area);
         return;
     }
@@ -164,7 +164,7 @@ void SkyLookAndFeel::drawButtonText (Graphics& g, TextButton& button, bool, bool
     const auto text = pill ? button.getButtonText().toUpperCase() : button.getButtonText();
     const auto badge = button.getProperties()[badgeKey].toString();
 
-    g.setColour ((button.getToggleState() && pill ? tc::amber.darker (0.35f) : tc::ink).withMultipliedAlpha (alpha));
+    g.setColour ((button.getToggleState() && pill ? tc::amber.brighter (0.2f) : tc::ink).withMultipliedAlpha (alpha));
     g.setFont (getTextButtonFont (button, (int) area.getHeight()));
 
     if (badge.isEmpty())
@@ -176,7 +176,7 @@ void SkyLookAndFeel::drawButtonText (Graphics& g, TextButton& button, bool, bool
     // Label with a small badge underneath, e.g. "soon"
     auto top = area.removeFromTop (area.getHeight() * 0.6f);
     g.drawText (text, top.withTrimmedTop (2.0f), Justification::centredBottom, false);
-    g.setColour (tc::amber.darker (0.3f).withAlpha (0.9f));
+    g.setColour (tc::amber.withAlpha (0.9f));
     g.setFont (theme::label (8.5f));
     g.drawText (badge.toUpperCase(), area.withTrimmedBottom (2.0f), Justification::centredTop, false);
 }
@@ -253,7 +253,7 @@ void ButtonSlot::paint (Graphics& g)
     Path dashed;
     const float dashes[] = { 4.0f, 4.0f };
     PathStrokeType (1.0f).createDashedStroke (dashed, outline, dashes, 2);
-    g.setColour (Colours::white.withAlpha (0.12f));
+    g.setColour (Colours::white.withAlpha (0.04f));
     g.fillPath (outline);
     g.setColour (tc::inkDim.withAlpha (0.4f));
     g.fillPath (dashed);
@@ -318,7 +318,7 @@ void PresetBar::paint (Graphics& g)
         p.startNewSubPath (c.x + (left ? s * 0.5f : -s * 0.5f), c.y - s);
         p.lineTo (c.x + (left ? -s * 0.5f : s * 0.5f), c.y);
         p.lineTo (c.x + (left ? s * 0.5f : -s * 0.5f), c.y + s);
-        g.setColour (tc::amber.darker (hot ? 0.0f : 0.15f));
+        g.setColour (tc::amber.brighter (hot ? 0.25f : 0.0f));
         g.strokePath (p, PathStrokeType (1.7f, PathStrokeType::curved, PathStrokeType::rounded));
     };
     chevron (leftArrow(), true, hover == -1);
@@ -469,48 +469,120 @@ void GlassKeyboard::updateGlow()
     }
 }
 
+void GlassKeyboard::setStyle (KeybedStyle newStyle)
+{
+    style = newStyle;
+    repaint();
+}
+
+static void drawCLabel (Graphics& g, int note, Rectangle<float> key, Colour colour)
+{
+    if (note % 12 != 0)
+        return;
+    g.setColour (colour);
+    g.setFont (theme::sans (10.0f));
+    g.drawText (MidiMessage::getMidiNoteName (note, true, true, 4), key.removeFromBottom (18.0f), Justification::centred, false);
+}
+
 void GlassKeyboard::drawWhiteNote (int note, Graphics& g, Rectangle<float> area, bool isDown, bool isOver, Colour, Colour)
 {
     const float lit = glow[(size_t) note];
     auto key = area.reduced (1.5f, 0.0f).withTrimmedBottom (1.0f);
     const float corner = 5.0f;
 
-    // Frosted glass key
-    // Clear glass: mostly see-through, with a faint frost that thickens towards the front
-    ColourGradient glass (Colours::white.withAlpha (0.16f), key.getTopLeft(),
-                          Colours::white.withAlpha (0.30f), key.getBottomLeft(), false);
-    g.setGradientFill (glass);
+    if (style == KeybedStyle::smokedGlass)
+    {
+        // Smoked glass: the sky shows through, darkened, and each key's front edge catches
+        // the sunset glow from below
+        ColourGradient glass (Colour (0xff0c1030).withAlpha (0.30f), key.getTopLeft(),
+                              Colour (0xff1a1430).withAlpha (0.45f), key.getBottomLeft(), false);
+        g.setGradientFill (glass);
+        g.fillRoundedRectangle (key, corner);
+
+        ColourGradient rim (tc::sunset.withAlpha (0.0f), { 0, key.getBottom() - key.getHeight() * 0.35f },
+                            tc::gold.withAlpha (0.35f), { 0, key.getBottom() }, false);
+        g.setGradientFill (rim);
+        g.fillRoundedRectangle (key, corner);
+
+        if (lit > 0.0f)
+        {
+            ColourGradient light (tc::peach.withAlpha (0.35f * lit), key.getTopLeft(),
+                                  tc::sunset.withAlpha (0.95f * lit), key.getBottomLeft(), false);
+            g.setGradientFill (light);
+            g.fillRoundedRectangle (key, corner);
+        }
+        if (isOver && ! isDown)
+        {
+            g.setColour (Colours::white.withAlpha (0.08f));
+            g.fillRoundedRectangle (key, corner);
+        }
+
+        ColourGradient edge (Colours::white.withAlpha (0.30f), key.getTopLeft(),
+                             tc::gold.withAlpha (0.75f), key.getBottomLeft(), false);
+        g.setGradientFill (edge);
+        g.drawRoundedRectangle (key.reduced (0.5f), corner, 1.0f + lit * 0.6f);
+        g.setColour (Colours::white.withAlpha (0.12f));
+        g.fillRect (key.reduced (0.0f, corner).withX (key.getX() + 2.0f).withWidth (1.2f));
+        drawCLabel (g, note, key, tc::ink.withAlpha (0.75f));
+        return;
+    }
+
+    if (style == KeybedStyle::silhouette)
+    {
+        // Silhouette: solid black keys like the mountain ridge, with only a hairline of
+        // sunset light along the top of each one. Lit keys glow from within like the horizon.
+        auto k = area.reduced (0.6f, 0.0f).withTrimmedBottom (1.0f);
+        ColourGradient body (Colour (0xff0b0b12), k.getTopLeft(), Colour (0xff040407), k.getBottomLeft(), false);
+        g.setGradientFill (body);
+        g.fillRoundedRectangle (k, 3.0f);
+
+        if (lit > 0.0f)
+        {
+            ColourGradient light (Colour (0xff8a3a1c).withAlpha (0.55f * lit), k.getTopLeft(),
+                                  tc::sunset.withAlpha (0.95f * lit), { 0, k.getBottom() - k.getHeight() * 0.25f }, false);
+            light.addColour (1.0, tc::gold.withAlpha (lit));
+            g.setGradientFill (light);
+            g.fillRoundedRectangle (k, 3.0f);
+        }
+        if (isOver && ! isDown)
+        {
+            g.setColour (Colours::white.withAlpha (0.05f));
+            g.fillRoundedRectangle (k, 3.0f);
+        }
+
+        // Gap line between keys and a warm lip at the front
+        g.setColour (Colour (0xff2a2230));
+        g.fillRect (k.withX (k.getRight() - 0.8f).withWidth (0.8f));
+        g.setColour (tc::gold.withAlpha (0.55f + 0.45f * lit));
+        g.fillRoundedRectangle (k.withTop (k.getBottom() - 2.0f), 1.0f);
+        drawCLabel (g, note, k.withTrimmedBottom (2.0f), tc::inkDim.withAlpha (0.8f));
+        return;
+    }
+
+    // Horizon: each key carries the sky itself, from slate at the back through mauve and
+    // peach to a sunset-orange front edge. Lit keys brighten towards gold.
+    ColourGradient sky (tc::skyMid.withAlpha (0.55f), key.getTopLeft(), tc::sunset.withAlpha (0.85f), key.getBottomLeft(), false);
+    sky.addColour (0.45, tc::skyLow.withAlpha (0.60f));
+    sky.addColour (0.78, tc::peach.withAlpha (0.75f));
+    g.setGradientFill (sky);
     g.fillRoundedRectangle (key, corner);
 
-    // Sunlight fill when lit, brightest at the front edge of the key
     if (lit > 0.0f)
     {
-        ColourGradient light (Colour (0xfffff3cf).withAlpha (0.55f * lit), key.getTopLeft(),
-                              tc::sunGlow.withAlpha (0.95f * lit), key.getBottomLeft(), false);
+        ColourGradient light (Colour (0xffffe6c0).withAlpha (0.45f * lit), key.getTopLeft(),
+                              tc::gold.withAlpha (lit), key.getBottomLeft(), false);
         g.setGradientFill (light);
         g.fillRoundedRectangle (key, corner);
     }
-
     if (isOver && ! isDown)
     {
-        g.setColour (Colours::white.withAlpha (0.25f));
+        g.setColour (Colours::white.withAlpha (0.12f));
         g.fillRoundedRectangle (key, corner);
     }
 
-    // Bright glass edge, warmer when lit
-    g.setColour (Colours::white.withAlpha (0.75f).interpolatedWith (tc::amber, lit * 0.6f));
+    g.setColour (Colours::white.withAlpha (0.35f).interpolatedWith (tc::gold, lit * 0.7f));
     g.drawRoundedRectangle (key.reduced (0.5f), corner, 1.0f + lit * 0.6f);
-    // A thin highlight down the left edge, like light catching a glass block
-    g.setColour (Colours::white.withAlpha (0.35f));
-    g.fillRect (key.reduced (0.0f, corner).withX (key.getX() + 2.0f).withWidth (1.2f));
-
-    if (note % 12 == 0) // label the Cs
-    {
-        g.setColour (Colours::white.withAlpha (0.9f));
-        g.setFont (theme::sans (10.0f));
-        g.drawText (MidiMessage::getMidiNoteName (note, true, true, 4), key.removeFromBottom (18.0f),
-                    Justification::centred, false);
-    }
+    drawCLabel (g, note, key, tc::ridge.withAlpha (0.7f));
 }
 
 void GlassKeyboard::drawBlackNote (int note, Graphics& g, Rectangle<float> area, bool isDown, bool isOver, Colour)
@@ -519,30 +591,57 @@ void GlassKeyboard::drawBlackNote (int note, Graphics& g, Rectangle<float> area,
     auto key = area.withTrimmedBottom (3.0f);
     const float corner = 4.0f;
 
-    // Tinted glass, darker at the front
-    ColourGradient glass (tc::ink.withAlpha (0.38f), key.getTopLeft(), tc::ink.withAlpha (0.58f), key.getBottomLeft(), false);
+    if (style == KeybedStyle::silhouette)
+    {
+        // Glossy black on matte black: told apart by a faint sheen and a cool rim
+        ColourGradient body (Colour (0xff17171f), key.getTopLeft(), Colour (0xff000000), key.getBottomLeft(), false);
+        g.setGradientFill (body);
+        g.fillRoundedRectangle (key, 2.5f);
+        if (lit > 0.0f)
+        {
+            ColourGradient light (tc::sunset.withAlpha (0.25f * lit), key.getTopLeft(), tc::gold.withAlpha (0.95f * lit), key.getBottomLeft(), false);
+            g.setGradientFill (light);
+            g.fillRoundedRectangle (key, 2.5f);
+        }
+        if (isOver && ! isDown)
+        {
+            g.setColour (Colours::white.withAlpha (0.06f));
+            g.fillRoundedRectangle (key, 2.5f);
+        }
+        g.setColour (tc::inkDim.withAlpha (0.35f));
+        g.drawRoundedRectangle (key.reduced (0.5f), 2.5f, 0.8f);
+        g.setColour (Colours::white.withAlpha (0.10f));
+        g.fillRoundedRectangle (key.reduced (key.getWidth() * 0.25f, 3.0f).withHeight (key.getHeight() * 0.5f), 1.5f);
+        return;
+    }
+
+    // Glass styles: dark indigo glass, nearly night-coloured
+    const auto top = style == KeybedStyle::horizon ? tc::skyHigh : Colour (0xff070914);
+    ColourGradient glass (top.withAlpha (0.80f), key.getTopLeft(), tc::skyTop.withAlpha (0.92f), key.getBottomLeft(), false);
     g.setGradientFill (glass);
     g.fillRoundedRectangle (key, corner);
 
     if (lit > 0.0f)
     {
-        ColourGradient light (tc::sunGlow.withAlpha (0.75f * lit), key.getTopLeft(),
-                              Colour (0xffffe6b0).withAlpha (0.95f * lit), key.getBottomLeft(), false);
+        ColourGradient light (tc::sunset.withAlpha (0.65f * lit), key.getTopLeft(),
+                              tc::gold.withAlpha (0.95f * lit), key.getBottomLeft(), false);
         g.setGradientFill (light);
         g.fillRoundedRectangle (key, corner);
     }
 
     if (isOver && ! isDown)
     {
-        g.setColour (Colours::white.withAlpha (0.12f));
+        g.setColour (Colours::white.withAlpha (0.10f));
         g.fillRoundedRectangle (key, corner);
     }
 
-    // Glass sheen
-    g.setColour (Colours::white.withAlpha (0.22f + 0.3f * lit));
+    // Glass sheen, and a warm catch-light on the front edge
+    g.setColour (Colours::white.withAlpha (0.16f + 0.3f * lit));
     g.drawRoundedRectangle (key.reduced (0.6f), corner, 0.9f);
-    g.setColour (Colours::white.withAlpha (0.18f));
+    g.setColour (Colours::white.withAlpha (0.10f));
     g.fillRoundedRectangle (key.reduced (key.getWidth() * 0.22f, 3.0f).withHeight (key.getHeight() * 0.45f), 2.0f);
+    g.setColour (tc::gold.withAlpha (0.45f));
+    g.fillRoundedRectangle (key.withTop (key.getBottom() - 1.5f).reduced (2.0f, 0.0f), 0.75f);
 }
 
 } // namespace widgets

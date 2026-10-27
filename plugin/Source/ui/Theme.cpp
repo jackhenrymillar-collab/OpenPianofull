@@ -57,15 +57,19 @@ void drawGlow (juce::Graphics& g, juce::Rectangle<float> r, float cornerRadius, 
 void drawGlassPanel (juce::Graphics& g, juce::Rectangle<float> r, float cornerRadius, float opacity)
 {
     // Soft shadow underneath
-    g.setColour (colours::ink.withAlpha (0.06f * opacity));
+    g.setColour (colours::shade.withAlpha (0.25f * opacity));
     g.fillRoundedRectangle (r.translated (0, 3.0f).expanded (1.0f), cornerRadius + 1.0f);
 
-    juce::ColourGradient fill (juce::Colours::white.withAlpha (0.50f * opacity), r.getTopLeft(),
-                               juce::Colours::white.withAlpha (0.28f * opacity), r.getBottomLeft(), false);
+    // Smoked glass: a little lighter at the top, where the sky is darkest
+    juce::ColourGradient fill (juce::Colour (0xff1c2148).withAlpha (0.42f * opacity), r.getTopLeft(),
+                               juce::Colour (0xff0a0c1e).withAlpha (0.38f * opacity), r.getBottomLeft(), false);
     g.setGradientFill (fill);
     g.fillRoundedRectangle (r, cornerRadius);
 
-    g.setColour (colours::glassBorder.withMultipliedAlpha (opacity));
+    // Hairline edge, catching a little warm light along the bottom
+    juce::ColourGradient edge (juce::Colours::white.withAlpha (0.28f * opacity), r.getTopLeft(),
+                               colours::sunset.withAlpha (0.35f * opacity), r.getBottomLeft(), false);
+    g.setGradientFill (edge);
     g.drawRoundedRectangle (r.reduced (0.5f), cornerRadius, 1.0f);
 }
 

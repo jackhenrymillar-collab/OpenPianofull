@@ -23,157 +23,113 @@ static void softBlob (Graphics& g, Point<float> centre, float rx, float ry, Colo
     g.fillEllipse (centre.x - rx, centre.y - rx, rx * 2, rx * 2);
 }
 
-static void cloud (Graphics& g, Point<float> c, float size, float alpha)
+static void crescent (Graphics& g, Point<float> c, float r, Colour colour)
 {
-    // A cumulus made of overlapping puffs, flatter at the base
-    Random rng ((int64) (c.x * 31 + c.y * 17));
-    for (int i = 0; i < 9; ++i)
-    {
-        const float dx = (rng.nextFloat() - 0.5f) * size * 1.6f;
-        const float dy = -rng.nextFloat() * size * 0.35f;
-        const float r = size * (0.35f + rng.nextFloat() * 0.3f);
-        softBlob (g, c.translated (dx, dy), r, r * 0.75f, Colours::white.withAlpha (alpha));
-    }
+    // The lit limb on the lower right, the shadowed part offset up and to the left
+    Path disc;
+    disc.addEllipse (c.x - r, c.y - r, r * 2, r * 2);
+    Path p (disc);
+    p.addEllipse (c.x - r * 1.32f, c.y - r * 1.38f, r * 2.05f, r * 2.05f);
+    p.setUsingNonZeroWinding (false);
+    Graphics::ScopedSaveState s (g);
+    g.reduceClipRegion (disc);
+    g.setColour (colour);
+    g.fillPath (p);
 }
 
-static void cumulus (Graphics& g, Point<float> c, float size, float alpha)
+static void ridge (Graphics& g, Rectangle<float> area, float baseY)
 {
-    // A bright, crisp-edged summer cumulus: many small dense puffs over a few big ones,
-    // with a faint blue-grey shade along the flat base
-    Random rng ((int64) (c.x * 31 + c.y * 17));
-    for (int i = 0; i < 7; ++i)
+    // A low, jagged mountain line, black against the sunset, with one small peak off centre
+    const float w = area.getWidth();
+    Random rng (4021);
+    Path p;
+    p.startNewSubPath (area.getX(), area.getBottom());
+    float y = baseY + 2.0f;
+    for (float x = 0.0f; x <= w; x += 6.0f)
     {
-        const float dx = (rng.nextFloat() - 0.5f) * size * 1.7f;
-        const float r = size * (0.32f + rng.nextFloat() * 0.25f);
-        softBlob (g, c.translated (dx, size * 0.18f), r, r * 0.55f, Colour (0xffc9d6ea).withAlpha (alpha * 0.55f));
-    }
-    for (int i = 0; i < 16; ++i)
-    {
-        const float dx = (rng.nextFloat() - 0.5f) * size * 1.6f;
-        const float dy = -rng.nextFloat() * size * 0.55f;
-        const float r = size * (0.22f + rng.nextFloat() * 0.25f);
-        softBlob (g, c.translated (dx, dy), r, r * 0.9f, Colours::white.withAlpha (alpha));
-        softBlob (g, c.translated (dx, dy), r * 0.6f, r * 0.55f, Colours::white.withAlpha (alpha * 0.8f));
-    }
-}
-
-static void wisp (Graphics& g, Point<float> c, float size, float alpha)
-{
-    Random rng ((int64) (c.x * 13 + c.y * 7));
-    for (int i = 0; i < 6; ++i)
-        softBlob (g, c.translated ((rng.nextFloat() - 0.5f) * size * 1.8f, (rng.nextFloat() - 0.5f) * size * 0.5f),
-                  size * (0.3f + 0.2f * rng.nextFloat()), size * 0.18f, Colours::white.withAlpha (alpha));
-}
-
-static void field (Graphics& g, Rectangle<float> area)
-{
-    // A field of rapeseed in flower, seen from inside it: a soft yellow mass at the bottom,
-    // then stems and clusters of four-petalled flowers rising against the sky
-    const float w = area.getWidth(), h = area.getHeight();
-    const float top = area.getBottom() - h * 0.17f;
-    Random rng (20240607);
-
-    // Distant, out-of-focus yellow
-    softBlob (g, { w * 0.5f, area.getBottom() - h * 0.05f }, w * 0.85f, h * 0.12f, tc::field.withAlpha (0.85f));
-    {
-        ColourGradient base (tc::field.withAlpha (0.0f), 0.0f, top + h * 0.06f, tc::field, 0.0f, area.getBottom() - h * 0.08f, false);
-        base.addColour (0.7, tc::field.interpolatedWith (tc::fieldDeep, 0.25f));
-        g.setGradientFill (base);
-        g.fillRect (area.withTop (top + h * 0.06f));
-    }
-
-    // Stems swaying a little, each topped with a loose cluster of flowers
-    for (int i = 0; i < 90; ++i)
-    {
-        const float x = rng.nextFloat() * w;
-        const float tipY = top + rng.nextFloat() * h * 0.10f;
-        const float lean = (rng.nextFloat() - 0.5f) * 30.0f;
-        Path stem;
-        stem.startNewSubPath (x, area.getBottom());
-        stem.quadraticTo (x + lean * 0.3f, (tipY + area.getBottom()) * 0.5f, x + lean, tipY);
-        g.setColour (tc::stem.withAlpha (0.55f + 0.3f * rng.nextFloat()));
-        g.strokePath (stem, PathStrokeType (1.0f + rng.nextFloat()));
-
-        const int flowers = 4 + rng.nextInt (6);
-        for (int f = 0; f < flowers; ++f)
+        y += (rng.nextFloat() - 0.5f) * 2.4f;
+        y = jlimit (baseY - 7.0f, baseY + 5.0f, y + (baseY - y) * 0.08f);
+        float bump = 0.0f;
+        const auto peak = [&] (float px, float width, float height)
         {
-            const auto p = Point<float> (x + lean + (rng.nextFloat() - 0.5f) * 22.0f, tipY + rng.nextFloat() * 30.0f - 6.0f);
-            const float r = 2.6f + rng.nextFloat() * 3.4f;
-            const auto petal = tc::field.interpolatedWith (Colour (0xfffff27a), rng.nextFloat() * 0.6f);
-            for (int k = 0; k < 4; ++k)
-            {
-                const float a = MathConstants<float>::halfPi * (float) k + rng.nextFloat() * 0.4f;
-                g.setColour (petal);
-                g.fillEllipse (Rectangle<float> (r * 1.1f, r * 1.1f).withCentre (p.getPointOnCircumference (r * 0.5f, a)));
-            }
-            g.setColour (tc::fieldDeep.withAlpha (0.7f));
-            g.fillEllipse (Rectangle<float> (r * 0.5f, r * 0.5f).withCentre (p));
-        }
+            const float d = (x - px) / width;
+            if (std::abs (d) < 1.0f) bump -= height * (1.0f - std::abs (d)) * (0.75f + 0.5f * rng.nextFloat());
+        };
+        peak (w * 0.50f, 26.0f, 10.0f);
+        peak (w * 0.365f, 14.0f, 6.0f);
+        peak (w * 0.24f, 40.0f, 5.0f);
+        peak (w * 0.82f, 60.0f, 6.0f);
+        p.lineTo (area.getX() + x, y + bump);
     }
+    p.lineTo (area.getRight(), area.getBottom());
+    p.closeSubPath();
+    g.setColour (tc::ridge);
+    g.fillPath (p);
 }
 
 void paint (Graphics& g, Rectangle<float> area)
 {
     const float w = area.getWidth(), h = area.getHeight();
+    const float horizonY = area.getY() + h * 0.905f;
 
-    // Sky: deep saturated blue overhead, paler towards the horizon
-    ColourGradient skyFill (tc::skyTop, area.getTopLeft(), tc::horizon, area.getBottomLeft(), false);
-    skyFill.addColour (0.45, tc::skyMid);
+    // Sky: night overhead, through indigo, slate and mauve to a sunset band at the ridge
+    ColourGradient skyFill (tc::skyTop, area.getTopLeft(), tc::gold, { area.getX(), horizonY }, false);
+    skyFill.addColour (0.22, tc::skyHigh);
+    skyFill.addColour (0.50, tc::skyMid);
+    skyFill.addColour (0.72, tc::skyLow);
+    skyFill.addColour (0.84, tc::peach);
+    skyFill.addColour (0.93, tc::sunset);
     g.setGradientFill (skyFill);
     g.fillRect (area);
 
-    // The sun, high in the sky just above the keyboard, with a bright starburst
-    const Point<float> sun (w * 0.47f, h * 0.075f);
-    const float sunR = 15.0f;
-    softBlob (g, sun, w * 0.40f, h * 0.40f, Colour (0xff9ccaff).withAlpha (0.45f)); // blue-white haze
-    softBlob (g, sun, 120.0f, 120.0f, Colours::white.withAlpha (0.45f));
+    // The sunset is a little brighter and more golden to the right, as in the photo
+    softBlob (g, { w * 0.86f, horizonY - 6.0f }, w * 0.45f, 46.0f, tc::gold.withAlpha (0.55f));
+    softBlob (g, { w * 0.25f, horizonY - 4.0f }, w * 0.40f, 22.0f, Colour (0xffe0501c).withAlpha (0.45f));
 
-    // Sparkle: thin tapering rays of different lengths
+    // Faint streaks of high cloud, stretched sideways and slightly tilted
     {
-        Random rng (77);
-        const int rays = 28;
-        for (int i = 0; i < rays; ++i)
+        Random rng (911);
+        for (int i = 0; i < 26; ++i)
         {
-            const float angle = MathConstants<float>::twoPi * ((float) i + 0.3f * rng.nextFloat()) / rays;
-            const float len = (i % 2 == 0 ? 150.0f : 85.0f) * (0.7f + 0.6f * rng.nextFloat());
-            const float half = 0.022f + 0.01f * rng.nextFloat();
-            Path ray;
-            ray.startNewSubPath (sun.getPointOnCircumference (sunR * 0.6f, angle - half * 6.0f));
-            ray.lineTo (sun.getPointOnCircumference (len, angle));
-            ray.lineTo (sun.getPointOnCircumference (sunR * 0.6f, angle + half * 6.0f));
-            ray.closeSubPath();
-            ColourGradient fade (Colours::white.withAlpha (0.85f), sun, Colours::white.withAlpha (0.0f),
-                                 sun.getPointOnCircumference (len, angle), true);
-            g.setGradientFill (fade);
-            g.fillPath (ray);
+            const float y = h * (0.12f + 0.62f * rng.nextFloat());
+            const float x = w * rng.nextFloat();
+            Graphics::ScopedSaveState s (g);
+            g.addTransform (AffineTransform::rotation (-0.06f, x, y));
+            const bool low = y > h * 0.5f;
+            const auto tint = low ? Colour (0xffb08a8a) : Colour (0xff2c3260);
+            softBlob (g, { x, y }, w * (0.18f + 0.25f * rng.nextFloat()), 4.0f + 6.0f * rng.nextFloat(),
+                      tint.withAlpha (0.10f + 0.10f * rng.nextFloat()));
         }
     }
-    softBlob (g, sun, sunR * 3.2f, sunR * 3.2f, Colours::white.withAlpha (0.8f));
-    g.setColour (Colours::white);
-    g.fillEllipse (sun.x - sunR, sun.y - sunR, sunR * 2, sunR * 2);
 
-    // Clouds: a big cumulus on the left, a smaller one on the right, a few wisps up high
-    cumulus (g, { w * 0.09f, h * 0.36f }, 120.0f, 0.55f);
-    cumulus (g, { w * 0.97f, h * 0.48f }, 70.0f, 0.5f);
-    wisp (g, { w * 0.86f, h * 0.05f }, 60.0f, 0.35f);
-    wisp (g, { w * 0.70f, h * 0.10f }, 30.0f, 0.3f);
+    // A thin dark haze line just above the ridge
+    softBlob (g, { w * 0.30f, horizonY - 3.0f }, w * 0.35f, 2.5f, Colour (0xff5a2a20).withAlpha (0.5f));
 
-    field (g, area);
+    // A few faint stars in the darkest part
+    {
+        Random rng (5);
+        for (int i = 0; i < 60; ++i)
+        {
+            const float y = h * 0.30f * rng.nextFloat() * rng.nextFloat() * 1.6f;
+            const float r = 0.4f + 0.7f * rng.nextFloat();
+            g.setColour (Colours::white.withAlpha ((0.15f + 0.45f * rng.nextFloat()) * (1.0f - y / (h * 0.5f))));
+            g.fillEllipse (w * rng.nextFloat() - r, y - r, r * 2, r * 2);
+        }
+    }
+
+    // The crescent moon, high up between the wordmark and the mode buttons
+    const Point<float> moonCentre (w * 0.585f, h * 0.058f);
+    softBlob (g, moonCentre, 46.0f, 46.0f, tc::moon.withAlpha (0.10f));
+    softBlob (g, moonCentre, 18.0f, 18.0f, tc::moon.withAlpha (0.16f));
+    crescent (g, moonCentre, 9.0f, tc::moon);
+
+    ridge (g, area, horizonY);
 }
 
-void paintSunIcon (Graphics& g, Rectangle<float> area, Colour colour)
+void paintMoonIcon (Graphics& g, Rectangle<float> area, Colour colour)
 {
-    const auto c = area.getCentre();
-    const float r = jmin (area.getWidth(), area.getHeight()) * 0.5f;
-    g.setColour (colour);
-    g.fillEllipse (Rectangle<float> (r * 0.9f, r * 0.9f).withCentre (c));
-    for (int i = 0; i < 8; ++i)
-    {
-        const float a = MathConstants<float>::twoPi * (float) i / 8.0f;
-        const auto p1 = c.getPointOnCircumference (r * 0.68f, a);
-        const auto p2 = c.getPointOnCircumference (r * 1.0f, a);
-        g.drawLine ({ p1, p2 }, 1.6f);
-    }
+    const float r = jmin (area.getWidth(), area.getHeight()) * 0.42f;
+    crescent (g, area.getCentre(), r, colour);
 }
 
 } // namespace sky
