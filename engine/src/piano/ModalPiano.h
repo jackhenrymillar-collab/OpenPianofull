@@ -199,7 +199,7 @@ private:
     int tensionCounter = 0;
     long long sampleClock = 0;
     std::vector<double> tuneFactor;
-    static constexpr std::array<double, 88> kTunerCents { 0.4, 0.6, -0.4, 0.2, -0.3, -0.5, -0.8, -1.0, 0.6, 0.0, 0.7, 0.8, 0.2, -0.2, 0.3, 0.4, -0.2, 0.0, 0.1, -0.3, -2.22, -3.48, 0.08, -0.16, -0.3, -0.64, -1.02, -0.14, -0.0, 0.5, 1.04, 0.14, 0.02, 0.22, 1.26, 0.58, 0.8, -0.82, -1.5, -1.9, -0.06, -0.1, -1.16, -2.3, 2.04, 1.1, -0.64, 1.16, -0.82, -1.14, 0.74, -0.86, 1.28, 1.12, 0.38, 1.18, 1.42, 1.24, 0.82, -1.28, -1.4, -0.66, 0.52, 0.8, 1.0, -1.08, -0.68, 0.6, 1.0, 0.74, 0.54, 0.76, 0.52, 0.77, 0.5, 0.44, -0.5, 0.52, 0.0, 0.96, 1.78, 0.26, 0.5, -0.48, 0.18, 0.56, -0.44, 0.52 };   // filled by the tuning pass   // the tuner's correction per key, for the body's pull on its pitch
+    static constexpr std::array<double, 88> kTunerCents { 0.4, 0.6, -0.5, 0.2, -0.4, -0.6, -0.8, -1.1, 0.8, -0.3, 0.2, -1.0, -0.3, -0.7, -0.6, -0.5, -0.9, -1.5, 2.2, 0.5, -3.44, -4.16, -4.54, -3.12, -1.73, -2.68, -1.04, -0.88, 0.7, 0.8, 0.68, -0.12, -0.96, 0.14, -0.38, 0.26, 0.8, -0.94, -0.9, -1.0, -1.02, -3.2, -1.92, -2.4, -1.72, -1.2, -0.32, 0.22, -0.74, -0.38, 1.28, -1.22, -1.94, 1.34, 0.66, 1.66, 1.24, -1.22, 0.74, -1.16, -1.0, -0.82, 0.44, 1.8, 1.1, -1.06, -0.66, 0.6, 1.0, 0.78, 0.68, 0.82, 0.64, 0.77, 0.6, 0.48, 0.5, 0.54, 0.1, 0.92, 1.76, -1.38, 0.4, 0.44, 0.26, 0.62, -0.38, 0.54 };   // filled by the tuning pass   // the tuner's correction per key, for the body's pull on its pitch
 
     // Each string's modes are stored in two parts: the low ones it keeps while only
     // resonating sit in one region, back to back with every other string's, and the rest
@@ -303,9 +303,6 @@ private:
     std::vector<AirMode> airModes;
     double airPressure = 0;
     // Lid: an early, treble-heavy reflection towards the listener, a little later on one side
-    std::vector<float> lidBufLeft, lidBufRight;
-    int lidPos = 0, lidDelayLeft = 0, lidDelayRight = 0;
-    double lidHpLeft = 0, lidHpRight = 0, lidHpInLeft = 0, lidHpInRight = 0, lidHpCoeff = 0, lidLpLeft = 0, lidLpRight = 0, lidLpCoeff = 0;
     void buildBody();
     // Above a few kHz the board is a dense tangle of overlapping modes: what the bridge
     // pushes comes out smeared over a millisecond or two and differently in each ear,

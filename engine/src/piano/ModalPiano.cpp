@@ -302,9 +302,9 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     // relative to the middle of the range. Pushing harder on the bridge while feeling its
     // motion less by the same factor keeps the decay and coupling unchanged.
     {
-        static constexpr double voicingDb[30] = { 0.3, -1.7, -1.4, -5.2, -8.7, -10.5, -4.0, 4.8, 1.4, 5.5,
-                                               1.2, -3.2, -14.9, -4.2, -3.3, 1.6, 2.5, 2.3, -6.0, 0.6,
-                                               -7.5, -3.2, -11.6, -5.8, -6.7, -3.2, -18.4, -13.6, -2.5, -6.0 }; // every 3 keys from A0
+        static constexpr double voicingDb[30] = { -0.8, 0.3, -1.5, -4.0, -9.5, -11.3, -3.3, 3.9, -0.7, 3.0,
+                                               0.2, -1.3, -14.7, -4.6, -11.6, -5.3, -3.2, -6.2, -5.5, -0.7,
+                                               -3.2, 2.6, -10.1, -2.4, -3.1, -1.6, -15.1, -11.5, 0.8, -5.1 }; // every 3 keys from A0
         const double pos = std::clamp ((key.midiNote - kLowestKey) / 3.0, 0.0, 28.999);
         const int i = (int) pos;
         const double db = voicingDb[i] + (voicingDb[i + 1] - voicingDb[i]) * (pos - i);
@@ -892,18 +892,8 @@ void ModalPiano::buildBody()
     (void) addAir;
     airPressure = 0;
 
-    // Lid: a reflection off its underside reaches the listener 1 to 2 ms after the direct
-    // sound. The lid is about 1.5 m long, so it only reflects well above a few hundred Hz,
-    // and its felt-free lacquered wood loses a little of the very top.
-    const int maxDelay = (int) (0.004 * sampleRate) + 2;
-    lidBufLeft.assign ((size_t) maxDelay, 0.0f);
-    lidBufRight.assign ((size_t) maxDelay, 0.0f);
-    lidPos = 0;
-    lidDelayLeft = (int) (0.0021 * sampleRate);
-    lidDelayRight = (int) (0.0013 * sampleRate);
-    lidHpCoeff = std::exp (-2.0 * M_PI * 400.0 / sampleRate);
-    lidLpCoeff = std::exp (-2.0 * M_PI * 9000.0 / sampleRate);
-    lidHpLeft = lidHpRight = lidHpInLeft = lidHpInRight = lidLpLeft = lidLpRight = 0;
+    // The lid's reflection is in the body tables: each mode's sound at the seat and the mics
+    // includes the mirror image off the finite lid (build_board.py), so nothing is added here.
 
     // The bridge is a wooden beam with its own mass. Above a frequency set by that mass and
     // the board's resistance, the strings see the bridge's inertia rather than the board, so
@@ -2188,25 +2178,10 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         outL -= 0.2 * (outL - beamLpLeft);
         outR += 0.25 * (outR - beamLpRight);
 
-        // Lid reflection
+        // The lid panel's own ringing, heard in both ears (its reflection is in the body tables)
         if (settings.lid > 0)
         {
-            const int size = (int) lidBufLeft.size();
-            lidBufLeft[(size_t) lidPos] = (float) outL;
-            lidBufRight[(size_t) lidPos] = (float) outR;
-            const float dl = lidBufLeft[(size_t) ((lidPos - lidDelayLeft + size) % size)];
-            const float dr = lidBufRight[(size_t) ((lidPos - lidDelayRight + size) % size)];
-            lidPos = (lidPos + 1) % size;
-            lidHpLeft = lidHpCoeff * (lidHpLeft + dl - lidHpInLeft); lidHpInLeft = dl;
-            lidHpRight = lidHpCoeff * (lidHpRight + dr - lidHpInRight); lidHpInRight = dr;
-            lidLpLeft = lidHpLeft + lidLpCoeff * (lidLpLeft - lidHpLeft);
-            lidLpRight = lidHpRight + lidLpCoeff * (lidLpRight - lidHpRight);
-            // The open lid sends the board's sound towards the listener: the reflection adds
-            // to the direct sound, more so on the open (right) side
-            outL += 0.2 * settings.lid * lidLpRight;
-            outR += 0.28 * settings.lid * lidLpLeft;
-            // The lid panel's own ringing, heard in both ears
-            const float drive = (float) (dl + dr);
+            const float drive = (float) (outL + outR);
             float panel = 0;
             for (size_t i = 0; i < lidPanel.size(); ++i)
                 panel += lidPanelGain[i] * lidPanel[i].process (drive);
