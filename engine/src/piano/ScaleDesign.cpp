@@ -228,26 +228,12 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         key.stretchCents = 1200.0 * std::log2 (key.targetFrequency / equalTempered (key.midiNote));
 
         // Unison: trichord offsets around the centre; the exact amount varies per key.
-        // Unisons drift apart after tuning: like the recorded Yamaha, a key's strings end up 1 to 3
-        // cents apart (each outer string 0.5 to 1.5 cents from the centre; the two strings of a
-        // bass bichord a little closer, about 0.75 to 2.3 cents, as wider ones pull its pitch off)
-        // From A4 up the unisons sit closer (half as far apart up to A#5, three quarters to B6,
-        // 0.3 in the top octave, and a quarter from A5 to C#6, where the recorded grand beats slowest;
-        // 0.7 from E2 to G#4, which keeps their shimmer but beats no faster than the recording).
-        // Close strings share the bridge motion strongly: the in-step vibration drains fast and the
-        // out-of-step one is left ringing, which gives the recorded notes there their fast first
-        // drop and long tail
-        const double close = k >= 61 && k <= 66 ? 0.25 : k >= 28 && k < 50 ? 0.45 : k >= 20 && k < 49 ? 0.7 : k >= 49 && k < 63 ? 0.5 : k >= 63 && k < 67 ? 0.75 : k >= 67 && k < 75 ? 0.3 : k >= 75 ? 0.3 : 1.0;
-        double spread = unisonSpreadCents * (1.0 + 0.5 * keyNoise (k, 1)) * close * (k < 43 ? 0.6 : 1.0);
-        // (below D#5 the strings sit 40% closer than before: with the body coupled at its full,
-        // physical strength, wider unisons there drain the long tail twice as fast as the recording)
-        // Treble unisons are tuned by ear and some are left a little loose: on the recorded grand
-        // about one key in four from D#5 up beats 3 to 5 times faster than its neighbours
-        // The rest are a little looser too (Jack's ear: the loose ones sound better)
-        if (k >= 43 && keyNoise (k, 7) > 0.5)
-            spread *= 3.0 + 2.0 * (0.5 + 0.5 * keyNoise (k, 8));
-        else if (k >= 43)
-            spread *= 1.8;
+        // One tuner's rule for the whole keyboard: after a concert tuning the strings of a unison
+        // drift 0.5 to 1.5 cents either side of the centre (Weinreich's measured grands sit 1 to
+        // 3 cents across the unison). No register is tuned closer or looser than another: how fast
+        // a unison's in-step motion drains and how long its out-of-step tail rings is left to the
+        // bridge coupling, not to the tuning
+        const double spread = unisonSpreadCents * (1.0 + 0.5 * keyNoise (k, 1));
         // Every key's pattern differs: which string is high or low, and by how much
         const double offsets3[3] = { -spread * (1.0 + 0.15 * keyNoise (k, 3)), 0.25 * spread * keyNoise (k, 2),
                                      spread * (1.0 + 0.15 * keyNoise (k, 4)) };

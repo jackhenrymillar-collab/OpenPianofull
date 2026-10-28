@@ -1,4 +1,3 @@
-#include <cstdlib>
 /*
 OpenPiano: an open source piano engine based on physical modeling
 Copyright (C) 2021-2022 Michele Perrone, and contributors
@@ -38,25 +37,29 @@ namespace
     // Internal (string material and air) losses, as a decay rate in 1/s for a partial
     // at frequency f, on a string whose fundamental is f1. Lower strings ring longer, and
     // high partials die faster. Bridge losses come on top, from the coupling itself.
-    double internalDecay (double f, double f1, bool wound)
+    // String losses from first principles (Valette & Cuesta 1993; Woodhouse 2004): the air's
+    // viscous drag on the wire, from its diameter and the air's density and viscosity, plus the
+    // steel's internal loss: a viscoelastic loss on the bending stiffness (strongest where the
+    // partials are stiff, i.e. high partials and short strings) and a small frequency-independent
+    // loss (dislocation friction, and the winding's rubbing on a wound string). The two material
+    // constants are the same for every key.
+    constexpr double kAirDensity = 1.2, kAirViscosity = 1.5e-5;   // kg/m^3, m^2/s
+    double internalDecay (double f, const StringSpec& spec)
     {
-        const double octavesAboveA0 = std::log2 (std::max (f1, 27.5) / 27.5);
-        // The top two octaves also lose more in the string and its terminations: recorded
-        // notes there fall 45 dB within one or two seconds
-        const double b1 = 0.157 + 0.367 * octavesAboveA0 / 7.25 + 0.12 * std::pow (std::max (0.0, octavesAboveA0 - 5.0), 2.0);
-        // Air and internal friction take the upper partials much faster (Bank 2000; Chaigne & Askenfelt 1994)
-        const double b2 = wound ? 2.4e-7 : 1.2e-7;
-        // Above about 2 kHz the losses climb faster still. Measured on recorded notes, overtones
-        // at 3 to 6 kHz die at about 20 to 40 dB/s, so this rise is gentle
-        // (the top fundamentals are spared: their losses are mostly at the bridge)
-        const double overtone = std::clamp (f / f1 - 1.0, 0.0, 1.0);
-        // From the middle up the strings themselves lose a quarter less, which gives the long
-        // quiet tail of recorded notes there (about 3 dB/s from C4 to B5)
-        const double b1s = b1 * (1.0 - 0.25 * std::clamp (octavesAboveA0 - 5.0, 0.0, 1.0));
-        // Above 5 kHz the rise slows: the top notes' 2nd and 3rd partials (6 to 12 kHz) still ring
-        // for a few hundred ms on recorded notes, and without them the top sounds like a harp
-        const double fe = std::min (f, 5000.0) + 0.6 * std::clamp (f - 5000.0, 0.0, 4000.0) + 1.5 * std::max (0.0, f - 9000.0);
-        return b1s + (b2 * fe * fe + 0.11 * overtone * std::pow (fe / 2000.0, 3));
+        // Material constants, chosen once for the whole keyboard on the late decay rates of the
+        // octave bands (A0-B1 2.7, C6-B6 6, C7-C8 12 dB/s on the reference grand): the
+        // viscoelastic loss factor of the steel and a constant loss per cycle for plain and for
+        // copper-wound strings (the winding rubs on the core)
+        constexpr double dVe = 2.2e-3, d0P = 1.0e-4, d0W = 3.0e-4;
+        const double w = 2.0 * M_PI * f;
+        const double d = spec.outerDiameter;
+        const double rhoEff = spec.linearDensity / (M_PI * d * d / 4.0);              // mass per volume the air sees
+        const double M = (2.0 / d) * std::sqrt (2.0 * kAirViscosity / w);             // boundary layer over the radius
+        const double qAir = (kAirDensity / rhoEff) * (2.0 * std::sqrt (2.0) * M + M * M);
+        const double I = M_PI * std::pow (spec.coreDiameter, 4) / 64.0;             // core bending stiffness
+        const double qVe = dVe * 4.0 * M_PI * M_PI * f * f * spec.linearDensity * kSteelE * I / (spec.tension * spec.tension);
+        const double q0 = spec.wound ? d0W : d0P;
+        return M_PI * f * (qAir + qVe + q0);   // loss factor to decay rate [Np/s]
     }
 
     // The felt takes this long to settle into its full grip once the damper has landed
@@ -233,7 +236,7 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
         if (f > maxFrequency && n > 1)
             break;
         const double w = 2.0 * M_PI * f;
-        const double sigma = internalDecay (f, spec.fundamental, spec.wound) * lossScale;
+        const double sigma = internalDecay (f, spec) * lossScale;
         const double sign = (n % 2 == 1) ? 1.0 : -1.0; // (-1)^(n+1)
 
         const cd pole = std::exp (cd (-sigma, w) * Ts);
