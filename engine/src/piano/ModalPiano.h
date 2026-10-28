@@ -90,8 +90,13 @@ public:
 
     // velocity in m/s at the hammer
     void strike (int midiNote, double hammerVelocity);
-    void setKeyDown (int midiNote, bool down);
-    void setSustain (bool down);
+    // releaseSpeed (0..1, 0.5 = an ordinary release) is how fast the key was let go: it sets
+    // how soon the damper reaches the strings and how hard it lands
+    void setKeyDown (int midiNote, bool down, double releaseSpeed = 0.5);
+    void setSustain (bool down) { setSustainLevel (down ? 1.0 : 0.0); }
+    // Sustain pedal position, 0 = up, 1 = fully down. The first part of the travel does
+    // nothing, then the dampers lift gradually (half pedalling), free from about 0.6
+    void setSustainLevel (double level);
     // Sostenuto (middle pedal): pressed, it holds up the dampers that are up at that moment
     // (keys down, or all of them with the sustain pedal down); later notes are damped as usual
     void setSostenuto (bool down);
@@ -172,6 +177,7 @@ private:
         double feltSet = 0;          // how far the felt is still squeezed from earlier blows (0-1)
         int damperPending = 0;       // samples until the rising key lets the damper land
         int damperRamp = 0;          // samples left while the landed felt settles into its full grip
+        float releaseSpeed = 0.5f;   // how fast the key was let go, 0..1
         bool down = false;
         bool sostenuto = false;      // damper held up by the sostenuto pedal
         Hammer hammer;
@@ -237,7 +243,9 @@ private:
     double trebleFirmness = 0.5;
     double ageFactor = 0;
     double damperStrength = 1.0;
-    bool sustain = false;
+    bool sustain = false;        // the pedal holds every damper clear of the strings
+    double pedalLevel = 0;       // sustain pedal position, 0..1
+    double pedalGrip = 1.0;      // how much of their grip the dampers keep (1 = pedal up)
     bool sostenutoDown = false;
     double softPedal = 0;
 

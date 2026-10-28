@@ -88,18 +88,20 @@ void PianoInstrument::holdKeySilently (int midiNote)
     piano->setKeyDown (midiNote, true);
 }
 
-void PianoInstrument::noteOff (int midiNote)
+void PianoInstrument::noteOff (int midiNote, int releaseVelocity)
 {
     if (midiNote < 0 || midiNote > 127 || ! keyHeld[(size_t) midiNote])
         return;
     keyHeld[(size_t) midiNote] = false;
-    piano->setKeyDown (midiNote, false);
+    // A keyboard that sends no release velocity sends 0 or 64: an ordinary release
+    const int v = releaseVelocity <= 0 ? 64 : std::clamp (releaseVelocity, 1, 127);
+    piano->setKeyDown (midiNote, false, v / 127.0);
 }
 
-void PianoInstrument::setSustain (bool pedalDown)
+void PianoInstrument::setSustainLevel (float level)
 {
-    pedal = pedalDown;
-    piano->setSustain (pedalDown);
+    pedal = std::clamp (level, 0.0f, 1.0f);
+    piano->setSustainLevel (pedal);
 }
 
 void PianoInstrument::setSostenuto (bool pedalDown)
@@ -154,7 +156,7 @@ void PianoInstrument::process (float* const* outputs, int numChannels, int numSa
             for (int note = 0; note < 128; ++note)
                 if (keyHeld[(size_t) note])
                     piano->setKeyDown (note, true);
-            piano->setSustain (pedal);
+            piano->setSustainLevel (pedal);
             piano->setSoftPedal (softAmount);
         }
     }

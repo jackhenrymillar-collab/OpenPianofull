@@ -29,8 +29,8 @@ void OpenPianoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBl
 {
     piano.prepare (sampleRate, samplesPerBlock);
     keyboardState.reset();
-    midiSustain = false;
-    sustainApplied = false;
+    midiSustain = 0.0f;
+    sustainApplied = -1.0f;
     currentSampleRate = sampleRate;
     prepared = true;
 }
@@ -68,13 +68,13 @@ void OpenPianoAudioProcessor::updateControls()
 
 void OpenPianoAudioProcessor::updateSustain()
 {
-    const bool down = midiSustain || latchParam->load() > 0.5f;
-    if (down != sustainApplied)
+    const float level = latchParam->load() > 0.5f ? 1.0f : midiSustain;
+    if (std::abs (level - sustainApplied) > 0.004f)
     {
-        piano.setSustain (down);
-        sustainApplied = down;
+        piano.setSustainLevel (level);
+        sustainApplied = level;
     }
-    sustainShown.store (down, std::memory_order_relaxed);
+    sustainShown.store (level > 0.25f, std::memory_order_relaxed);
 }
 
 void OpenPianoAudioProcessor::applyEvent (const juce::MidiMessage& m)
@@ -89,11 +89,9 @@ void OpenPianoAudioProcessor::applyEvent (const juce::MidiMessage& m)
         piano.noteOn (m.getNoteNumber(), velocity);
     }
     else if (m.isNoteOff())
-        piano.noteOff (m.getNoteNumber());
-    else if (m.isSustainPedalOn())
-        midiSustain = true;
-    else if (m.isSustainPedalOff())
-        midiSustain = false;
+        piano.noteOff (m.getNoteNumber(), m.getVelocity());   // note-off velocity: how fast the key was let go
+    else if (m.isController() && m.getControllerNumber() == 64) // sustain pedal, half pedalling allowed
+        midiSustain = m.getControllerValue() / 127.0f;
     else if (m.isSostenutoPedalOn())
         piano.setSostenuto (true);
     else if (m.isSostenutoPedalOff())
@@ -106,7 +104,7 @@ void OpenPianoAudioProcessor::applyEvent (const juce::MidiMessage& m)
             piano.reset();
         for (int n = 0; n < 128; ++n)
             piano.noteOff (n);
-        midiSustain = false;
+        midiSustain = 0.0f;
         if (m.isResetAllControllers())
         {
             piano.setSostenuto (false);

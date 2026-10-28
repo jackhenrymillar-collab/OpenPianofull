@@ -31,7 +31,13 @@ public:
     // velocity is the MIDI velocity, 1..127.
     virtual void noteOn (int midiNote, int velocity) = 0;
     virtual void noteOff (int midiNote) = 0;
+    // releaseVelocity is the MIDI note-off velocity, 1..127 (64 when the keyboard sends none):
+    // how fast the key was let go. Instruments that don't use it fall back to a plain note-off.
+    virtual void noteOff (int midiNote, int /*releaseVelocity*/) { noteOff (midiNote); }
     virtual void setSustain (bool pedalDown) = 0;
+    // Sustain pedal position, 0 = up, 1 = fully down (half pedalling). Instruments without a
+    // continuous pedal treat anything past halfway as down.
+    virtual void setSustainLevel (float level) { setSustain (level >= 0.5f); }
     // Middle and left pedals. Instruments without them ignore these.
     virtual void setSostenuto (bool /*pedalDown*/) {}
     virtual void setSoftPedal (float /*amount*/) {} // 0 = up, 1 = fully down

@@ -9,7 +9,7 @@ Licensed under the GNU Affero General Public License v3 or later (see LICENSE).
 //   openpiano-events EVENTS OUT.wav SECONDS [AGE]
 //
 // Each line of EVENTS is "<seconds> on <note> <velocity>", "<seconds> off <note> 0" or
-// "<seconds> ped <0|1> 0", "<seconds> sost <0|1> 0" or "<seconds> soft <0-127> 0" (sostenuto
+// "<seconds> ped <0|1|CC64 value> 0", "<seconds> off <note> <release velocity or 0>", "<seconds> sost <0|1> 0" or "<seconds> soft <0-127> 0" (sostenuto
 // and una corda), in time order. Rendered at 48 kHz in 256-sample blocks with the
 // default controls (Age from the optional last argument).
 
@@ -63,8 +63,8 @@ int main (int argc, char** argv)
         {
             const auto& e = events[next++];
             if (e.kind == "on") piano.noteOn (e.a, e.b);
-            else if (e.kind == "off") piano.noteOff (e.a);
-            else if (e.kind == "ped") piano.setSustain (e.a != 0);
+            else if (e.kind == "off") piano.noteOff (e.a, e.b);                       // b = release velocity (0 = ordinary)
+            else if (e.kind == "ped") piano.setSustainLevel (e.a > 1 ? e.a / 127.0f : (float) e.a);   // 0/1, or a CC64 value
             else if (e.kind == "sost") piano.setSostenuto (e.a != 0);
             else if (e.kind == "soft") piano.setSoftPedal ((float) e.a / 127.0f);
         }

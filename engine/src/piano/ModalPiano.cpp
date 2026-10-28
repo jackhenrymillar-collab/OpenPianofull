@@ -1100,6 +1100,8 @@ void ModalPiano::reset()
     buildFrame();
     dcLeft = dcRight = dcInLeft = dcInRight = 0;
     sustain = false;
+    pedalLevel = 0;
+    pedalGrip = 1.0;
     sostenutoDown = false;
 
     for (auto& k : keyState)
@@ -1158,11 +1160,15 @@ std::complex<double> ModalPiano::restingPole (const String& s, const KeyState& k
 {
     if (! s.damped)
         return cd (m.prFree[j], m.piFree[j]);
-    if (ks.damperRamp <= 0)
+    // The felt may be settling after landing, or held partly clear by a half-pressed pedal:
+    // interpolate the poles in the log domain, so decay and frequency move together from the
+    // free values to the damped ones
+    const double settle = ks.damperRamp > 0 ? 1.0 - ks.damperRamp / (kDamperRampMs * 0.001 * sampleRate) : 1.0;
+    const double g = settle * pedalGrip;
+    if (g >= 1.0)
         return cd (m.prDamp[j], m.piDamp[j]);
-    // The felt is still settling: interpolate the poles in the log domain, so decay and
-    // frequency move together from the free values to the damped ones
-    const double g = 1.0 - ks.damperRamp / (kDamperRampMs * 0.001 * sampleRate);
+    if (g <= 0.0)
+        return cd (m.prFree[j], m.piFree[j]);
     const cd lf = std::log (cd (m.prFree[j], m.piFree[j]));
     const cd ld = std::log (cd (m.prDamp[j], m.piDamp[j]));
     return std::exp (lf + g * (ld - lf));
@@ -1172,20 +1178,18 @@ void ModalPiano::updateDamping (int keyIndex)
 {
     const auto& key = keys[(size_t) keyIndex];
     auto& ks = keyState[(size_t) keyIndex];
-    const bool damped = key.hasDamper && ! ks.down && ks.damperPending <= 0 && ! sustain && ! ks.sostenuto;
+    const bool damped = key.hasDamper && ! ks.down && ks.damperPending <= 0 && pedalGrip > 0.0 && ! ks.sostenuto;
 
     forEachString (ks, [&] (String& s)
     {
         if (s.damped != damped || s.activity == Activity::Off)
         {
             s.damped = damped;
-            const bool settling = damped && ks.damperRamp > 0;
-            const auto& prSrc = damped && ! settling ? m.prDamp : m.prFree;
-            const auto& piSrc = damped && ! settling ? m.piDamp : m.piFree;
             forModes (s, s.count, [&] (size_t j)
             {
-                m.pr[j] = prSrc[j];
-                m.pi[j] = piSrc[j];
+                const cd pole = restingPole (s, ks, j);
+                m.pr[j] = (float) pole.real();
+                m.pi[j] = (float) pole.imag();
             });
         }
         // Undamped strings listen to the bridge
@@ -1194,7 +1198,7 @@ void ModalPiano::updateDamping (int keyIndex)
     });
 }
 
-void ModalPiano::setKeyDown (int midiNote, bool down)
+void ModalPiano::setKeyDown (int midiNote, bool down, double releaseSpeed)
 {
     const int k = midiNote - kLowestKey;
     if (k < 0 || k >= (int) keys.size())
@@ -1202,10 +1206,14 @@ void ModalPiano::setKeyDown (int midiNote, bool down)
     auto& ks = keyState[(size_t) k];
     if (! down && ks.down)
     {
-        // The key takes a moment to rise far enough for the damper to reach the strings.
-        // Re-press it before then (a fast repeat or a half-stroke) and the damper never lands.
+        // The key takes a moment to rise far enough for the damper to reach the strings:
+        // about 20 ms for an ordinary release, 10 ms when the finger snaps off, 60 ms when
+        // it is eased up. Re-press it before then (a fast repeat or a half-stroke) and the
+        // damper never lands.
+        ks.releaseSpeed = (float) std::clamp (releaseSpeed, 0.0, 1.0);
+        const double fall = 0.06 - 0.11 * ks.releaseSpeed + 0.06 * ks.releaseSpeed * ks.releaseSpeed;
         ks.releasedAt = sampleClock;
-        ks.damperPending = std::max (1, (int) (0.02 * sampleRate));
+        ks.damperPending = std::max (1, (int) (fall * sampleRate));
         ks.down = false;
         return;
     }
@@ -1215,13 +1223,37 @@ void ModalPiano::setKeyDown (int midiNote, bool down)
     checkActivity();
 }
 
-void ModalPiano::setSustain (bool down)
+void ModalPiano::setSustainLevel (double level)
 {
-    if (sustain == down)
+    level = std::clamp (level, 0.0, 1.0);
+    // The pedal's first quarter of travel takes up the lost motion; from there the damper
+    // tray lifts the felts off gradually, and they are clear of the strings by about 0.65.
+    // The felt's grip falls away faster than its pressure (squared), so the half-pedal
+    // range (CC64 50-80) runs from a quick damping to a barely slowed ring.
+    const double lift = std::clamp ((0.65 - level) / 0.4, 0.0, 1.0);
+    const double grip = lift * lift;
+    const bool edge = (grip <= 0.0) != (pedalGrip <= 0.0) || (grip >= 1.0) != (pedalGrip >= 1.0);
+    if (! edge && std::abs (grip - pedalGrip) < 0.02)
         return;
-    sustain = down;
+    pedalLevel = level;
+    pedalGrip = grip;
+    sustain = grip <= 0.0;
     for (size_t k = 0; k < keys.size(); ++k)
         updateDamping ((int) k);
+    // Half pedalling moves the grip of every damper that is already down
+    if (grip > 0.0)
+        for (size_t k = 0; k < keys.size(); ++k)
+            forEachString (keyState[k], [&] (String& s)
+            {
+                if (! s.damped || s.activity == Activity::Off)
+                    return;
+                forModes (s, s.count, [&] (size_t j)
+                {
+                    const cd pole = restingPole (s, keyState[k], j);
+                    m.pr[j] = (float) pole.real();
+                    m.pi[j] = (float) pole.imag();
+                });
+            });
     checkActivity();
 }
 
@@ -1767,9 +1799,10 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         if (ks.damperPending <= 0)
         {
             ks.damperPending = 0;
-            if (keys[k].hasDamper && ! sustain && ! ks.sostenuto)
+            if (keys[k].hasDamper && pedalGrip > 0.0 && ! ks.sostenuto)
             {
-                queueAction (2, 0, 0.3, (int) k);
+                // The felt lands harder from a snapped-off key than from one eased up
+                queueAction (2, 0, 0.3 * (0.4 + 2.4 * ks.releaseSpeed * ks.releaseSpeed) * pedalGrip, (int) k);
                 // How much the strings are still moving decides how loud the release is
                 double e = 0;
                 for (int i = 0; i < keyState[k].numStrings; ++i)
