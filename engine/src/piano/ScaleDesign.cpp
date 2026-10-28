@@ -290,42 +290,23 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         }
 
         const double n = k;
-        key.hammerMass = (11.074 - 0.074 * n + 0.0001 * n * n) * 1e-3;
-        key.feltStiffness = 183.0 * std::exp (0.045 * n);
-        // Hammer voicing for loud playing: a technician hardens or needles each felt so the
-        // fortissimo brightness is even; fitted note by note to the recorded grand (every 3 keys from A0;
-        // A0 to C2 fitted on the loud-against-soft brightness, with the low-end balance in place)
-        {
-            static constexpr double hardness[30] = { 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.5, 0.5, 0.5, 0.5,
-                                                     0.5, 2.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.67, 0.5,
-                                                     0.5, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
-            const double pos = std::clamp ((k - 1) / 3.0, 0.0, 28.999);
-            const int i = (int) pos;
-            // (a lighter, harder head leaves the string sooner: brighter)
-            key.hammerMass /= hardness[i] + (hardness[i + 1] - hardness[i]) * (pos - i);
-        }
-        // The lowest two octaves' hammers are big and soft, so loud bass notes stay round and
-        // full rather than wiry: up to 60% heavier and 30% softer felt at A0, fading out by G#2
-        if (k <= 24)
-        {
-            const double w = (24 - k) / 23.0;
-            key.hammerMass *= 1.0 + 0.6 * w;
-            key.feltStiffness *= 1.0 - 0.3 * w;
-        }
-        key.feltExponent = 2.5 + 1.5 * (n - 1) / 87.0; // softer-curving felt: 2.5 in the bass to 4 in the treble
+        // Hammers as measured on a Steinway D (Chabassier & Durufle, Inria RT-425, 2012): the
+        // head's mass falls smoothly from 11 g at A0 to 5.8 g at C8, the felt gets harder
+        // (stiffness K in F = K x^p) and its force law steeper (p from 2.3 to 3.5) up the
+        // keyboard. No per-note voicing here: a technician's work is left to the voicing tables.
+        key.hammerMass = -6.2348e-5 * n + 0.0112;
+        key.feltExponent = 2.4295e-4 * n * n - 0.007703 * n + 2.337;
+        // Chabassier's felt is one power law with a hysteretic damping term; ours has a soft outer layer over
+        // the core and relaxes with time, so the same force needs a stiffer core. The factor 10 was fitted
+        // once for the whole keyboard (not per note): it gives the recorded 124-40 dynamic range (about
+        // 10 dB in the bass rising to 17 dB at the top) and the smallest brightness gap at every velocity.
+        key.feltStiffness = 10.0 * std::pow (10.0, 5.3097e-2 * n + 7.6425) * std::pow (1.0e-3, key.feltExponent);   // K per mm
         key.outerFeltDepth = lerp (1.0e-3, 0.1e-3, std::pow ((k - 1) / 87.0, 0.7));
         key.strikeRatio = k <= 40 ? lerp (0.122, 0.115, (k - 1) / 39.0) : lerp (0.115, 0.08, (k - 40) / 48.0);
         key.hammerWidth = lerp (12e-3, 5e-3, (k - 1) / 87.0);
         // No two hammers are alike: felt density, shape and wear differ a little from note
         // to note even on a well-voiced piano (which is what a voicer evens out by ear)
         key.hammerMass *= 1.0 + 0.03 * keyNoise (k, 11);
-        // C5 hammers are smaller than concert-grand ones in the bass, to suit the shorter
-        // strings: about 15% lighter at A0, the same as the table from C4 up (estimate).
-        key.hammerMass *= lerp (0.85, 1.0, std::clamp ((k - 1) / 39.0, 0.0, 1.0));
-        // From the tenor up the hammer acts lighter on the string (its felt tip and head move
-        // first, the rest follows through the shank), so the contact is short enough for loud
-        // treble notes to come out as bright as recorded ones (half the mass from B3 up)
-        key.hammerMass *= 1.0 - 0.5 * std::clamp ((k - 27) / 12.0, 0.0, 1.0);
         key.feltStiffness *= 1.0 + 0.12 * keyNoise (k, 12);
         key.feltExponent += 0.08 * keyNoise (k, 13);
         key.outerFeltDepth *= 1.0 + 0.15 * keyNoise (k, 14);
