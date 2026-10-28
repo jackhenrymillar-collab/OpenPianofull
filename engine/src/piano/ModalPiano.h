@@ -199,7 +199,7 @@ private:
     int tensionCounter = 0;
     long long sampleClock = 0;
     std::vector<double> tuneFactor;
-    static constexpr std::array<double, 88> kTunerCents { 0.4, 0.6, -0.4, 0.2, -0.3, -0.5, -0.7, -1.0, -0.1, 0.0, 0.6, 1.5, 0.1, -0.3, 0.2, -0.2, -0.9, -0.8, 2.0, -0.1, -3.26, -3.94, -4.26, -3.68, -1.55, -1.52, -1.36, -0.82, 0.3, 0.9, 1.02, -0.18, -1.04, 0.26, -0.12, 0.24, 0.8, -0.76, -0.7, -1.0, -2.08, 0.3, -2.08, -2.0, -2.08, -1.8, -0.69, 1.98, -0.96, -0.42, 1.02, -0.88, 1.24, 1.36, 0.74, 1.54, 1.16, -1.08, 0.76, -1.44, -0.9, -0.88, 0.56, 1.3, 1.0, 0.96, -0.74, 0.7, 1.0, 0.72, 0.62, 0.78, 0.56, 0.77, 0.6, 0.42, -0.5, 0.46, -0.7, 0.88, 1.74, -1.42, 0.4, 0.36, 0.24, 0.58, -0.42, 0.56 };   // filled by the tuning pass   // the tuner's correction per key, for the body's pull on its pitch
+    static constexpr std::array<double, 88> kTunerCents { 0.5, 0.6, -0.5, 0.2, -0.4, -0.6, -0.9, -1.1, 0.2, -0.2, 0.2, 0.1, -0.5, -0.6, -0.8, -0.2, -1.0, -0.6, -2.5, -2.7, -4.48, -4.52, -0.68, -2.54, -2.08, -2.06, -1.28, -1.16, -1.4, 1.7, 1.66, -0.34, -1.42, 2.18, 1.94, 0.92, 1.2, -1.28, -0.6, -0.5, -1.54, -0.4, -3.34, -1.9, -2.34, -2.4, -2.55, 0.44, -1.48, -0.36, 0.26, -1.04, 0.82, 0.78, 0.12, 0.82, 1.18, 1.06, 0.78, 0.08, -0.7, -0.94, 0.78, 1.1, 1.0, -1.02, -0.72, 0.7, 1.0, 0.76, 0.56, 0.74, 0.58, 0.77, 0.6, 0.46, 0.5, 0.48, -0.7, 0.94, 1.82, 1.54, 0.4, 0.38, 0.22, 0.64, -0.46, 0.58 };   // filled by the tuning pass   // the tuner's correction per key, for the body's pull on its pitch
 
     // Each string's modes are stored in two parts: the low ones it keeps while only
     // resonating sit in one region, back to back with every other string's, and the rest

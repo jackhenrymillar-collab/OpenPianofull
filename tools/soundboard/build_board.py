@@ -765,53 +765,102 @@ def main():
     ringB = ring.ravel()[bi]
     gap = hLid - RIM_TOP                                                     # lid above the rim top
     openB = ringB & ((yb_ < 0.5 * DX) | ((xb_ < A - 0.06) & (gap > LID_GAP_MIN)))
-    if os.environ.get("BOX_AIR"):
+    boxAir = bool(os.environ.get("BOX_AIR"))
+    if boxAir:
         hLid = np.full(nbd, CASE_H); openB = np.zeros(nbd, bool)
+    # The openings are not pressure-release planes at the rim: the air just outside them moves
+    # with the mode (the end correction, which lowers the resonances) and only beyond that is
+    # the pressure released. The air grid is the board grid padded outwards, and each open
+    # edge node grows a tongue of outside air END_CORR times the opening's local height,
+    # at that height, released at its far end.
+    END_CORR = float(os.environ.get("END_CORR", "0.6"))
+    pad = int(math.ceil(max(END_CORR, 0.0) * max(gap.max(), 0.01) / DX)) + 2 if not boxAir else 1
+    nxa, nya = nx + 2 * pad, ny + 2 * pad
+    maskA = np.zeros((nxa, nya), bool); maskA[pad:pad + nx, pad:pad + ny] = board
+    hA = np.zeros((nxa, nya)); hA[pad:pad + nx, pad:pad + ny].flat[bi] = hLid
+    ext = np.zeros((nxa, nya), bool)
+    bij = np.argwhere(board)
+    ri_, rj_ = np.meshgrid(np.arange(-pad, pad + 1), np.arange(-pad, pad + 1), indexing="ij")
+    rr2 = ri_ ** 2 + rj_ ** 2
+    for k_ in np.flatnonzero(openB):
+        i, j = bij[k_] + pad
+        rad = END_CORR * gap[k_] / DX
+        disc = rr2 <= rad * rad
+        sl = (slice(i - pad, i + pad + 1), slice(j - pad, j + pad + 1))
+        grow = disc & ~maskA[sl]
+        ext[sl] |= grow
+        hA[sl] = np.where(grow, np.maximum(hA[sl], gap[k_]), hA[sl])
+    maskA |= ext
+    print(f"case air: {int(openB.sum())} open edge nodes, {int(ext.sum())} outside-air nodes for the end correction")
+    aidx = np.flatnonzero(maskA.ravel()); na = len(aidx)
+    posA = -np.ones(nxa * nya, int); posA[aidx] = np.arange(na)
+    hAv = hA.ravel()[aidx]
+    # Board nodes in air numbering
+    bInA = posA[(bij[:, 0] + pad) * nya + (bij[:, 1] + pad)]
+    # Pressure released at the outer edge of the outside air
+    extv = ext.ravel()[aidx]
+    dirich = np.zeros(na, bool)
+    if END_CORR <= 0.0 and not boxAir:                                       # no end correction: released at the rim itself
+        dirich[bInA[openB]] = True
     lr_, lc_, lv_ = [], [], []
-    for k_, (i, j) in enumerate(np.argwhere(board)):
+    ur_, uc_, uv_ = [], [], []                                               # the plain Laplacian on the board, for the air below
+    aij = np.argwhere(maskA)
+    for k_, (i, j) in enumerate(aij):
+        for a, b in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            ii, jj = i + a, j + b
+            if 0 <= ii < nxa and 0 <= jj < nya and maskA[ii, jj]:
+                q_ = posA[ii * nya + jj]
+                he = 0.5 * (hAv[k_] + hAv[q_])
+                lr_ += [k_, k_]; lc_ += [k_, q_]; lv_ += [he, -he]
+            elif extv[k_] and END_CORR > 0.0:
+                dirich[k_] = True
+    LapA = sp.csr_matrix((lv_, (lr_, lc_)), shape=(na, na)) / DX ** 2       # -div(h grad), Neumann (positive)
+    # The plain Laplacian on the board nodes (the layer under the board has one height)
+    for k_, (i, j) in enumerate(bij):
         for a, b in ((1, 0), (-1, 0), (0, 1), (0, -1)):
             ii, jj = i + a, j + b
             if 0 <= ii < nx and 0 <= jj < ny and board[ii, jj]:
                 q_ = pos[lin(ii, jj)]
-                he = 0.5 * (hLid[k_] + hLid[q_])
-                lr_ += [k_, k_]; lc_ += [k_, q_]; lv_ += [he, -he]
-    Lap = sp.csr_matrix((lv_, (lr_, lc_)), shape=(nbd, nbd)) / DX ** 2      # -div(h grad), Neumann (positive)
-    keepN = np.flatnonzero(~openB)
+                ur_ += [k_, k_]; uc_ += [k_, q_]; uv_ += [1.0, -1.0]
+    Lap = sp.csr_matrix((uv_, (ur_, uc_)), shape=(nbd, nbd)) / DX ** 2
+    keepN = np.flatnonzero(~dirich)
     Abd = nbd * DX * DX
     aOpen = math.sqrt(max(1e-6, (gap[openB] * DX).sum()) / math.pi)        # the openings' equivalent radius (above the rim)
     def wedge_family(vertical):
-        """Air modes of one vertical family: shapes at the board (mean square 1), frequencies,
+        """Air modes of one vertical family: shapes at the board (mean square 1 there), frequencies,
         the volume integral of psi^2 (per unit pressure) and the radiation loss out of the openings."""
-        Lh = Lap.tocsr()
+        Lh = LapA.tocsr()
         if vertical:
-            Lh = Lh + sp.diags((math.pi / hLid) ** 2 * hLid)
+            Lh = Lh + sp.diags((math.pi / hAv) ** 2 * hAv)
         Lk = Lh[keepN][:, keepN].tocsc()
-        Mk = sp.diags(hLid[keepN]).tocsc()
+        Mk = sp.diags(hAv[keepN]).tocsc()
         nmode = 40 if not vertical else 30
-        if os.environ.get("BOX_AIR"):
+        if boxAir:
             Lk = Lk + 1e-6 * sp.eye(len(keepN))
         ev, ew = sla.eigsh(Lk, k=nmode, M=Mk, sigma=0, which="LM")
-        psi = np.zeros((nbd, nmode)); psi[keepN] = ew
-        if os.environ.get("BOX_AIR") and not vertical:
+        psiA = np.zeros((na, nmode)); psiA[keepN] = ew
+        if boxAir and not vertical:
             ev = ev + (math.pi / (2 * CASE_H)) ** 2
-        psi = psi / np.sqrt((psi ** 2).sum(0) / nbd)
+        psi = psiA[bInA]
+        scale = np.sqrt((psi ** 2).sum(0) / nbd)
+        psi = psi / scale; psiA = psiA / scale
         fr = C_AIR * np.sqrt(np.maximum(ev, 0)) / (2 * math.pi)
         vfrac = 0.5 if vertical else 1.0
-        lam_ = (psi ** 2 * (hLid * vfrac)[:, None]).sum(0) * DX * DX       # integral of psi^2 over the volume
-        # Loss out of the open faces: the normal velocity there is grad psi / (i omega rho); power
+        lam_ = (psiA ** 2 * (hAv * vfrac)[:, None]).sum(0) * DX * DX       # integral of psi^2 over the volume, outside air included
+        # Loss out of the released edge: the normal velocity there is grad psi / (i omega rho); power
         # rho c R |v|^2 / 2 over the opening's area, against the stored energy lam_ / (2 rho c^2)
         flux = np.zeros(nmode)
-        for k_ in np.flatnonzero(openB):
-            i, j = divmod(int(bi[k_]), ny)
+        for k_ in np.flatnonzero(dirich):
+            i, j = aij[k_]
             for a, b in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 ii, jj = i + a, j + b
-                if 0 <= ii < nx and 0 <= jj < ny and board[ii, jj] and not openB[pos[lin(ii, jj)]]:
-                    flux += (psi[pos[lin(ii, jj)]] / DX) ** 2 * (gap[k_] * vfrac) * DX
+                if 0 <= ii < nxa and 0 <= jj < nya and maskA[ii, jj] and not dirich[posA[ii * nya + jj]]:
+                    flux += (psiA[posA[ii * nya + jj]] / DX) ** 2 * (hAv[k_] * vfrac) * DX
                     break
         om = 2 * math.pi * np.maximum(fr, 1.0)
         R_ = np.minimum(1.0, (om / C_AIR * aOpen) ** 2 / 2.0)
         eta_ = C_AIR ** 3 * R_ * flux / (om ** 3 * lam_)
-        if os.environ.get("BOX_AIR"):                                        # the old open-top box, for A/B
+        if boxAir:                                                           # the old open-top box, for A/B
             eta_ = 2 * np.minimum(1.0, (om / C_AIR * math.sqrt(Abd / math.pi)) ** 2 / 2.0) * C_AIR / (om * CASE_H)
         return psi, fr, lam_, eta_
     psi0, fa0, lam0, eta0 = wedge_family(False)
@@ -820,7 +869,8 @@ def main():
     etaA_modes = np.concatenate([eta0, eta1])
     nair = aw.shape[1]
     print(f"case air (lid at {math.degrees(LID_ANGLE):.0f} deg, {openB.sum()} open edge nodes, opening radius {aOpen:.2f} m): "
-          f"even family from {fa0[:4].round(0)} Hz, half-wave family from {fa1[:3].round(0)} Hz; loss factors median {np.median(etaA_modes):.3f}")
+          f"even family from {fa0[:4].round(0)} Hz (loss {eta0[:4].round(2)}), half-wave family from {fa1[:3].round(0)} Hz (loss {eta1[:3].round(2)}); "
+          f"loss factors median {np.median(etaA_modes):.3f}")
     full_s = P @ vecs
     Cba = (full_s[bi, :].T @ aw) * DX * DX                                   # (structural modes, air modes)
     ns = len(f)
