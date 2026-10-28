@@ -59,13 +59,16 @@ namespace
         return b1s + (b2 * fe * fe + 0.11 * overtone * std::pow (fe / 2000.0, 3));
     }
 
+    // The felt takes this long to settle into its full grip once the damper has landed
+    constexpr int kDamperRampMs = 40;
+
     // Extra decay with the felt damper resting on the string. A real damper takes a note
-    // 25-30 dB down within the first 0.3 s after release (Salamander's release samples); that
-    // needs about 50 nepers/s on the low partials. 10 left the damped note ringing 10-15 dB
-    // louder than the recordings under the following notes.
+    // 25-30 dB down within the first 0.3 s after release (Salamander's release samples); with
+    // the felt settling over kDamperRampMs that needs about 70 nepers/s on the low partials.
+    // 10 left the damped note ringing 10-15 dB louder than the recordings under the next notes.
     double damperDecay (double f, double strength)
     {
-        return strength * 50.0 * (1.0 + f / 2000.0);
+        return strength * 70.0 * (1.0 + f / 2000.0);
     }
 
     // One sample of a run of string modes driven by the bridge acceleration a.
@@ -1151,6 +1154,20 @@ void ModalPiano::setActivity (String& s, Activity a)
     s.activity = a;
 }
 
+std::complex<double> ModalPiano::restingPole (const String& s, const KeyState& ks, size_t j) const
+{
+    if (! s.damped)
+        return cd (m.prFree[j], m.piFree[j]);
+    if (ks.damperRamp <= 0)
+        return cd (m.prDamp[j], m.piDamp[j]);
+    // The felt is still settling: interpolate the poles in the log domain, so decay and
+    // frequency move together from the free values to the damped ones
+    const double g = 1.0 - ks.damperRamp / (kDamperRampMs * 0.001 * sampleRate);
+    const cd lf = std::log (cd (m.prFree[j], m.piFree[j]));
+    const cd ld = std::log (cd (m.prDamp[j], m.piDamp[j]));
+    return std::exp (lf + g * (ld - lf));
+}
+
 void ModalPiano::updateDamping (int keyIndex)
 {
     const auto& key = keys[(size_t) keyIndex];
@@ -1162,8 +1179,9 @@ void ModalPiano::updateDamping (int keyIndex)
         if (s.damped != damped || s.activity == Activity::Off)
         {
             s.damped = damped;
-            const auto& prSrc = damped ? m.prDamp : m.prFree;
-            const auto& piSrc = damped ? m.piDamp : m.piFree;
+            const bool settling = damped && ks.damperRamp > 0;
+            const auto& prSrc = damped && ! settling ? m.prDamp : m.prFree;
+            const auto& piSrc = damped && ! settling ? m.piDamp : m.piFree;
             forModes (s, s.count, [&] (size_t j)
             {
                 m.pr[j] = prSrc[j];
@@ -1674,15 +1692,15 @@ void ModalPiano::applyTension()
         const float decay = (float) (rise * loss * Ts);
         forEachString (ks, [&] (String& s)
         {
-            const auto& prSrc = s.damped ? m.prDamp : m.prFree;
-            const auto& piSrc = s.damped ? m.piDamp : m.piFree;
             forModes (s, s.count, [&] (size_t j)
             {
+                const cd base = restingPole (s, ks, j);
+                const float pr0 = (float) base.real(), pi0 = (float) base.imag();
                 const float w = m.omega[j];
                 const float y = w * shift;
                 const float a = 1.0f - w * decay - 0.5f * y * y;
-                m.pr[j] = a * prSrc[j] - y * piSrc[j];
-                m.pi[j] = a * piSrc[j] + y * prSrc[j];
+                m.pr[j] = a * pr0 - y * pi0;
+                m.pi[j] = a * pi0 + y * pr0;
             });
         });
     }
@@ -1766,10 +1784,31 @@ void ModalPiano::process (float* left, float* right, int numSamples)
                 const double motion = std::min (2.0, std::sqrt (e) / 1.0e-3);
                 if (motion > 0.01)
                     queueAction (3, 0, 0.35 * motion, (int) k);
+                ks.damperRamp = (int) (kDamperRampMs * 0.001 * sampleRate);
             }
             updateDamping ((int) k);
             checkActivity();
         }
+    }
+    // A landed damper's felt settles onto the strings over a few tens of milliseconds, so a
+    // quick re-pedal after a release (a 30 ms gap is common) only grazes the note instead of
+    // cutting it by 10 dB. Its grip ramps up from nothing to the full damped poles.
+    for (size_t k = 0; k < keyState.size(); ++k)
+    {
+        auto& ks = keyState[k];
+        if (ks.damperRamp <= 0)
+            continue;
+        ks.damperRamp = std::max (0, ks.damperRamp - numSamples);
+        forEachString (ks, [&] (String& s)
+        {
+            if (! s.damped) { ks.damperRamp = 0; return; }
+            forModes (s, s.count, [&] (size_t j)
+            {
+                const cd pole = restingPole (s, ks, j);
+                m.pr[j] = (float) pole.real();
+                m.pi[j] = (float) pole.imag();
+            });
+        });
     }
     sampleClock += numSamples;
 
