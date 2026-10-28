@@ -302,9 +302,9 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     // relative to the middle of the range. Pushing harder on the bridge while feeling its
     // motion less by the same factor keeps the decay and coupling unchanged.
     {
-        static constexpr double voicingDb[30] = { -0.6, 0.7, -3.3, -5.7, -10.2, -6.6, -1.4, 6.2, 4.0, -1.8,
-                                               -6.2, -8.5, -14.0, -8.6, -10.7, -8.4, -3.5, -8.9, -3.6, 1.6,
-                                               -5.0, -3.2, -9.6, -1.7, -3.2, -1.4, -14.8, -11.4, 0.7, -5.2 }; // every 3 keys from A0
+        static constexpr double voicingDb[30] = { -0.4, -0.2, -2.5, -4.6, -9.4, -5.9, -2.6, 5.5, 5.3, 0.5,
+                                               -0.5, -6.0, -13.9, -7.0, -9.8, -4.5, -2.0, -4.5, -6.8, -2.1,
+                                               -7.3, -6.0, -11.9, -2.7, -6.7, -4.4, -17.4, -13.7, -1.6, -7.2 }; // every 3 keys from A0
         const double pos = std::clamp ((key.midiNote - kLowestKey) / 3.0, 0.0, 28.999);
         const int i = (int) pos;
         const double db = voicingDb[i] + (voicingDb[i + 1] - voicingDb[i]) * (pos - i);

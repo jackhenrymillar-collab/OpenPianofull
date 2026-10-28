@@ -949,11 +949,24 @@ def main():
     eAir = (lamA[:, None] * (Vc[nsl:nsl + nair] ** 2) * etaA_modes[:, None]).sum(0) + (lamU * (Vc[nsl + nair:] ** 2) * etaU_modes[:, None]).sum(0)
     etaAir = eAir / (eA + eS)                                               # already weighted by the air's share
     etaStruct = etaSc * (1.0 - airE)
-    Q = Q / nq; Ql = Ql / nq                                                 # unit structural modal mass (board, body and lid)
+    # Each coupled mode's modal mass is the whole of its kinetic energy, the air's included:
+    # 2T = w^2 (sum q^2) + sum (w_n / w)^2 Lam_n P_n^2 / (rho c^2) over the air modes (the
+    # velocity in the air is grad p / (i w rho), and grad psi_n integrates to k_n^2 Lam_n).
+    # Normalizing on the structure's share alone made an air-heavy mode answer the bridge
+    # as if the air were weightless, by 1 / (1 - airE): up to 10 dB on the case-air modes.
+    w2a = (2 * math.pi * fa) ** 2; w2u = (2 * math.pi * fu) ** 2
+    tAir = (w2a[:, None] * lamA[:, None] * Vc[nsl:nsl + nair] ** 2).sum(0) + (w2u[:, None] * lamU * Vc[nsl + nair:] ** 2).sum(0)
+    mMode = (Q ** 2).sum(0) + (Ql ** 2).sum(0) + tAir / lam ** 2
+    nm = np.sqrt(mMode); nm[nm == 0] = 1
+    tv = (lam * mMode) / np.maximum(eS + eA, 1e-30)                          # kinetic over potential energy: 1 for a true mode
+    corr = 10 * np.log10(np.maximum(mMode / nq ** 2, 1e-12))
+    print(f"coupled modes' energy balance T/V: median {np.median(tv):.3f}, 10-90% {np.percentile(tv, 10):.3f}-{np.percentile(tv, 90):.3f}; "
+          f"air mass correction: median {np.median(corr):.2f} dB, max {corr.max():.1f} dB, {(corr > 3).sum()} modes over 3 dB")
+    rimShare = ((Q / nq) ** 2 * rimE[:, None]).sum(0)                      # shares of the structural part
+    braceShare = ((Q / nq) ** 2 * brE[:, None]).sum(0)
+    lidShare = ((Ql / nq) ** 2).sum(0)
+    Q = Q / nm; Ql = Ql / nm                                                 # unit modal mass (board, body, lid and the air)
     f = fc_
-    rimShare = (Q ** 2 * rimE[:, None]).sum(0)
-    braceShare = (Q ** 2 * brE[:, None]).sum(0)
-    lidShare = (Ql ** 2).sum(0)
     print(f"coupled body: {len(f)} modes; lowest {f[:6].round(1)}; air modes from {fa[0]:.0f} Hz; "
           f"rim-heavy modes {(rimShare > 0.3).sum()}, air-heavy {(airE > 0.5).sum()}, frame-heavy {(frameShare > 0.5).sum()}, lid-heavy {(lidShare > 0.5).sum()}")
     full = full_s @ Q                                       # (nx*ny, n)
