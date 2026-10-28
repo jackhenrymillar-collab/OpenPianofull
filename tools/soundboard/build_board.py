@@ -82,13 +82,70 @@ FLOOR_REFL = 0.8
 N_BASS, N_TREBLE = 4, 28       # bridge zones (bass bridge keys A0..E2, treble bridge F2..C8)
 
 
+# Measured geometry (optional, --geometry FILE.json). Anything the file leaves out keeps the
+# generic shape below. Coordinates are metres on the board: x across the strings (0 at the
+# treble edge .. A at the spine), y along them (0 at the belly rail .. B at the tail).
+#   "A", "B"               bounding box
+#   "outline"              polygon [[x, y], ...] of the vibrating board (inside the rim, in front of the cut-off bar)
+#   "ribs"                 [[[x0, y0], [x1, y1]], ...] rib centre lines, end to end
+#   "treble_bridge"        polyline [[x, y], ...] from the C8 end to the F2 end
+#   "bass_bridge"          polyline from the E2 end to the A0 end
+#   "cutoff"               [[x0, y0], [x1, y1]] the cut-off bar across the bass corner
+#   "grain_deg", "h_mid", "h_edge", "rib_w", "rib_t"
+GEOM = {}
+
+
+def load_geometry(path):
+    import json
+    g = json.load(open(path))
+    GEOM.update(g)
+    G = globals()
+    for key, name in (("A", "A"), ("B", "B"), ("h_mid", "H_MID"), ("h_edge", "H_EDGE"), ("rib_w", "RIB_W"), ("rib_t", "RIB_T")):
+        if key in g: G[name] = float(g[key])
+    if "grain_deg" in g: G["GRAIN"] = math.radians(float(g["grain_deg"]))
+    if "rib_w" in g or "rib_t" in g:
+        G["RIB_EI"] = 2.0 * E_L * RIB_W * RIB_T ** 3 / 12.0
+        G["RIB_M"] = RHO * RIB_W * RIB_T
+    if "ribs" in g and len(g["ribs"]) > 1:
+        # mean spacing between neighbouring ribs, for the membrane stiffness along them
+        mids = np.array([[(r[0][0] + r[1][0]) / 2, (r[0][1] + r[1][1]) / 2] for r in g["ribs"]])
+        d = np.sort(np.hypot(*(mids[1:] - mids[:-1]).T))
+        G["RIB_SPACING"] = float(np.median(d))
+    print(f"geometry from {path}: " + ", ".join(k for k in g))
+
+
+def _polyline_fn(points):
+    """A curve parametrised by arc length, t = 0 at the first point .. 1 at the last."""
+    pts = np.asarray(points, float)
+    seg = np.hypot(*np.diff(pts, axis=0).T)
+    s = np.concatenate([[0.0], np.cumsum(seg)]) / seg.sum()
+    return lambda t: (np.interp(t, s, pts[:, 0]), np.interp(t, s, pts[:, 1]))
+
+
 def bentside(y):
     """Treble-side edge of the board: straight near the keyboard, then curving in to the tail."""
+    if "outline" in GEOM:
+        # the smallest x where the outline crosses this y
+        pts = np.asarray(GEOM["outline"], float)
+        y = np.asarray(y, float)
+        out = np.full(y.shape, A, float)
+        for (x0, y0), (x1, y1) in zip(pts, np.roll(pts, -1, axis=0)):
+            if y0 == y1:
+                continue
+            u = (y - min(y0, y1)) / abs(y1 - y0)
+            hit = (u >= 0) & (u <= 1)
+            xc = x0 + (x1 - x0) * (y - y0) / (y1 - y0)
+            out = np.where(hit, np.minimum(out, xc), out)
+        return out
     t = np.clip((y - 0.25) / (B - 0.25), 0.0, 1.0)
     return 1.10 * t ** 1.8
 
 
 def inside(x, y):
+    if "outline" in GEOM:
+        from matplotlib.path import Path
+        x, y = np.asarray(x, float), np.asarray(y, float)
+        return Path(np.asarray(GEOM["outline"], float)).contains_points(np.column_stack([x.ravel(), y.ravel()])).reshape(x.shape)
     return (y >= 0) & (y <= B) & (x <= A) & (x >= bentside(y))
 
 
@@ -112,6 +169,8 @@ FAN = 0.86        # the strings fan out a little towards the tail: along-the-boa
 def treble_bridge(t):
     """t = 0 at the top note (C8, near the belly rail on the treble side) .. 1 at F2.
     Each key's bridge pin sits one speaking length behind its capo/agraffe."""
+    if "treble_bridge" in GEOM:
+        return _polyline_fn(GEOM["treble_bridge"])(t)
     k = 88 - t * (88 - 21)
     L = np.interp(k, np.arange(1, 89), LEN)
     x = 0.12 + 0.80 * t
@@ -121,6 +180,8 @@ def treble_bridge(t):
 def bass_bridge(t):
     """t = 0 at E2 .. 1 at A0: the cross-strung bass runs at about 25 degrees over the tenor,
     towards the spine and the tail."""
+    if "bass_bridge" in GEOM:
+        return _polyline_fn(GEOM["bass_bridge"])(t)
     k = 20 - t * 19
     L = np.interp(k, np.arange(1, 89), LEN)
     ang = math.radians(25.0)
@@ -241,7 +302,10 @@ def main():
     ap.add_argument("--frame-out", default="engine/src/piano/FrameModes.inc")
     ap.add_argument("--plot")
     ap.add_argument("--json", help="also write the board geometry and some mode shapes for the visualiser")
+    ap.add_argument("--geometry", help="measured board geometry (JSON, see GEOM above); anything missing keeps the generic shape")
     args = ap.parse_args()
+    if args.geometry:
+        load_geometry(args.geometry)
 
     nx, ny = int(round(A / DX)) + 1, int(round(B / DX)) + 1
     X, Y = np.meshgrid(np.arange(nx) * DX, np.arange(ny) * DX, indexing="ij")
@@ -310,6 +374,7 @@ def main():
     # Bridges: beams along their curves, sampled every DX, bilinear onto the grid
     def interp_rows(xs, ys):
         r, c, v = [], [], []
+        xs = np.clip(xs, 0.0, (nx - 2) * DX); ys = np.clip(ys, 0.0, (ny - 2) * DX)   # keep measured beams on the grid
         for k, (x, y) in enumerate(zip(xs, ys)):
             fx, fy = x / DX, y / DX
             i0, j0 = int(fx), int(fy)
@@ -319,9 +384,13 @@ def main():
         return sp.csr_matrix((v, (r, c)), shape=(len(xs), nx * ny))
     beams = [(treble_bridge, TREBLE_EI, TREBLE_M), (bass_bridge, BASS_EI, BASS_M)]
     # Ribs: straight beams across the grain, every RIB_SPACING along it, cut to the board
+    # (or the measured rib lines, when a geometry file gives them)
     gdir = np.array([c, s_]); rdir = np.array([-s_, c])
     centre = np.array([0.85, 0.75])
-    for off in np.arange(-1.2, 1.2, RIB_SPACING):
+    no_taper = set()
+    for r_ in GEOM.get("ribs", []):
+        beams.append((_polyline_fn(r_), RIB_EI, RIB_M))
+    for off in (np.arange(-1.2, 1.2, RIB_SPACING) if "ribs" not in GEOM else []):
         t = np.linspace(-1.5, 1.5, 1500)
         px = centre[0] + off * gdir[0] + t * rdir[0]
         py = centre[1] + off * gdir[1] + t * rdir[1]
@@ -336,6 +405,11 @@ def main():
                                                      centre[1] + o * gdir[1] + (a0 + (a1 - a0) * u) * rdir[1])),
                       RIB_EI, RIB_M))
     print(f"{len(beams) - 2} ribs")
+    if "cutoff" in GEOM:
+        # The cut-off bar: a heavy spruce beam across the bass corner (about 25 x 100 mm), glued
+        # under the board; the corner behind it is left out of the vibrating area by the outline
+        no_taper.add(len(beams))
+        beams.append((_polyline_fn(GEOM["cutoff"]), 2.0 * E_L * 0.025 * 0.10 ** 3 / 12.0, RHO * 0.025 * 0.10))
     beam_lines = []
     for fn, EI, mlin in beams:
         u = np.linspace(0, 1, 40)
@@ -354,7 +428,7 @@ def main():
             # tall in the middle, ~18 mm at the ends: EI falls to ~40% over the last 15 cm)
             sc = np.linspace(0, L, n)[1:-1]
             dend = np.minimum(sc, L - sc)
-            if not os.environ.get('NO_TAPER'): C = sp.diags(np.sqrt(0.4 + 0.6 * np.clip(dend / 0.15, 0.0, 1.0))) @ C
+            if not os.environ.get('NO_TAPER') and bi_ not in no_taper: C = sp.diags(np.sqrt(0.4 + 0.6 * np.clip(dend / 0.15, 0.0, 1.0))) @ C
         K = K + part("bridge" if bi_ < 2 else "rib", C.T @ C * (EI * ds))
         M = M + Bm.T @ sp.diags(np.full(n, mlin * ds)) @ Bm
         if bi_ < 2:
@@ -791,7 +865,8 @@ def main():
     if args.json:
         import json
         yy = np.linspace(0, B, 120)
-        outline = [[A, 0.0], [0.0, 0.0]] + [[round(float(bentside(v)), 3), round(float(v), 3)] for v in yy] + [[A, B]]
+        outline = GEOM["outline"] if "outline" in GEOM else \
+            [[A, 0.0], [0.0, 0.0]] + [[round(float(bentside(v)), 3), round(float(v), 3)] for v in yy] + [[A, B]]
         sel = [i for i in range(len(f)) if i < 40 or i % 6 == 0]
         shapes = []
         for i in sel:
