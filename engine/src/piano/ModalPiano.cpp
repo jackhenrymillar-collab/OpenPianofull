@@ -76,20 +76,65 @@ namespace
 
     // One sample of a run of string modes driven by the bridge acceleration a.
     // Returns their total force on the bridge.
-    float stepModes (float* __restrict zr, float* __restrict zi, const float* __restrict pr,
-                     const float* __restrict pi, const float* __restrict bgr, const float* __restrict bgi,
-                     const float* __restrict fk, int n, float a)
+    // The same step for a string whose input this sample is not known yet: last sample's
+    // acceleration is folded into the state first, and the force returned is the one without
+    // this sample's input; gain is the force per unit of that input (the direct part, which the
+    // bridge solve adds once the acceleration is known)
+    float stepModesDeferred (float* __restrict zr, float* __restrict zi, const float* __restrict pr,
+                             const float* __restrict pi, const float* __restrict bgr, const float* __restrict bgi,
+                             const float* __restrict fk, int n, float a, float& gain)
     {
-        float f = 0;
+        float f = 0, g = 0;
         for (int j = 0; j < n; ++j)
         {
-            const float r = zr[j], im = zi[j];
-            const float ni = pr[j] * im + pi[j] * r + bgi[j] * a;
-            zr[j] = pr[j] * r - pi[j] * im + bgr[j] * a;
+            const float r = zr[j] + bgr[j] * a, im = zi[j] + bgi[j] * a;
+            const float ni = pr[j] * im + pi[j] * r;
+            zr[j] = pr[j] * r - pi[j] * im;
             zi[j] = ni;
             f += fk[j] * ni;
+            g += fk[j] * bgi[j];
         }
+        gain = g;
         return f;
+    }
+
+    // Solves A x = b in place (A n by n, row-major; b becomes x), Gaussian elimination with
+    // partial pivoting: the bridge system is small (the live zones) and well conditioned
+    void solveDense (double* A, double* b, int n)
+    {
+        for (int k = 0; k < n; ++k)
+        {
+            int piv = k;
+            for (int i = k + 1; i < n; ++i)
+                if (std::abs (A[i * n + k]) > std::abs (A[piv * n + k]))
+                    piv = i;
+            if (piv != k)
+            {
+                for (int j = 0; j < n; ++j)
+                    std::swap (A[k * n + j], A[piv * n + j]);
+                std::swap (b[k], b[piv]);
+            }
+            const double d = A[k * n + k];
+            if (d == 0.0)
+                continue;
+            for (int i = k + 1; i < n; ++i)
+            {
+                const double m = A[i * n + k] / d;
+                if (m == 0.0)
+                    continue;
+                for (int j = k; j < n; ++j)
+                    A[i * n + j] -= m * A[k * n + j];
+                b[i] -= m * b[k];
+            }
+        }
+        for (int k = n - 1; k >= 0; --k)
+        {
+            double v = b[k];
+            for (int j = k + 1; j < n; ++j)
+                v -= A[k * n + j] * b[j];
+            const double d = A[k * n + k];
+            b[k] = d != 0.0 ? v / d : 0.0;
+        }
     }
 
     // Sum of u[k] * u[k + lag] over the valid range
@@ -155,13 +200,9 @@ void ModalPiano::prepare (double newSampleRate, const Settings& newSettings)
             keyZone[(size_t) k] = k < firstTreble ? (kBassZones * k) / std::max (1, firstTreble)
                                                    : kBassZones + ((kZones - kBassZones) * (k - firstTreble)) / std::max (1, (int) keys.size() - firstTreble);
     }
-    for (int z = 0; z < kZones; ++z)
-    {
-        const double p = std::clamp (layoutPosition (z), 0.0, 7.0);
-        const int i = std::min (6, (int) p);
-        zoneCoupling[(size_t) z] = zoneCouplingFit[(size_t) i] + (zoneCouplingFit[(size_t) i + 1] - zoneCouplingFit[(size_t) i]) * (p - i);
-        zoneResistance[(size_t) z] = zoneResistanceFit[(size_t) i] + (zoneResistanceFit[(size_t) i + 1] - zoneResistanceFit[(size_t) i]) * (p - i);
-    }
+    // Every zone couples to the board exactly as the solved shapes say: the bridge sections are
+    // the Steinway D's, so no fitted per-zone factor is left
+    zoneCoupling.fill (1.0);
 
     // The tuner tunes the piano as built, by ear: the body pulls some notes a few cents
     // sharp or flat (most near strong body modes), and the pins are turned to cancel it.
@@ -637,7 +678,7 @@ void ModalPiano::buildSoundboard()
     std::sort (modes.begin(), modes.end(), [] (const Mode& a, const Mode& b) { return a.f < b.f; });   // (zoneModesV/S count a prefix)
     const size_t n = modes.size();
     for (auto* v : { &board.wr, &board.wi, &board.qr, &board.qi, &board.hr, &board.hi, &board.omega, &board.sigma,
-                     &board.radLeft, &board.radRight, &board.volume })
+                     &board.radLeft, &board.radRight, &board.volume, &board.direct })
         v->assign (n, 0.0f);
     board.phi.assign (n * Z, 0.0f);
     board.phiH.assign (n * Z, 0.0f);
@@ -682,11 +723,23 @@ void ModalPiano::buildSoundboard()
         const double f = modes[i].f;
         const double w = 2.0 * M_PI * f;
         const double sigma = M_PI * f * modes[i].loss;
-        // Unit modal mass: the shapes carry the physical admittance
-        const cd pole = std::exp (cd (-sigma, w) * Ts);
-        const cd gain = pole * (Ts / w);
+        // Unit modal mass: the shapes carry the physical admittance. The mode is discretized
+        // with the trapezoidal rule (prewarped so its resonance lands exactly), not by impulse
+        // invariance: the trapezoidal admittance is positive real at every frequency, like the
+        // physical one, so the strings can be coupled to it at full strength without the
+        // coupling feeding energy in. In partial fractions it is a direct term plus a complex
+        // one-pole pair: velocity = direct * force + Re[(omega + j sigma) w], w <- q w + h force
+        const double w0sq = w * w + sigma * sigma;
+        const double K = w / std::tan (0.5 * w * Ts);
+        const double a0 = K * K + 2.0 * sigma * K + w0sq, a1 = 2.0 * (w0sq - K * K), a2 = K * K - 2.0 * sigma * K + w0sq;
+        const double d = -K / a2, c0 = K - d * a0, c1 = -d * a1;
+        const double qr = -a1 / (2.0 * a0), qi = std::sqrt (std::max (0.0, a2 / a0 - qr * qr));
+        const double ar = c0 / (2.0 * a0), ai = (-c1 / (2.0 * a0) - ar * qr) / qi;
+        const cd pole (qr, qi);
+        const cd gain = 2.0 * cd (ar, ai) / cd (w, sigma);
         board.omega[i] = (float) w;
         board.sigma[i] = (float) sigma;
+        board.direct[i] = (float) d;
         board.qr[i] = (float) pole.real();
         board.qi[i] = (float) pole.imag();
         board.hr[i] = (float) gain.real();
@@ -740,7 +793,58 @@ void ModalPiano::buildSoundboard()
 
     // Overall level: a mezzo-forte middle C peaks around -20 dBFS, fortissimo around -10
     outputGain = 21.5 * 0.4;   // the body at full strength is ~8 dB louder
+    buildBridgeAdmittance();
     buildBody();
+}
+
+void ModalPiano::buildBridgeAdmittance()
+{
+    // The board's motion at each zone in the same sample as a unit force at each zone (vertical
+    // zones first, then sideways): the modes' direct feedthrough, summed over the shapes. The
+    // many-mode admittance above the solved modes adds its instantaneous part on the vertical
+    // diagonal, and the leaning bridge pins (side bearing) fold in on both sides, as the strings
+    // see them: the sideways pull pushes up by sideBearing, and the up-and-down motion moves the
+    // sideways strings by the same share
+    const int n = (int) board.omega.size(), Z = kZones, P = 2 * kZones;
+    std::vector<double> y ((size_t) P * P, 0.0);
+    std::vector<double> gain ((size_t) n);
+    for (int i = 0; i < n; ++i)
+        gain[(size_t) i] = (double) board.omega[(size_t) i] * board.hr[(size_t) i] - (double) board.sigma[(size_t) i] * board.hi[(size_t) i] + board.direct[(size_t) i];
+    auto row = [&] (int p) { return p < Z ? board.phi.data() + (size_t) p * (size_t) n : board.phiH.data() + (size_t) (p - Z) * (size_t) n; };
+    for (int p = 0; p < P; ++p)
+        for (int q = p; q < P; ++q)
+        {
+            const float* a = row (p);
+            const float* b = row (q);
+            double sum = 0;
+            for (int i = 0; i < n; ++i)
+                sum += (double) a[i] * b[i] * gain[(size_t) i];
+            y[(size_t) p * P + q] = y[(size_t) q * P + p] = sum;
+        }
+    const double c = highPassCoeff;
+    for (int z = 0; z < Z; ++z)
+        y[(size_t) z * P + z] += highAdmittance[(size_t) z] * c * c;
+    // Y_eff = B^T Y B with B = [[I, sb I], [0, I]] (string forces to board forces)
+    bridgeY.assign ((size_t) P * P, 0.0);
+    const double sb = sideBearing;
+    for (int p = 0; p < P; ++p)
+        for (int q = 0; q < P; ++q)
+        {
+            // (Y B)_pq
+            double yb = y[(size_t) p * P + q];
+            if (q >= Z)
+                yb += sb * y[(size_t) p * P + (q - Z)];
+            // (B^T (Y B))_pq: row p of B^T is row p of B transposed
+            double v = yb;
+            if (p >= Z)
+            {
+                double yb2 = y[(size_t) (p - Z) * P + q];
+                if (q >= Z)
+                    yb2 += sb * y[(size_t) (p - Z) * P + (q - Z)];
+                v += sb * yb2;
+            }
+            bridgeY[(size_t) p * P + q] = v;
+        }
 }
 
 void ModalPiano::buildFrame()
@@ -1805,12 +1909,28 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         double forceSum = 0, forceLeft = 0, forceRight = 0;  // vertical
         double sideSum = 0, sideLeft = 0, sideRight = 0;     // horizontal
 
-        // Strings without a hammer on them: one step per sample
-        for (const auto& r : runs)
+        // Strings without a hammer on them: one step per sample. The bridge acceleration they
+        // feel this sample is not known yet (it depends on their own force on the bridge), so each
+        // run folds last sample's acceleration into its state first and reports its force without
+        // this sample's input (free) and its gain on that input; the bridge solve below closes
+        // the loop in the same sample
+        // (the runs can be laid out afresh later in this sample, by a hammer leaving or a string
+        // falling quiet, so what each run needs for the solve is kept here, not in the run)
+        const size_t stepped = runs.size();
+        if (runGain.size() < stepped) { runGain.resize (stepped); runPanLeft.resize (stepped); runPanRight.resize (stepped); runDim.resize (stepped); }
+        std::array<double, 2 * kZones> implicitGain {};
+        for (size_t ri = 0; ri < stepped; ++ri)
         {
+            const auto& r = runs[ri];
             const int j = r.first;
-            const float f = stepModes (zr + j, zi + j, pr + j, pi + j, bgr + j, bgi + j, fk + j, r.count,
-                                       (float) (r.side ? zoneSideAccel[(size_t) r.zone] : zoneAcceleration[(size_t) r.zone]));
+            float g = 0;
+            const float f = stepModesDeferred (zr + j, zi + j, pr + j, pi + j, bgr + j, bgi + j, fk + j, r.count,
+                                               (float) (r.side ? zoneSideAccel[(size_t) r.zone] : zoneAcceleration[(size_t) r.zone]), g);
+            runGain[ri] = g;
+            runPanLeft[ri] = r.panLeft;
+            runPanRight[ri] = r.panRight;
+            runDim[ri] = r.side ? kZones + r.zone : r.zone;
+            implicitGain[(size_t) runDim[ri]] += g;
             if (r.side)
             {
                 sideSum += f;
@@ -1885,12 +2005,6 @@ void ModalPiano::process (float* left, float* right, int numSamples)
             forceRight += f * s.panRight;
         }
 
-        // Side bearing: the strings' sideways pull on the leaning bridge pins has an upward part
-        if (sideBearing > 0)
-            for (int z = 0; z < kZones; ++z)
-                if (zoneSideForce[(size_t) z] != 0.0)
-                    zoneForce[(size_t) z] += sideBearing * zoneSideForce[(size_t) z];
-
         // The far ends of the strings, on the iron frame
         double frameLeft = 0, frameRight = 0;
         if (settings.farEnd > 0)
@@ -1905,7 +2019,12 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         }
 
         // Soundboard and frame modes. Each mode is pushed by every zone's force times its
-        // shape there, and moves every zone by the same shape.
+        // shape there, and moves every zone by the same shape. The free strings' forces depend on
+        // the bridge's acceleration this sample, which depends on those forces: the board first
+        // moves on its own (pass 1), the live zones' small linear system is solved for the
+        // accelerations (the board's same-sample give per unit force, bridgeY, against the
+        // strings' gain on their input), and the forces are then applied (pass 2). No sample of
+        // delay is left in the loop, so the full sideways lever of a tall bridge stays stable.
         double radiatedLeft = 0, radiatedRight = 0, volumeVelocity = 0;
         zoneBoardVelocity.fill (0);
         {
@@ -1914,52 +2033,7 @@ void ModalPiano::process (float* left, float* right, int numSamples)
             float* __restrict F = board.scratchF.data();
             float* __restrict V = board.scratchV.data();
             const float* __restrict phi = board.phi.data();
-            {
-                // The action's knocks reach the board through the frame, evenly along the bridge
-                const float* __restrict ps = board.phiSum.data();
-                const float sp = (float) actionSpread;
-                for (int i = 0; i < nb; ++i)
-                    F[i] = ps[i] * sp;
-            }
             const float* __restrict phH = board.phiH.data();
-            // Every zone's push (and sideways pull) times its shape, four rows per pass so F is
-            // read and written a quarter as often
-            const float* rows[2 * kZones];
-            float amounts[2 * kZones];
-            int lens[2 * kZones];
-            int nr = 0;
-            for (int z = 0; z < kZones; ++z)
-            {
-                const float fz = (float) zoneForce[(size_t) z];
-                if (fz != 0.0f) { rows[nr] = phi + (size_t) z * (size_t) nb; amounts[nr] = fz; lens[nr++] = zoneLive[(size_t) z] ? zoneModesV[(size_t) z] : nb; }
-                // The strings' sideways pull tilts the bridge (its shapes along the bridge)
-                const float sz = (float) zoneSideForce[(size_t) z];
-                if (sz != 0.0f) { rows[nr] = phH + (size_t) z * (size_t) nb; amounts[nr] = sz; lens[nr++] = zoneModesS[(size_t) z]; }
-            }
-            int r0 = 0;
-            for (; r0 + 4 <= nr; r0 += 4)
-            {
-                const float* __restrict p0 = rows[r0]; const float* __restrict p1 = rows[r0 + 1];
-                const float* __restrict p2 = rows[r0 + 2]; const float* __restrict p3 = rows[r0 + 3];
-                const float a0 = amounts[r0], a1 = amounts[r0 + 1], a2 = amounts[r0 + 2], a3 = amounts[r0 + 3];
-                const int common = std::min (std::min (lens[r0], lens[r0 + 1]), std::min (lens[r0 + 2], lens[r0 + 3]));
-                for (int i = 0; i < common; ++i)
-                    F[i] += p0[i] * a0 + p1[i] * a1 + p2[i] * a2 + p3[i] * a3;
-                for (int q = 0; q < 4; ++q)
-                {
-                    const float* __restrict p = rows[r0 + q];
-                    const float a = amounts[r0 + q];
-                    for (int i = common; i < lens[r0 + q]; ++i)
-                        F[i] += p[i] * a;
-                }
-            }
-            for (; r0 < nr; ++r0)
-            {
-                const float* __restrict p0 = rows[r0];
-                const float a0 = amounts[r0];
-                for (int i = 0; i < lens[r0]; ++i)
-                    F[i] += p0[i] * a0;
-            }
             float* __restrict wr = board.wr.data();
             float* __restrict wi = board.wi.data();
             const float* __restrict qr = board.qr.data();
@@ -1971,12 +2045,14 @@ void ModalPiano::process (float* left, float* right, int numSamples)
             const float* __restrict rl = board.radLeft.data();
             const float* __restrict rrt = board.radRight.data();
             const float* __restrict bv = board.volume.data();
+            const float* __restrict dr = board.direct.data();
+            // Pass 1: the modes' free motion this sample
             float l = 0, r = 0, vol = 0;
             for (int i = 0; i < nb; ++i)
             {
                 const float x = wr[i], y = wi[i];
-                const float nr = qr[i] * x - qi[i] * y + hr[i] * F[i];
-                const float ni = qr[i] * y + qi[i] * x + hi[i] * F[i];
+                const float nr = qr[i] * x - qi[i] * y;
+                const float ni = qr[i] * y + qi[i] * x;
                 wr[i] = nr;
                 wi[i] = ni;
                 const float vel = om[i] * nr - sg[i] * ni;
@@ -1985,9 +2061,11 @@ void ModalPiano::process (float* left, float* right, int numSamples)
                 r += rrt[i] * vel;
                 vol += bv[i] * vel;
             }
-            // Bridge motion at each zone that has strings being run (and sideways, where
-            // sideways strings ring): four shapes per pass over the modes' velocities
+            // The free bridge motion at each zone that has strings being run (and sideways,
+            // where sideways strings ring): four shapes per pass over the modes' velocities
             float dotOut[2 * kZones];
+            const float* rows[2 * kZones];
+            int lens[2 * kZones];
             int nd = 0;
             for (int z = 0; z < kZones; ++z)
             {
@@ -2027,57 +2105,196 @@ void ModalPiano::process (float* left, float* right, int numSamples)
                     c0 += p0[i] * V[i];
                 dotOut[d0] = c0;
             }
-            int di = 0;
+
+            // The bridge this sample, zone by zone: p runs over the live vertical zones then the
+            // live sideways ones. The strings give f_p = K_p + G_p a_p (K: every force already
+            // known, from hammered strings, the lengthwise modes and the free strings' own
+            // motion; G: the free strings' gain on this sample's acceleration); the board answers
+            // v_p = vFree_p + sum_q Y_pq f_q, with the many-mode admittance above the solved
+            // modes and the leaning pins (side bearing) folded into Y and vFree; and
+            // a_p = (v_p - last v_p) * rate. Solved for a.
+            int dims[2 * kZones];
+            int np = 0;
+            double vFree[2 * kZones];
+            double highFree[kZones];
+            {
+                const double c = highPassCoeff;
+                int di = 0;
+                for (int z = 0; z < kZones; ++z)
+                {
+                    // The smooth admittance's two-pole high-pass, split into what its memory gives
+                    // on its own and (in bridgeY) what this sample's force adds at once
+                    highFree[(size_t) z] = highAdmittance[(size_t) z] * (-c * c * highPassState[(size_t) z] - c * highPassState2[(size_t) z]);
+                    // (the dot products come zone by zone, up-and-down then sideways, as the rows went in)
+                    if (zoneLive[(size_t) z])
+                    {
+                        vFree[(size_t) z] = dotOut[di++] + highFree[(size_t) z];
+                        dims[np++] = z;
+                    }
+                    if (zoneSideLive[(size_t) z])
+                        vFree[(size_t) (kZones + z)] = dotOut[di++] + sideBearing * vFree[(size_t) z];
+                }
+                for (int z = 0; z < kZones; ++z)
+                    if (zoneSideLive[(size_t) z])
+                        dims[np++] = kZones + z;
+            }
+            double accel[2 * kZones] = {};
+            {
+                // (I - rate Y G) a = rate (vFree + Y K - vLast)
+                double A[4 * kZones * kZones], rhs[2 * kZones];
+                const double rate = sampleRate;
+                for (int u = 0; u < np; ++u)
+                {
+                    const int p = dims[u];
+                    double yk = 0;
+                    for (int w = 0; w < np; ++w)
+                    {
+                        const int q = dims[w];
+                        const double y = bridgeY[(size_t) p * 2 * kZones + (size_t) q];
+                        yk += y * (q < kZones ? zoneForce[(size_t) q] : zoneSideForce[(size_t) (q - kZones)]);
+                        A[u * np + w] = (u == w ? 1.0 : 0.0) - rate * y * implicitGain[(size_t) q];
+                    }
+                    const double last = p < kZones ? lastZoneVelocity[(size_t) p] : lastZoneSideVel[(size_t) (p - kZones)];
+                    rhs[u] = rate * (vFree[(size_t) p] + yk - last);
+                }
+                solveDense (A, rhs, np);
+                for (int u = 0; u < np; ++u)
+                    accel[(size_t) dims[u]] = rhs[u];
+            }
+            // The free strings' forces, complete
+            for (size_t ri = 0; ri < stepped; ++ri)
+            {
+                const int p = runDim[ri];
+                const double df = runGain[ri] * accel[(size_t) p];
+                if (df == 0.0)
+                    continue;
+                if (p >= kZones)
+                {
+                    sideSum += df;
+                    zoneSideForce[(size_t) (p - kZones)] += df;
+                    sideLeft += df * runPanLeft[ri];
+                    sideRight += df * runPanRight[ri];
+                }
+                else
+                {
+                    forceSum += df;
+                    forceLeft += df * runPanLeft[ri];
+                    forceRight += df * runPanRight[ri];
+                    zoneForce[(size_t) p] += df;
+                }
+            }
+            // The bridge's motion, as the solve saw it, fed to every string next sample
+            for (int u = 0; u < np; ++u)
+            {
+                const int p = dims[u];
+                double v = vFree[(size_t) p];
+                for (int w = 0; w < np; ++w)
+                {
+                    const int q = dims[w];
+                    v += bridgeY[(size_t) p * 2 * kZones + (size_t) q] * (q < kZones ? zoneForce[(size_t) q] : zoneSideForce[(size_t) (q - kZones)]);
+                }
+                if (p < kZones)
+                {
+                    zoneBoardVelocity[(size_t) p] = v - highFree[(size_t) p];
+                    zoneAcceleration[(size_t) p] = accel[(size_t) p];
+                    lastZoneVelocity[(size_t) p] = v;
+                }
+                else
+                {
+                    zoneSideBoardVel[(size_t) (p - kZones)] = v;
+                    zoneSideAccel[(size_t) (p - kZones)] = accel[(size_t) p];
+                    lastZoneSideVel[(size_t) (p - kZones)] = v;
+                }
+            }
+            // Side bearing: the strings' sideways pull on the leaning bridge pins has an upward part
+            if (sideBearing > 0)
+                for (int z = 0; z < kZones; ++z)
+                    if (zoneSideForce[(size_t) z] != 0.0)
+                        zoneForce[(size_t) z] += sideBearing * zoneSideForce[(size_t) z];
+            // Zones without running strings: the many-mode admittance still answers the forces
+            // there, and nothing else moves them
             for (int z = 0; z < kZones; ++z)
             {
-                if (! zoneLive[(size_t) z])
+                const double fz = zoneForce[(size_t) z] + actionSpread;
+                auto& hp = highPassState[(size_t) z];
+                hp = fz + highPassCoeff * (hp - fz);
+                auto& hp2 = highPassState2[(size_t) z];
+                const double h1 = fz - hp;
+                hp2 = h1 + highPassCoeff * (hp2 - h1);
+                if (zoneLive[(size_t) z])
                 {
-                    zoneSideAccel[(size_t) z] = -lastZoneSideVel[(size_t) z] * sampleRate;
-                    lastZoneSideVel[(size_t) z] = 0;
+                    if (! zoneSideLive[(size_t) z])
+                    {
+                        // Sideways: only the up-and-down motion that the leaning pins turn sideways
+                        const double vs = sideBearing * lastZoneVelocity[(size_t) z];
+                        zoneSideAccel[(size_t) z] = (vs - lastZoneSideVel[(size_t) z]) * sampleRate;
+                        lastZoneSideVel[(size_t) z] = vs;
+                    }
                     continue;
                 }
-                zoneBoardVelocity[(size_t) z] = dotOut[di++];
-                zoneSideBoardVel[(size_t) z] = zoneSideLive[(size_t) z]
-                    ? dotOut[di++] + 0.25 * horizontalResistance * zoneSideForce[(size_t) z] : 0.0;
+                const double v = highAdmittance[(size_t) z] * (h1 - hp2);
+                zoneAcceleration[(size_t) z] = (v - lastZoneVelocity[(size_t) z]) * sampleRate;
+                lastZoneVelocity[(size_t) z] = v;
+                zoneSideAccel[(size_t) z] = -lastZoneSideVel[(size_t) z] * sampleRate;
+                lastZoneSideVel[(size_t) z] = 0;
+            }
+
+            // Pass 2: every zone's push (and sideways pull) times its shape, four rows per pass
+            // so F is read and written a quarter as often
+            {
+                // The action's knocks reach the board through the frame, evenly along the bridge
+                const float* __restrict ps = board.phiSum.data();
+                const float sp = (float) actionSpread;
+                for (int i = 0; i < nb; ++i)
+                    F[i] = ps[i] * sp;
+            }
+            float amounts[2 * kZones];
+            int nr = 0;
+            for (int z = 0; z < kZones; ++z)
+            {
+                const float fz = (float) zoneForce[(size_t) z];
+                if (fz != 0.0f) { rows[nr] = phi + (size_t) z * (size_t) nb; amounts[nr] = fz; lens[nr++] = zoneLive[(size_t) z] ? zoneModesV[(size_t) z] : nb; }
+                // The strings' sideways pull tilts the bridge (its shapes along the bridge)
+                const float sz = (float) zoneSideForce[(size_t) z];
+                if (sz != 0.0f) { rows[nr] = phH + (size_t) z * (size_t) nb; amounts[nr] = sz; lens[nr++] = zoneModesS[(size_t) z]; }
+            }
+            int r0 = 0;
+            for (; r0 + 4 <= nr; r0 += 4)
+            {
+                const float* __restrict p0 = rows[r0]; const float* __restrict p1 = rows[r0 + 1];
+                const float* __restrict p2 = rows[r0 + 2]; const float* __restrict p3 = rows[r0 + 3];
+                const float a0 = amounts[r0], a1 = amounts[r0 + 1], a2 = amounts[r0 + 2], a3 = amounts[r0 + 3];
+                const int common = std::min (std::min (lens[r0], lens[r0 + 1]), std::min (lens[r0 + 2], lens[r0 + 3]));
+                for (int i = 0; i < common; ++i)
+                    F[i] += p0[i] * a0 + p1[i] * a1 + p2[i] * a2 + p3[i] * a3;
+                for (int q = 0; q < 4; ++q)
+                {
+                    const float* __restrict p = rows[r0 + q];
+                    const float a = amounts[r0 + q];
+                    for (int i = common; i < lens[r0 + q]; ++i)
+                        F[i] += p[i] * a;
+                }
+            }
+            for (; r0 < nr; ++r0)
+            {
+                const float* __restrict p0 = rows[r0];
+                const float a0 = amounts[r0];
+                for (int i = 0; i < lens[r0]; ++i)
+                    F[i] += p0[i] * a0;
+            }
+            for (int i = 0; i < nb; ++i)
+            {
+                const float f = F[i];
+                wr[i] += hr[i] * f;
+                wi[i] += hi[i] * f;
+                const float dv = (om[i] * hr[i] - sg[i] * hi[i] + dr[i]) * f;
+                l += rl[i] * dv;
+                r += rrt[i] * dv;
+                vol += bv[i] * dv;
             }
             radiatedLeft = l;
             radiatedRight = r;
             volumeVelocity = vol;
-        }
-
-        // Bridge motion, fed back to every string on the next sample. The dense, resistive
-        // part of the board answers half locally (the zone's own force) and half as a whole.
-        // Vertical and sideways motion are linked, which is how the slow sideways vibration
-        // becomes audible.
-        double weightedForce = 0, highZoneVelocity = 0;
-        for (int z = 0; z < kZones; ++z)
-            weightedForce += zoneCoupling[(size_t) z] * zoneForce[(size_t) z];
-        for (int z = 0; z < kZones; ++z)
-        {
-            // The resistive part goes through the bridge's own mass (a one-pole roll-off)
-            const double c = zoneCoupling[(size_t) z];
-            // Above the solved modes: the many-mode board's smooth resistance (high-passed at
-            // the top mode, so it takes over where the modes stop), local to the zone
-            const double fz = zoneForce[(size_t) z] + actionSpread;
-            auto& hp = highPassState[(size_t) z];
-            hp = fz + highPassCoeff * (hp - fz);
-            auto& hp2 = highPassState2[(size_t) z];
-            const double h1 = fz - hp;
-            hp2 = h1 + highPassCoeff * (hp2 - h1);
-            const double high = highAdmittance[(size_t) z] * (h1 - hp2);   // two poles: little leaks below
-            (void) c; (void) weightedForce;
-            highZoneVelocity += high;
-            const double v = high + zoneBoardVelocity[(size_t) z];
-            zoneAcceleration[(size_t) z] = (v - lastZoneVelocity[(size_t) z]) * sampleRate;
-            lastZoneVelocity[(size_t) z] = v;
-            // Sideways: the board's motion along the bridge, plus the up-and-down motion that the
-            // leaning pins turn sideways (side bearing)
-            if (zoneLive[(size_t) z])
-            {
-                const double vs = zoneSideBoardVel[(size_t) z] + sideBearing * v;
-                zoneSideAccel[(size_t) z] = (vs - lastZoneSideVel[(size_t) z]) * sampleRate;
-                lastZoneSideVel[(size_t) z] = vs;
-            }
         }
 
         // Sound: soundboard modes plus the direct (dense high-frequency) bridge path
@@ -2092,7 +2309,6 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         highRightState2 = hr + highPassCoeff * (highRightState2 - hr);
         const double directLeft = highRadiation * meanHigh * (hl - highLeftState2);
         const double directRight = highRadiation * meanHigh * (hr - highRightState2);
-        (void) highZoneVelocity;
         float dl = (float) directLeft, dr = (float) directRight;
         for (auto& d : diffLeft) dl = d.process (dl);
         for (auto& d : diffRight) dr = d.process (dr);

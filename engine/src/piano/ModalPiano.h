@@ -199,7 +199,7 @@ private:
     int tensionCounter = 0;
     long long sampleClock = 0;
     std::vector<double> tuneFactor;
-    static constexpr std::array<double, 88> kTunerCents { 0.3, 0.1, -0.1, 0.0, 0.2, 0.4, 0.3, 0.2, 0.3, 0.2, 0.2, -0.1, -0.1, 0.2, 0.5, 0.0, -0.3, 0.4, 1.8, -2.2, 1.57, 2.32, 1.57, 1.92, 2.2, 1.73, -1.88, 1.75, 1.38, 2.12, 1.9, 2.9, 2.43, 0.31, 0.93, -1.51, -2.02, -1.65, -1.32, 1.5, 0.72, 2.54, 2.11, 0.8, 2.71, 2.25, -1.4, 2.32, 1.38, 1.58, 1.67, -0.96, -1.3, -0.42, -1.77, 2.29, -1.61, 1.48, 1.27, -1.1, -1.23, -1.68, 0.76, 0.82, 1.15, 1.09, 0.91, -1.65, -1.77, 0.89, -0.48, -1.47, 0.44, 0.45, -0.55, -0.81, 0.58, 1.19, 0.02, 1.43, -0.06, 1.42, -0.92, 0.11, -0.85, -0.94, -0.02, 0.21 };   // filled by the tuning pass   // the tuner's correction per key, for the body's pull on its pitch
+    static constexpr std::array<double, 88> kTunerCents { 2.9, 0.4, 1.1, 0.1, 3.1, 1.4, 0.9, 0.9, 1.4, 0.9, 0.6, 1.7, -0.4, -0.9, 2.4, -0.1, -0.1, 0.6, 2.2, -2.3, 2.33, 2.46, 2.01, 2.0, 2.02, 2.25, 2.56, 1.89, 1.76, 2.04, 2.46, 2.71, 2.49, 1.15, -1.05, -1.85, -1.94, 1.67, -0.94, 1.7, -2.7, -1.92, 2.13, 2.3, 2.93, 3.07, 1.7, 2.08, 1.68, 1.55, 0.95, 1.19, -1.28, -0.86, 1.33, 1.75, 1.81, 1.62, 1.07, 0.94, -1.51, -2.3, 0.8, -0.66, -0.95, 0.71, 0.85, -2.65, 0.71, 0.29, -0.4, -2.15, 0.36, 0.45, -0.67, -0.91, 0.26, -0.89, 1.44, 1.35, -0.0, 0.38, -0.83, 0.25, -0.78, -0.53, -0.99, -0.35 };   // filled by the tuning pass   // the tuner's correction per key, for the body's pull on its pitch
 
     // Each string's modes are stored in two parts: the low ones it keeps while only
     // resonating sit in one region, back to back with every other string's, and the rest
@@ -289,7 +289,7 @@ private:
     // Soundboard and case modes
     struct Board
     {
-        std::vector<float> wr, wi, qr, qi, hr, hi, omega, sigma, radLeft, radRight;
+        std::vector<float> wr, wi, qr, qi, hr, hi, direct, omega, sigma, radLeft, radRight;
         std::vector<float> phi;    // mode shape at each bridge zone, zone by zone
         std::vector<float> scratchF, scratchV;
         std::vector<float> phiH;
@@ -344,7 +344,6 @@ private:
     double bridgeResistance = 0.9e-4;      // m/s per N: the dense high-frequency part of the soundboard
     double feltScatter = 0.12;            // how unevenly one hammer's felt meets the strings of its unison
     double frameKnockGain = 150.0;          // N per (m/s)^1.5: how hard the hammer blow shakes the iron plate
-    double horizontalResistance = 0.36e-4; // the bridge's own sideways give; most of the sideways loss now goes through the leaning pins (sideBearing)
     // Side bearing: the strings zig-zag round the bridge pins, which lean outwards. Pressed
     // against a leaning pin, a string's sideways pull has an upward part, and the bridge's
     // up-and-down motion moves the string's end sideways by the same share (about tan of the
@@ -370,12 +369,7 @@ private:
     // Where a zone sits along the bridges on the scale of the earlier eight-zone layout (0..7):
     // 0..1 the bass bridge, 2..7 the treble bridge from its low end to the top
     static double layoutPosition (int zone);
-    // Fitted to recorded notes (tools/calibrate), on the eight-zone layout and interpolated:
-    // how strongly each part of the bridge couples to the board...
-    static constexpr std::array<double, 8> zoneCouplingFit { 0.39, 0.62, 0.6, 0.77, 0.99, 0.9, 0.5, 0.56 };
-    // ...and how much of its motion is the dense, resistive part of the board
-    static constexpr std::array<double, 8> zoneResistanceFit { 1.0, 1.2, 1.5, 1.4, 2.0, 1.5, 0.6, 1.6 };
-    std::array<double, kZones> zoneCoupling {}, zoneResistance {};
+    std::array<double, kZones> zoneCoupling {};
     std::array<double, kZones> zoneForce {}, zoneAcceleration {}, lastZoneVelocity {}, zoneBoardVelocity {};
     double lastBridgeVelocity = 0, bridgeAcceleration = 0;
     double lastHorizontalVelocity = 0, horizontalAcceleration = 0;
@@ -400,6 +394,10 @@ private:
     // Neighbouring strings whose modes sit back to back are stepped in one go
     struct Run { int first, count; float panLeft, panRight; bool side; int zone; };
     std::vector<Run> runs;
+    std::vector<float> runGain, runPanLeft, runPanRight;   // each stepped run's gain on this sample's bridge acceleration, and its pan
+    std::vector<int> runDim;                               // ...and which bridge zone (vertical, or kZones + zone sideways) it pushes
+    std::vector<double> bridgeY;              // the board's same-sample motion per unit force, zone by zone (vertical then sideways)
+    void buildBridgeAdmittance();
     struct Segment { int first, count; float panLeft, panRight; bool side; int zone; float topF; };
     std::vector<Segment> segmentScratch;
 };

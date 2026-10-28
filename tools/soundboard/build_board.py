@@ -36,13 +36,14 @@ H_MID, H_EDGE = 0.009, 0.006
 RIB_SPACING, RIB_W, RIB_T = 0.13, 0.022, 0.025
 RIB_EI = 2.0 * E_L * RIB_W * RIB_T ** 3 / 12.0     # x2: glued on the plate, the neutral axis moves out
 RIB_M = RHO * RIB_W * RIB_T
-TREBLE_EI, TREBLE_M = 14e9 * 0.030 * 0.030 ** 3 / 12.0, 750.0 * 0.030 * 0.030   # beech bridge
-BASS_EI, BASS_M = 14e9 * 0.035 * 0.035 ** 3 / 12.0, 750.0 * 0.035 * 0.035
+TREBLE_H, BASS_H = 0.036, 0.055            # bridge heights [m]: the D treble bridge is 30 x 36 mm, the bass bridge 38 x 55 mm on its apron
+TREBLE_EI, TREBLE_M = 14e9 * 0.030 * TREBLE_H ** 3 / 12.0, 750.0 * 0.030 * TREBLE_H   # maple bridge, bending up and down
+BASS_EI, BASS_M = 14e9 * 0.038 * BASS_H ** 3 / 12.0, 750.0 * 0.038 * BASS_H
 # The bridges also twist (rocking across their width, under the strings' lengthwise pull) and
 # tilt along their length (under the strings' sideways pull, applied at the bridge top, a lever
 # of about its height above the board). Torsion of a square beech section: GJ = G 0.141 a^4.
 BRIDGE_G = 1.0e9
-TREBLE_W, BASS_W = 0.030, 0.035          # width = height [m]
+TREBLE_W, BASS_W = 0.030, 0.038          # widths [m]
 # The bass bridge stands on an apron, a thin plank glued under its end that carries it out
 # towards the rim: it adds mass and ties the bridge's tail end to the rim through the board edge
 APRON_M, APRON_K = 0.35, 4.0e5           # [kg], [N/m]
@@ -990,7 +991,7 @@ def main():
     phi = (Z @ full)                                        # (zones, n)
     # Sideways: the strings' sideways pull acts at the bridge top, one bridge height above the
     # board, and tilts the bridge along its length: the board's slope along the bridge there
-    hz = np.array([BASS_W] * N_BASS + [TREBLE_W] * N_TREBLE) + 0.5 * H_MID
+    hz = np.array([BASS_H] * N_BASS + [TREBLE_H] * N_TREBLE) + 0.5 * H_MID
     ex = 0.012
     phiH = hz[:, None] * ((interp_rows(np.array(zx) + ex, np.array(zy)) - interp_rows(np.array(zx) - ex, np.array(zy))) @ full) / (2 * ex)
     print(f"sideways bridge shapes: {np.abs(phiH).mean() / np.abs(phi).mean() * 100:.1f}% of the up-and-down ones")
