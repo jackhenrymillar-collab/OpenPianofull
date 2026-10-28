@@ -1174,11 +1174,14 @@ void ModalPiano::setKeyDown (int midiNote, bool down, double releaseSpeed)
     if (! down && ks.down)
     {
         // The key takes a moment to rise far enough for the damper to reach the strings:
-        // about 20 ms for an ordinary release, 10 ms when the finger snaps off, 60 ms when
-        // it is eased up. Re-press it before then (a fast repeat or a half-stroke) and the
-        // damper never lands.
+        // 60 ms when it is eased up, less the faster the finger leaves. But the damper only
+        // falls under its own weight (the key's back end drops away from it, it is not pushed),
+        // so from its 5 mm lift it cannot land in less than sqrt(2 h / g) = 32 ms however the
+        // key is let go. Re-press it before then (a fast repeat or a half-stroke) and the
+        // damper never lands; a pedal that comes down before then catches nothing.
         ks.releaseSpeed = (float) std::clamp (releaseSpeed, 0.0, 1.0);
-        const double fall = 0.06 - 0.11 * ks.releaseSpeed + 0.06 * ks.releaseSpeed * ks.releaseSpeed;
+        constexpr double kDamperDrop = 0.032;
+        const double fall = std::max (kDamperDrop, 0.06 - 0.11 * ks.releaseSpeed + 0.06 * ks.releaseSpeed * ks.releaseSpeed);
         ks.releasedAt = sampleClock;
         ks.damperPending = std::max (1, (int) (fall * sampleRate));
         ks.down = false;
