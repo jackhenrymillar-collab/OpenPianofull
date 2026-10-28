@@ -302,9 +302,9 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     // relative to the middle of the range. Pushing harder on the bridge while feeling its
     // motion less by the same factor keeps the decay and coupling unchanged.
     {
-        static constexpr double voicingDb[30] = { 0.3, -1.7, -1.4, -5.2, -8.7, -10.5, -4.0, 4.8, 1.4, 5.5,
-                                               1.2, -3.2, -14.9, -4.2, -3.3, 1.6, 2.5, 2.3, -6.0, 0.6,
-                                               -7.5, -3.2, -11.6, -5.8, -6.7, -3.2, -18.4, -13.6, -2.5, -6.0 }; // every 3 keys from A0
+        static constexpr double voicingDb[30] = { -0.0, -0.5, -1.0, -3.2, -6.9, -8.5, -2.4, 6.2, -0.2, 3.5,
+                                               1.3, -1.9, -14.5, -4.8, -12.1, -5.9, -4.8, -7.7, -8.5, 0.0,
+                                               -6.6, -1.9, -10.3, -1.8, -3.7, -1.9, -15.3, -11.5, 0.6, -5.3 }; // every 3 keys from A0
         const double pos = std::clamp ((key.midiNote - kLowestKey) / 3.0, 0.0, 28.999);
         const int i = (int) pos;
         const double db = voicingDb[i] + (voicingDb[i + 1] - voicingDb[i]) * (pos - i);
@@ -892,18 +892,8 @@ void ModalPiano::buildBody()
     (void) addAir;
     airPressure = 0;
 
-    // Lid: a reflection off its underside reaches the listener 1 to 2 ms after the direct
-    // sound. The lid is about 1.5 m long, so it only reflects well above a few hundred Hz,
-    // and its felt-free lacquered wood loses a little of the very top.
-    const int maxDelay = (int) (0.004 * sampleRate) + 2;
-    lidBufLeft.assign ((size_t) maxDelay, 0.0f);
-    lidBufRight.assign ((size_t) maxDelay, 0.0f);
-    lidPos = 0;
-    lidDelayLeft = (int) (0.0021 * sampleRate);
-    lidDelayRight = (int) (0.0013 * sampleRate);
-    lidHpCoeff = std::exp (-2.0 * M_PI * 400.0 / sampleRate);
-    lidLpCoeff = std::exp (-2.0 * M_PI * 9000.0 / sampleRate);
-    lidHpLeft = lidHpRight = lidHpInLeft = lidHpInRight = lidLpLeft = lidLpRight = 0;
+    // The lid's reflection is in the body tables: each mode's sound at the seat and the mics
+    // includes the mirror image off the finite lid (build_board.py), so nothing is added here.
 
     // The bridge is a wooden beam with its own mass. Above a frequency set by that mass and
     // the board's resistance, the strings see the bridge's inertia rather than the board, so
@@ -967,32 +957,9 @@ void ModalPiano::buildBody()
         roomPos = 0;
     }
 
-    // The lid is a large panel (about 1.6 m by 1.4 m, 19 mm of veneered spruce core) that the
-    // board's sound presses on. Its bending modes, as a plate held at the hinges and prop:
-    // f_mn = (pi/2) sqrt(D / rho h) ((m/a)^2 + (n/b)^2). An even push only drives the odd-odd
-    // modes, by 16 / (pi^2 m n), and all share the same modal mass.
-    lidPanel.clear(); lidPanelGain.clear();
-    {
-        const double a = 1.6, b = 1.4, h = 0.019, E = 8e9, rho = 550, nu = 0.3;
-        const double D = E * h * h * h / (12.0 * (1.0 - nu * nu)), rh = rho * h;
-        const double c = 0.5 * M_PI * std::sqrt (D / rh);
-        for (int mi = 1; mi <= 9; mi += 2)
-            for (int ni = 1; ni <= 9; ni += 2)
-            {
-                const double f = c * ((mi / a) * (mi / a) + (ni / b) * (ni / b));
-                if (f > 700.0 || f > 0.4 * sampleRate)
-                    continue;
-                // Radiation and the wood's own loss: Q falls from about 25 to 12 with frequency
-                const double Q = 25.0 / (1.0 + f / 300.0);
-                const double w = 2.0 * M_PI * f / sampleRate, alpha = std::sin (w) / (2.0 * Q), a0 = 1.0 + alpha;
-                Biquad bq;
-                bq.b0 = (float) (alpha / a0); bq.b1 = 0; bq.b2 = (float) (-alpha / a0);
-                bq.a1 = (float) (-2.0 * std::cos (w) / a0); bq.a2 = (float) ((1.0 - alpha) / a0);
-                lidPanel.push_back (bq);
-                // Scaled so the lowest mode answers like the old fixed panel (0.05)
-                lidPanelGain.push_back ((float) (0.05 * (1.0 / (mi * ni))* std::sqrt (Q / 18.0)));
-            }
-    }
+    // The lid is in the body tables: build_board.py solves it as a hinged, propped plate over
+    // the case air, coupled to the board and radiating to the listener with the other modes.
+
     // Sound from the board spreads evenly at low frequencies but beams above a couple of kHz,
     // mostly out past the open lid (the right ear here)
     beamCoeff = std::exp (-2.0 * M_PI * 2000.0 / sampleRate);
@@ -2187,32 +2154,6 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         beamLpRight = outR + beamCoeff * (beamLpRight - outR);
         outL -= 0.2 * (outL - beamLpLeft);
         outR += 0.25 * (outR - beamLpRight);
-
-        // Lid reflection
-        if (settings.lid > 0)
-        {
-            const int size = (int) lidBufLeft.size();
-            lidBufLeft[(size_t) lidPos] = (float) outL;
-            lidBufRight[(size_t) lidPos] = (float) outR;
-            const float dl = lidBufLeft[(size_t) ((lidPos - lidDelayLeft + size) % size)];
-            const float dr = lidBufRight[(size_t) ((lidPos - lidDelayRight + size) % size)];
-            lidPos = (lidPos + 1) % size;
-            lidHpLeft = lidHpCoeff * (lidHpLeft + dl - lidHpInLeft); lidHpInLeft = dl;
-            lidHpRight = lidHpCoeff * (lidHpRight + dr - lidHpInRight); lidHpInRight = dr;
-            lidLpLeft = lidHpLeft + lidLpCoeff * (lidLpLeft - lidHpLeft);
-            lidLpRight = lidHpRight + lidLpCoeff * (lidLpRight - lidHpRight);
-            // The open lid sends the board's sound towards the listener: the reflection adds
-            // to the direct sound, more so on the open (right) side
-            outL += 0.2 * settings.lid * lidLpRight;
-            outR += 0.28 * settings.lid * lidLpLeft;
-            // The lid panel's own ringing, heard in both ears
-            const float drive = (float) (dl + dr);
-            float panel = 0;
-            for (size_t i = 0; i < lidPanel.size(); ++i)
-                panel += lidPanelGain[i] * lidPanel[i].process (drive);
-            outL += settings.lid * panel;
-            outR += 0.8 * settings.lid * panel;
-        }
 
         // Room: early reflections, heard from the player's seat
         if (room > 0.0f && ! reflections.empty())

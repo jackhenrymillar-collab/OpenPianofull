@@ -79,7 +79,7 @@ DOWNBEARING = 3000.0       # [N], shared along both bridges (a quarter on the ba
 # beech ~0.012, maple ~0.010, cast iron ~0.002, glue lines ~0.05, castor cups on the floor ~0.25.
 ETA = {"along": 0.007, "across": 0.018, "shear": 0.018, "rib": 0.007, "bridge": 0.012, "crown": 0.010,
        "rim": 0.010, "rimtwist": 0.010, "glue": 0.05, "leg": 0.25, "brace": 0.010, "tie": 0.05,
-       "frame": 0.002, "bolt": 0.02, "nose": 0.02, "pinblock": 0.05, "str_damped": float(os.environ.get("ETA_SD", "0.3")), "str_free": float(os.environ.get("ETA_SF", "0.02"))}
+       "frame": 0.002, "bolt": 0.02, "nose": 0.02, "lid": 0.02, "pinblock": 0.05, "str_damped": float(os.environ.get("ETA_SD", "0.3")), "str_free": float(os.environ.get("ETA_SF", "0.02"))}
 PLANK_W, PLANK_SPREAD = 0.12, 0.08   # the board is glued from ~12 cm planks; each plank's stiffness varies ~8%
 RIM_GJ = 1.1e9 * 0.26 * 0.035 ** 3 / 3.0 * 0.92 * 3.0   # rim twisting stiffness (maple, x3 for the bolted frame) [N m^2]
 RIM_IP = 650.0 * 0.035 * 0.26 * (0.035 ** 2 + 0.26 ** 2) / 12.0   # rim rotary inertia per length [kg m]
@@ -87,6 +87,15 @@ PIN_OFFSET = 0.008          # strings bear on the bridge's front pins, ~8 mm on 
 LISTEN = {"L": (1.40, -1.20, 1.00), "R": (0.00, -1.20, 1.00)}     # the player's seat, a stereo pair a little apart
 MICS = {"L": (1.05, 0.55, 0.35), "R": (0.40, 0.25, 0.35)}         # close pair over the strings, near the hammers
 LID_ANGLE = math.radians(42.0)   # full stick
+RIM_TOP = 0.24                   # rim top above the board [m]; the lid rests there along the spine
+LID_HINGE_X = A + 0.02           # the hinge line, just outside the spine
+LID_GAP_MIN = 0.10               # the rim-to-lid gap along the bentside counts as open above this [m]
+LID_FRONT = float(os.environ.get("LID_FRONT", "0.40"))   # the main lid's front edge: the front flap is folded back on full stick [m from the belly rail]
+LID_TAIL = B + 0.10              # the lid's tail overhang
+LID_REFL = 0.9                   # lacquered hardwood
+LID_H, LID_E, LID_RHO, LID_NU = 0.019, 8e9, 550.0, 0.3   # the lid panel: veneered softwood core, 19 mm
+LID_PROP = (0.55, 0.12)          # where the prop stick meets the lid: y [m], and this far in from the outer edge [m]
+LID_PROP_K = 1.0e7               # the stick in compression [N/m]
 FLOOR_REFL = 0.8
 N_BASS, N_TREBLE = 4, 28       # bridge zones (bass bridge keys A0..E2, treble bridge F2..C8)
 
@@ -258,6 +267,59 @@ def frame_bars():
     bolts = np.flatnonzero(on_rim)[::6]
     front = sorted([k for k in range(n) if abs(C[k, 1] - FRONT_Y) < 0.01], key=lambda k: C[k, 0])
     return K, Mv, C, bolts, front
+
+
+def lid_plate(f_top):
+    """The lid: a 19 mm veneered panel (isotropic here), hinged along the spine (a pinned line),
+    held up by the prop stick near its front bentside corner, free along its other edges. Its
+    bending modes are solved as a plate on a grid in the lid's own plane (s up from the hinge,
+    y along the piano). Returns f, shapes at the nodes (unit modal mass), the nodes' positions
+    in space and over the board plane, the node area and each node's distance to the lid's edge."""
+    d = 0.03
+    ys = np.arange(LID_FRONT, LID_TAIL + 1e-9, d)
+    smax = (LID_HINGE_X - (np.asarray(bentside(np.clip(ys, 0, B)), float) - 0.04)) / math.cos(LID_ANGLE)
+    ss = np.arange(0.0, smax.max() + 1e-9, d)
+    nsg, nyg = len(ss), len(ys)
+    mask = ss[:, None] <= smax[None, :]                                     # (s, y)
+    inner = ndimage.binary_erosion(mask, structure=np.ones((3, 3)), iterations=1)
+    lin_ = lambda i, j: i * nyg + j
+    def op(stencil):
+        r, c, v = [], [], []
+        pts = np.argwhere(inner)
+        for k, (i, j) in enumerate(pts):
+            for (di, dj, w) in stencil:
+                ii, jj = i + di, j + dj
+                if 0 <= ii < nsg and 0 <= jj < nyg:
+                    r.append(k); c.append(lin_(ii, jj)); v.append(w / d ** 2)
+        return sp.csr_matrix((v, (r, c)), shape=(len(pts), nsg * nyg))
+    Css = op([(-1, 0, 1), (0, 0, -2), (1, 0, 1)])
+    Cyy = op([(0, -1, 1), (0, 0, -2), (0, 1, 1)])
+    Csy = op([(0, 0, 1), (1, 1, 1), (1, 0, -1), (0, 1, -1)])
+    Dl = LID_E * LID_H ** 3 / (12.0 * (1.0 - LID_NU ** 2))
+    K = (Css.T @ Css + Cyy.T @ Cyy + LID_NU * (Css.T @ Cyy + Cyy.T @ Css) + 2.0 * (1.0 - LID_NU) * Csy.T @ Csy) * (Dl * d * d)
+    # The prop: a stiff point support
+    yp, inset = LID_PROP
+    jp = int(np.argmin(np.abs(ys - yp))); ip = int(np.argmin(np.abs(ss - (smax[jp] - inset))))
+    K = K + sp.csr_matrix(([LID_PROP_K], ([lin_(ip, jp)], [lin_(ip, jp)])), shape=(nsg * nyg, nsg * nyg))
+    # Free nodes: on the lid, not on the hinge line (pinned there)
+    free = mask.copy(); free[0, :] = False
+    fi = np.flatnonzero(free.ravel())
+    m = LID_RHO * LID_H * d * d
+    Kf = K.tocsr()[fi][:, fi].toarray() / m
+    vals, vecs = np.linalg.eigh(Kf)
+    keep = (vals > (2 * math.pi * 5.0) ** 2) & (vals < (2 * math.pi * f_top) ** 2)
+    f = np.sqrt(vals[keep]) / (2 * math.pi)
+    V = np.zeros((nsg * nyg, keep.sum())); V[fi] = vecs[:, keep] / math.sqrt(m)   # unit modal mass
+    on = np.flatnonzero(mask.ravel())
+    S_, Y_ = np.meshgrid(ss, ys, indexing="ij")
+    sN, yN = S_.ravel()[on], Y_.ravel()[on]
+    hinge = np.array([LID_HINGE_X, 0.0, RIM_TOP])
+    tl = np.array([-math.cos(LID_ANGLE), 0.0, math.sin(LID_ANGLE)])
+    P3 = hinge[None, :] + sN[:, None] * tl[None, :] + np.stack([np.zeros_like(yN), yN, np.zeros_like(yN)], 1)
+    dE = (ndimage.distance_transform_edt(mask) * d).ravel()[on]
+    print(f"lid: {len(on)} nodes, {LID_RHO * LID_H * len(on) * d * d:.1f} kg, {len(f)} modes below {f_top:.0f} Hz, lowest {f[:5].round(1)}; "
+          f"prop at ({P3[np.argmin(np.hypot(sN - ss[ip], yN - ys[jp])), 0]:.2f}, {ys[jp]:.2f})")
+    return f, V[on], P3, np.stack([sN, yN], 1), d * d, dE
 
 
 def frame_modes(zone_x, zone_is_bass, f_top):
@@ -684,32 +746,102 @@ def main():
     vtwist = vecs[oT:oF, :]
     vecs = vecs[:nf]
 
-    # --- The air in the case above the board, coupled to the structure. Pressure modes of the
-    # outline (rigid rim walls) with a quarter-wave standing up to the open top; the board
-    # pumps them and they push back on it (vibro-acoustic coupling, solved together).
+    # --- The air in the case above the board, coupled to the structure. With the lid on its
+    # full stick the space over the board is a wedge: the board below, the rim walls round it,
+    # the lid sloping up from its hinge on the spine (rim height there) to about 1.5 m over
+    # the treble corner. It is open across the front (above the rim, the flap folded back and
+    # the music desk apart) and through the gap between the rim and the lid all along the
+    # bentside, closed at the spine and the tail where the lid sits on the rim. Pressure modes
+    # of that wedge, with the layer's height in the equation (shallow-layer form of the wave
+    # equation, d/dx (h dp/dx) + ... + k^2 h p = 0) and the pressure released on the open faces:
+    # two families, one even through the height and one with a half wave between board and
+    # lid (cos(pi z / h), whose local cut-on is c / 2h). The board pumps them and they push
+    # back on it (vibro-acoustic coupling, solved together).
     bi = np.flatnonzero(board.ravel())
     nbd = len(bi)
     pos = -np.ones(nx * ny, int); pos[bi] = np.arange(nbd)
+    xb_, yb_ = X.ravel()[bi], Y.ravel()[bi]
+    hLid = RIM_TOP + np.maximum(0.0, LID_HINGE_X - xb_) * math.tan(LID_ANGLE)   # lid height over each node
+    ringB = ring.ravel()[bi]
+    gap = hLid - RIM_TOP                                                     # lid above the rim top
+    openB = ringB & ((yb_ < 0.5 * DX) | ((xb_ < A - 0.06) & (gap > LID_GAP_MIN)))
+    if os.environ.get("BOX_AIR"):
+        hLid = np.full(nbd, CASE_H); openB = np.zeros(nbd, bool)
     lr_, lc_, lv_ = [], [], []
     for k_, (i, j) in enumerate(np.argwhere(board)):
         for a, b in ((1, 0), (-1, 0), (0, 1), (0, -1)):
             ii, jj = i + a, j + b
             if 0 <= ii < nx and 0 <= jj < ny and board[ii, jj]:
                 q_ = pos[lin(ii, jj)]
-                lr_ += [k_, k_]; lc_ += [k_, q_]; lv_ += [1.0, -1.0]
-    Lap = sp.csr_matrix((lv_, (lr_, lc_)), shape=(nbd, nbd)) / DX ** 2      # Neumann Laplacian (positive)
-    kz = math.pi / (2 * CASE_H)
-    nair = 40
-    av, aw = sla.eigsh(Lap.tocsc() + 1e-6 * sp.eye(nbd), k=nair, sigma=0, which="LM")
-    aw = aw / np.sqrt((aw ** 2).sum(0) * DX * DX / (nbd * DX * DX))        # mean square 1 over the board
-    fa = C_AIR * np.sqrt(np.maximum(av, 0) + kz ** 2) / (2 * math.pi)
+                he = 0.5 * (hLid[k_] + hLid[q_])
+                lr_ += [k_, k_]; lc_ += [k_, q_]; lv_ += [he, -he]
+    Lap = sp.csr_matrix((lv_, (lr_, lc_)), shape=(nbd, nbd)) / DX ** 2      # -div(h grad), Neumann (positive)
+    keepN = np.flatnonzero(~openB)
     Abd = nbd * DX * DX
-    Lam = Abd * CASE_H / 2.0                                                 # integral of psi^2 cos^2 over the volume
+    aOpen = math.sqrt(max(1e-6, (gap[openB] * DX).sum()) / math.pi)        # the openings' equivalent radius (above the rim)
+    def wedge_family(vertical):
+        """Air modes of one vertical family: shapes at the board (mean square 1), frequencies,
+        the volume integral of psi^2 (per unit pressure) and the radiation loss out of the openings."""
+        Lh = Lap.tocsr()
+        if vertical:
+            Lh = Lh + sp.diags((math.pi / hLid) ** 2 * hLid)
+        Lk = Lh[keepN][:, keepN].tocsc()
+        Mk = sp.diags(hLid[keepN]).tocsc()
+        nmode = 40 if not vertical else 30
+        if os.environ.get("BOX_AIR"):
+            Lk = Lk + 1e-6 * sp.eye(len(keepN))
+        ev, ew = sla.eigsh(Lk, k=nmode, M=Mk, sigma=0, which="LM")
+        psi = np.zeros((nbd, nmode)); psi[keepN] = ew
+        if os.environ.get("BOX_AIR") and not vertical:
+            ev = ev + (math.pi / (2 * CASE_H)) ** 2
+        psi = psi / np.sqrt((psi ** 2).sum(0) / nbd)
+        fr = C_AIR * np.sqrt(np.maximum(ev, 0)) / (2 * math.pi)
+        vfrac = 0.5 if vertical else 1.0
+        lam_ = (psi ** 2 * (hLid * vfrac)[:, None]).sum(0) * DX * DX       # integral of psi^2 over the volume
+        # Loss out of the open faces: the normal velocity there is grad psi / (i omega rho); power
+        # rho c R |v|^2 / 2 over the opening's area, against the stored energy lam_ / (2 rho c^2)
+        flux = np.zeros(nmode)
+        for k_ in np.flatnonzero(openB):
+            i, j = divmod(int(bi[k_]), ny)
+            for a, b in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                ii, jj = i + a, j + b
+                if 0 <= ii < nx and 0 <= jj < ny and board[ii, jj] and not openB[pos[lin(ii, jj)]]:
+                    flux += (psi[pos[lin(ii, jj)]] / DX) ** 2 * (gap[k_] * vfrac) * DX
+                    break
+        om = 2 * math.pi * np.maximum(fr, 1.0)
+        R_ = np.minimum(1.0, (om / C_AIR * aOpen) ** 2 / 2.0)
+        eta_ = C_AIR ** 3 * R_ * flux / (om ** 3 * lam_)
+        if os.environ.get("BOX_AIR"):                                        # the old open-top box, for A/B
+            eta_ = 2 * np.minimum(1.0, (om / C_AIR * math.sqrt(Abd / math.pi)) ** 2 / 2.0) * C_AIR / (om * CASE_H)
+        return psi, fr, lam_, eta_
+    psi0, fa0, lam0, eta0 = wedge_family(False)
+    psi1, fa1, lam1, eta1 = wedge_family(True)
+    aw = np.concatenate([psi0, psi1], 1); fa = np.concatenate([fa0, fa1]); LamV = np.concatenate([lam0, lam1])
+    etaA_modes = np.concatenate([eta0, eta1])
+    nair = aw.shape[1]
+    print(f"case air (lid at {math.degrees(LID_ANGLE):.0f} deg, {openB.sum()} open edge nodes, opening radius {aOpen:.2f} m): "
+          f"even family from {fa0[:4].round(0)} Hz, half-wave family from {fa1[:3].round(0)} Hz; loss factors median {np.median(etaA_modes):.3f}")
     full_s = P @ vecs
     Cba = (full_s[bi, :].T @ aw) * DX * DX                                   # (structural modes, air modes)
     ns = len(f)
     Ob = np.diag((2 * math.pi * f) ** 2); Oa = np.diag((2 * math.pi * fa) ** 2)
-    Dg = RHO_AIR * C_AIR ** 2 / Lam
+    Dg = RHO_AIR * C_AIR ** 2 / LamV                                         # per air mode
+    # --- The lid: a plate over the case air (see lid_plate). The air's pressure under it
+    # pushes it out along its normal, and its motion pumps the air the opposite way to the
+    # board's. Its sound reaches the listener from both its faces, with its own short circuit.
+    if not os.environ.get("NO_LIDPLATE"):
+        fl, Vl, P3l, syl, dAl, dEl = lid_plate(F_TOP)
+    else:
+        fl, Vl, P3l, syl, dAl, dEl = np.zeros(0), np.zeros((0, 0)), np.zeros((0, 3)), np.zeros((0, 2)), 1.0, np.zeros(0)
+    nl = len(fl)
+    psiFull = np.zeros((nx * ny, nair)); psiFull[bi] = aw
+    onb = inside(P3l[:, 0], P3l[:, 1]) if nl else np.zeros(0, bool)
+    Psi_l = interp_rows(np.clip(P3l[:, 0], 0.0, A), np.clip(P3l[:, 1], 0.0, B)) @ psiFull if nl else np.zeros((0, nair))
+    if nl:
+        Psi_l[~onb] = 0.0
+        Psi_l[:, len(fa0):] *= -1.0                                          # the half-wave family: cos(pi) at the lid
+    Cla = (Vl.T @ Psi_l) * dAl                                               # (lid modes, air modes)
+    Ol = np.diag((2 * math.pi * fl) ** 2)
     # --- The air under the board: a layer between the board and the floor, open all round
     # the sides (pressure released just past the rim: p = 0 on the ring), with standing waves
     # across it and, from about 280 Hz, up and down between board and floor. The board pushes
@@ -726,48 +858,56 @@ def main():
     Ou = np.diag((2 * math.pi * fu) ** 2); Du = RHO_AIR * C_AIR ** 2 / LamU
     print(f"air under the board: lowest {fu[:4].round(0)} Hz")
     Z_ = np.zeros
-    Kc = np.block([[Ob, Cba, -Cbu], [Z_((nair, ns)), Oa, Z_((nair, nu_))], [Z_((nu_, ns)), Z_((nu_, nair)), Ou]])
-    Mc = np.block([[np.eye(ns), Z_((ns, nair)), Z_((ns, nu_))],
-                   [-Dg * Cba.T, np.eye(nair), Z_((nair, nu_))],
-                   [Du * Cbu.T, Z_((nu_, nair)), np.eye(nu_)]])
+    nsl = ns + nl
+    Kc = np.block([[Ob, Z_((ns, nl)), Cba, -Cbu],
+                   [Z_((nl, ns)), Ol, -Cla, Z_((nl, nu_))],
+                   [Z_((nair, nsl)), Oa, Z_((nair, nu_))],
+                   [Z_((nu_, nsl)), Z_((nu_, nair)), Ou]])
+    Mc = np.block([[np.eye(nsl), Z_((nsl, nair)), Z_((nsl, nu_))],
+                   [-Dg[:, None] * Cba.T, Dg[:, None] * Cla.T, np.eye(nair), Z_((nair, nu_))],
+                   [Du * Cbu.T, Z_((nu_, nl)), Z_((nu_, nair)), np.eye(nu_)]])
     import scipy.linalg as la
     lam, Vc = la.eig(Kc, Mc)
     lam, Vc = lam.real, Vc.real
     o = np.argsort(lam); lam, Vc = lam[o], Vc[:, o]
     keep = (lam > (2 * math.pi * 5.0) ** 2) & (lam < lam_top)
     lam, Vc = lam[keep], Vc[:, keep]
-    Q = Vc[:ns]                                                              # structural part
-    nq = np.sqrt((Q ** 2).sum(0)); nq[nq == 0] = 1
+    Q = Vc[:ns]                                                              # structural part: the board and its body
+    Ql = Vc[ns:nsl]                                                          # ... and the lid
+    nq = np.sqrt((Q ** 2).sum(0) + (Ql ** 2).sum(0)); nq[nq == 0] = 1
     # Share of the potential energy held by the air (structure: w^2 q^2 / 2; air: Lam P^2 / (2 rho c^2))
-    eS = ((2 * math.pi * f)[:, None] ** 2 * Q ** 2).sum(0)
-    eA = (Lam / (RHO_AIR * C_AIR ** 2)) * (Vc[ns:ns + nair] ** 2).sum(0) + (LamU / (RHO_AIR * C_AIR ** 2)) * (Vc[ns + nair:] ** 2).sum(0)
+    eS = ((2 * math.pi * f)[:, None] ** 2 * Q ** 2).sum(0) + ((2 * math.pi * fl)[:, None] ** 2 * Ql ** 2).sum(0)
+    eA = ((LamV / (RHO_AIR * C_AIR ** 2))[:, None] * Vc[nsl:nsl + nair] ** 2).sum(0) + (LamU / (RHO_AIR * C_AIR ** 2)) * (Vc[nsl + nair:] ** 2).sum(0)
     airE = eA / (eA + eS)
     # Losses of the coupled modes. Structure: each structural mode's material loss, weighted by
     # its share of the stiffness energy. Air: an air mode loses what it radiates out of the case,
     # through the open top (above the board) or the open sides (below it): the opening's
     # radiation resistance, rho c min(1, (ka)^2 / 2) per area.
     w2s = (2 * math.pi * f) ** 2                                             # structural modes (before coupling)
-    etaSc = (Q ** 2 * (w2s * etaS)[:, None]).sum(0) / np.maximum((Q ** 2 * w2s[:, None]).sum(0), 1e-30)
-    frameShare = (Q ** 2 * frE[:, None]).sum(0) / np.maximum((Q ** 2).sum(0), 1e-30)
-    lamA = Lam / (RHO_AIR * C_AIR ** 2); lamU = LamU / (RHO_AIR * C_AIR ** 2)
+    w2l = (2 * math.pi * fl) ** 2
+    etaSc = ((Q ** 2 * (w2s * etaS)[:, None]).sum(0) + (Ql ** 2 * w2l[:, None]).sum(0) * ETA["lid"]) / \
+        np.maximum((Q ** 2 * w2s[:, None]).sum(0) + (Ql ** 2 * w2l[:, None]).sum(0), 1e-30)
+    frameShare = (Q ** 2 * frE[:, None]).sum(0) / np.maximum((Q ** 2).sum(0) + (Ql ** 2).sum(0), 1e-30)
+    lamA = LamV / (RHO_AIR * C_AIR ** 2); lamU = LamU / (RHO_AIR * C_AIR ** 2)
     perim = ring.sum() * DX
     aTop, aSide = math.sqrt(Abd / math.pi), FLOOR_GAP
     def rnorm(fr, a_):
         ka = 2 * math.pi * fr / C_AIR * a_
         return np.minimum(1.0, ka ** 2 / 2.0)
     fc_ = np.sqrt(lam) / (2 * math.pi)
-    etaA_modes = 2 * rnorm(fa, aTop) * C_AIR / (2 * math.pi * fa * CASE_H)
     etaU_modes = rnorm(fu, aSide) * (perim * FLOOR_GAP) * C_AIR / (2 * math.pi * np.maximum(fu, 1.0) * LamU)
-    eAir = (lamA * (Vc[ns:ns + nair] ** 2) * etaA_modes[:, None]).sum(0) + (lamU * (Vc[ns + nair:] ** 2) * etaU_modes[:, None]).sum(0)
+    eAir = (lamA[:, None] * (Vc[nsl:nsl + nair] ** 2) * etaA_modes[:, None]).sum(0) + (lamU * (Vc[nsl + nair:] ** 2) * etaU_modes[:, None]).sum(0)
     etaAir = eAir / (eA + eS)                                               # already weighted by the air's share
     etaStruct = etaSc * (1.0 - airE)
-    Q = Q / nq                                                               # unit structural modal mass
+    Q = Q / nq; Ql = Ql / nq                                                 # unit structural modal mass (board, body and lid)
     f = fc_
     rimShare = (Q ** 2 * rimE[:, None]).sum(0)
     braceShare = (Q ** 2 * brE[:, None]).sum(0)
+    lidShare = (Ql ** 2).sum(0)
     print(f"coupled body: {len(f)} modes; lowest {f[:6].round(1)}; air modes from {fa[0]:.0f} Hz; "
-          f"rim-heavy modes {(rimShare > 0.3).sum()}, air-heavy {(airE > 0.5).sum()}, frame-heavy {(frameShare > 0.5).sum()}")
+          f"rim-heavy modes {(rimShare > 0.3).sum()}, air-heavy {(airE > 0.5).sum()}, frame-heavy {(frameShare > 0.5).sum()}, lid-heavy {(lidShare > 0.5).sum()}")
     full = full_s @ Q                                       # (nx*ny, n)
+    lidV = Vl @ Ql if nl else np.zeros((0, len(f)))         # lid node motion along its normal, per coupled mode
     frontV = vfront @ Q                                     # frame front bar, per coupled mode
     twistQ = vtwist @ Q                                     # rim twist angle at each ring node, per coupled mode
 
@@ -806,19 +946,47 @@ def main():
     bx, by_ = xs[bn], ys[bn]
     dE = dist.ravel()[bn]                                   # distance to the rim [m]
     k = 2 * math.pi * f / C_AIR
-    hinge = np.array([A + 0.02, 0.0, CASE_H - 0.08])
+    hinge = np.array([LID_HINGE_X, 0.0, RIM_TOP])
     nlid = np.array([math.sin(LID_ANGLE), 0.0, math.cos(LID_ANGLE)])
+    tlid = np.array([-math.cos(LID_ANGLE), 0.0, math.sin(LID_ANGLE)])      # up the lid from the hinge
     def lid_image(P3):
         d_ = (P3 - hinge) @ nlid
         return P3 - 2 * d_[:, None] * nlid[None, :]
     nodes3 = np.stack([bx, by_, np.zeros_like(bx)], 1)
     img_lid = lid_image(nodes3)
+    # The lid is finite: the reflection from a node reaches a listener only if the mirror
+    # point on the lid's plane falls on the lid (hinge to its outer edge, which follows the
+    # case's outline, and from the front flap's fold to the tail overhang). Near the lid's
+    # edges the reflection fades over a Fresnel zone, sqrt(lambda r1 r2 / (r1 + r2)): long
+    # waves spill round the lid, short ones reflect right up to its edge (Kirchhoff).
+    def lid_window_setup(pt):
+        pt = np.asarray(pt, float)
+        dP = (img_lid - hinge) @ nlid; dQ = float((pt - hinge) @ nlid)
+        t_ = dP / (dP - dQ + 1e-12)
+        spec = img_lid + t_[:, None] * (pt[None, :] - img_lid)
+        s_ = (spec - hinge) @ tlid                                           # up the lid [m]
+        ys_ = spec[:, 1]
+        s_max = (LID_HINGE_X - (np.asarray(bentside(np.clip(ys_, 0, B)), float) - 0.04)) / math.cos(LID_ANGLE)
+        d_edge = np.minimum.reduce([s_, s_max - s_, ys_ - LID_FRONT, LID_TAIL - ys_])
+        r1 = np.linalg.norm(spec - nodes3, axis=1); r2 = np.linalg.norm(pt[None, :] - spec, axis=1)
+        return d_edge, r1 * r2 / np.maximum(r1 + r2, 1e-6)
+    from scipy.special import erf
+    def lid_window(setup, fi):
+        d_edge, rr = setup
+        rF = np.sqrt(C_AIR / max(fi, 1.0) * rr)
+        return 0.5 * (1.0 + erf(d_edge * math.sqrt(2.0) / rF))
     img_floor = np.stack([bx, by_, np.full_like(bx, -2 * (FLOOR_GAP + 0.13))], 1)
     RIM_H = 0.26
     ds_ring = ds
     ringXY = np.stack([rp[:, 0] * DX, rp[:, 1] * DX, np.full(len(rp), 0.5 * 0.26 - 0.1)], 1)
     def pressure_at(pt, lid=True, floor=True):
         pt = np.array(pt)
+        lidSetup = lid_window_setup(pt)
+        # The lid panel's own sound: the listener hears the face turned towards them (its
+        # motion is counted along the normal, away from the case), with the other face's
+        # sound bending round the lid's edge in opposite phase
+        sgnL = 1.0 if float((pt - hinge) @ nlid) > 0 else -1.0
+        rl1 = np.linalg.norm(P3l - pt, axis=1) if nl else np.zeros(0); rl2 = rl1 + dEl
         rr1 = np.linalg.norm(ringXY - pt, axis=1)
         r1 = np.linalg.norm(nodes3 - pt, axis=1)
         r2 = r1 + dE
@@ -837,7 +1005,10 @@ def main():
             if floor:
                 p_ -= FLOOR_REFL * 0.5 * np.sum(w * np.exp(-1j * kk * r3) / r3)
             if lid:
-                p_ += 0.7 * min(1.0, f[i] / 300.0) * np.sum(w * np.exp(-1j * kk * r4) / r4)
+                p_ += LID_REFL * np.sum(w * lid_window(lidSetup, f[i]) * np.exp(-1j * kk * r4) / r4)
+            if nl:
+                wl = lidV[:, i] * dAl
+                p_ += sgnL * np.sum(wl * (np.exp(-1j * kk * rl1) / rl1 - np.exp(-1j * kk * rl2) / rl2))
             p_ *= kk
             out[i] = abs(p_) * (-1 if p_.real < 0 else 1)
         return out
@@ -864,11 +1035,20 @@ def main():
         W = np.exp(-1j * kk * (np.outer(ux, bx) + np.outer(uy, by_))) @ w
         omega = 2 * math.pi * f[i]
         etaRad[i] = 2.0 * omega * RHO_AIR / (2 * math.pi ** 2 * C_AIR) * np.sum(np.abs(W) ** 2 * dOmega) / 2.0
+        if nl:                                                               # the lid radiates too, in its own plane
+            wl = lidV[:, i] * dAl * (1.0 - np.exp(-1j * kk * dEl))
+            Wl = np.exp(-1j * kk * (np.outer(ux, syl[:, 0]) + np.outer(uy, syl[:, 1]))) @ wl
+            etaRad[i] += 2.0 * omega * RHO_AIR / (2 * math.pi ** 2 * C_AIR) * np.sum(np.abs(Wl) ** 2 * dOmega) / 2.0
     print("radiation loss factor: median %.4f, 10-90%% %.4f-%.4f" % (np.median(etaRad), *np.percentile(etaRad, [10, 90])))
 
     # Modes that mostly move the frame go to the frame table; the rest to the board table
     isFrame = frameShare > 0.5
-    keepB = ~isFrame
+    # Modes that live almost entirely in the lid barely move the bridge, so the strings cannot
+    # drive them: leave them out of the table (the lid's answer to the board is in the mixed modes)
+    pnorm = np.sqrt((phi ** 2).sum(0) + (phiH ** 2).sum(0))
+    inert = (lidShare > 0.5) & (pnorm < 0.1 * np.median(pnorm))
+    keepB = ~isFrame & ~inert
+    print(f"lid-only modes left out: {int(inert.sum())}; board table {int(keepB.sum())} modes")
     with open(args.out, "w") as fo:
         fo.write("// Generated by tools/soundboard/build_board.py: do not edit by hand.\n")
         fo.write(f"// Body modes below {F_TOP:.0f} Hz of a Yamaha C5: tapered, ribbed soundboard with bridges, crown and\n")
