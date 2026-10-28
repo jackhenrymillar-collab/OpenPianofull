@@ -302,9 +302,9 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     // relative to the middle of the range. Pushing harder on the bridge while feeling its
     // motion less by the same factor keeps the decay and coupling unchanged.
     {
-        static constexpr double voicingDb[30] = { -0.8, 0.3, -1.5, -4.0, -9.5, -11.3, -3.3, 3.9, -0.7, 3.0,
-                                               0.2, -1.3, -14.7, -4.6, -11.6, -5.3, -3.2, -6.2, -5.5, -0.7,
-                                               -3.2, 2.6, -10.1, -2.4, -3.1, -1.6, -15.1, -11.5, 0.8, -5.1 }; // every 3 keys from A0
+        static constexpr double voicingDb[30] = { -0.0, -0.5, -1.0, -3.2, -6.9, -8.5, -2.4, 6.2, -0.2, 3.5,
+                                               1.3, -1.9, -14.5, -4.8, -12.1, -5.9, -4.8, -7.7, -8.5, 0.0,
+                                               -6.6, -1.9, -10.3, -1.8, -3.7, -1.9, -15.3, -11.5, 0.6, -5.3 }; // every 3 keys from A0
         const double pos = std::clamp ((key.midiNote - kLowestKey) / 3.0, 0.0, 28.999);
         const int i = (int) pos;
         const double db = voicingDb[i] + (voicingDb[i + 1] - voicingDb[i]) * (pos - i);
@@ -957,32 +957,9 @@ void ModalPiano::buildBody()
         roomPos = 0;
     }
 
-    // The lid is a large panel (about 1.6 m by 1.4 m, 19 mm of veneered spruce core) that the
-    // board's sound presses on. Its bending modes, as a plate held at the hinges and prop:
-    // f_mn = (pi/2) sqrt(D / rho h) ((m/a)^2 + (n/b)^2). An even push only drives the odd-odd
-    // modes, by 16 / (pi^2 m n), and all share the same modal mass.
-    lidPanel.clear(); lidPanelGain.clear();
-    {
-        const double a = 1.6, b = 1.4, h = 0.019, E = 8e9, rho = 550, nu = 0.3;
-        const double D = E * h * h * h / (12.0 * (1.0 - nu * nu)), rh = rho * h;
-        const double c = 0.5 * M_PI * std::sqrt (D / rh);
-        for (int mi = 1; mi <= 9; mi += 2)
-            for (int ni = 1; ni <= 9; ni += 2)
-            {
-                const double f = c * ((mi / a) * (mi / a) + (ni / b) * (ni / b));
-                if (f > 700.0 || f > 0.4 * sampleRate)
-                    continue;
-                // Radiation and the wood's own loss: Q falls from about 25 to 12 with frequency
-                const double Q = 25.0 / (1.0 + f / 300.0);
-                const double w = 2.0 * M_PI * f / sampleRate, alpha = std::sin (w) / (2.0 * Q), a0 = 1.0 + alpha;
-                Biquad bq;
-                bq.b0 = (float) (alpha / a0); bq.b1 = 0; bq.b2 = (float) (-alpha / a0);
-                bq.a1 = (float) (-2.0 * std::cos (w) / a0); bq.a2 = (float) ((1.0 - alpha) / a0);
-                lidPanel.push_back (bq);
-                // Scaled so the lowest mode answers like the old fixed panel (0.05)
-                lidPanelGain.push_back ((float) (0.05 * (1.0 / (mi * ni))* std::sqrt (Q / 18.0)));
-            }
-    }
+    // The lid is in the body tables: build_board.py solves it as a hinged, propped plate over
+    // the case air, coupled to the board and radiating to the listener with the other modes.
+
     // Sound from the board spreads evenly at low frequencies but beams above a couple of kHz,
     // mostly out past the open lid (the right ear here)
     beamCoeff = std::exp (-2.0 * M_PI * 2000.0 / sampleRate);
@@ -2177,17 +2154,6 @@ void ModalPiano::process (float* left, float* right, int numSamples)
         beamLpRight = outR + beamCoeff * (beamLpRight - outR);
         outL -= 0.2 * (outL - beamLpLeft);
         outR += 0.25 * (outR - beamLpRight);
-
-        // The lid panel's own ringing, heard in both ears (its reflection is in the body tables)
-        if (settings.lid > 0)
-        {
-            const float drive = (float) (outL + outR);
-            float panel = 0;
-            for (size_t i = 0; i < lidPanel.size(); ++i)
-                panel += lidPanelGain[i] * lidPanel[i].process (drive);
-            outL += settings.lid * panel;
-            outR += 0.8 * settings.lid * panel;
-        }
 
         // Room: early reflections, heard from the player's seat
         if (room > 0.0f && ! reflections.empty())
