@@ -101,6 +101,9 @@ int main()
             const auto audio = render (piano, (int) (2.1 * kRate));
             // Bass notes: check a higher partial (150-400 Hz), which pins the pitch more finely.
             // Pick one the hammer excites well (not near a node at the striking point).
+            // Prefer the lowest such partial the hammer drives well: the body's modes crowd
+            // together above ~300 Hz, and a partial sitting on one is pulled to it, so the
+            // peak would then measure the body, not the string
             int partial = 1;
             double best = -1;
             const int lo = std::max (1, (int) std::round (150.0 / key.targetFrequency));
@@ -109,6 +112,7 @@ int main()
             {
                 const double excitation = std::abs (std::sin (k * M_PI * key.strikeRatio));
                 if (excitation > best + 0.05) { best = excitation; partial = k; }
+                if (excitation >= 0.5) { partial = k; break; }
             }
             const auto& s = key.strings[0];
             const double target = key.targetFrequency * partial

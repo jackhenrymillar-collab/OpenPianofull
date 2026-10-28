@@ -683,9 +683,10 @@ void ModalPiano::buildSoundboard()
     board.phi.assign (n * Z, 0.0f);
     board.phiH.assign (n * Z, 0.0f);
     board.phiSum.assign (n, 0.0f);
-        // The solved sideways shapes come from the bridge rocking on a rigid cap; the cap and pins
-    // give, so about half of that reaches the strings (fitted to the recorded tail decays)
-    const double sideScale = 0.45;
+    // The solved sideways shapes (the bridge top tilting with the board's slope along the
+    // bridge) reach the strings as they are. (They used to be scaled to 0.45, fitted to the
+    // recorded tail decays, which was holding a non-passive discretization below its limit.)
+    const double sideScale = 1.0;
     board.scratchF.assign (n, 0.0f);
     board.scratchV.assign (n, 0.0f);
 
