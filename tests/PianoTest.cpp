@@ -206,9 +206,11 @@ int main()
             const auto x = render (piano, kRate / 2);
             // The attack: with one string fewer the note starts quieter, but it also drains into
             // the bridge more slowly and sustains longer (Weinreich's aftersound), so a long
-            // window would mostly measure the sustain
+            // window would mostly measure the sustain. The colour is judged in the first 50 ms,
+            // before the unstruck third string has drawn off the fundamental (which would read
+            // as brighter, though it is the unison coupling and not the felt)
             level[soft] = rms (x, 0, 4800);
-            bright[soft] = powerAt (x, 1200, 9600, 440.0 * 4.02) / powerAt (x, 1200, 9600, 440.0);
+            bright[soft] = powerAt (x, 0, 2400, 440.0 * 4.02) / powerAt (x, 0, 2400, 440.0);
         }
         std::printf ("una corda: %.1f dB quieter, 4th partial %.1f dB weaker relative to the 1st\n",
                      20 * std::log10 (level[0] / level[1]), 10 * std::log10 (bright[0] / bright[1]));

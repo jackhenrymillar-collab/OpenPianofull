@@ -80,7 +80,7 @@ public:
         bool closeMics = false;             // listen from a close stereo mic pair (as on studio sample sets) instead of the player's seat
         double age = 0.0;                   // 0 = new piano, 1 = old and worn (see prepare)
         double shankFlex = 1.0;             // hammer shank bending and head rocking (0 = rigid hammer)
-        double softLift = 0.3;              // lifts the volume of soft bass notes without changing their tone, fading to none at the top (0 = off)
+        double softLift = 0.0;              // lifts the volume of soft bass notes without changing their tone, fading to none at the top (0 = off)
     };
 
     ModalPiano();
@@ -199,7 +199,7 @@ private:
     int tensionCounter = 0;
     long long sampleClock = 0;
     std::vector<double> tuneFactor;
-    static constexpr std::array<double, 88> kTunerCents { 0.20, 0.20, -0.60, 0.00, -0.40, -0.40, -0.70, -0.80, 0.90, 0.40, 0.90, 1.20, 0.60, 0.30, 0.70, 0.60, 0.20, 0.40, 0.40, 0.20, -1.43, -0.47, -0.43, -0.34, -0.45, -0.61, -0.28, -0.01, 0.10, 0.60, 0.76, 0.21, -0.27, 0.83, 0.69, 0.87, 0.60, 0.07, -0.00, -0.60, 0.46, 0.40, -0.99, 2.90, 2.71, 0.03, -1.98, 1.44, -1.98, -0.21, 1.61, -1.49, 1.42, 1.88, 1.27, -1.13, 1.43, -0.74, 0.93, 0.83, 0.05, 1.06, 0.98, 0.70, -1.15, -1.17, -0.67, 0.65, -0.55, 0.61, -0.64, -0.31, 0.48, -0.83, 0.45, 0.41, -0.60, -0.97, -0.70, 0.79, 1.72, -1.46, 0.40, -0.47, 0.22, 0.54, -0.46, 0.63 };   // filled by the tuning pass   // the tuner's correction per key, for the body's pull on its pitch
+    static constexpr std::array<double, 88> kTunerCents { 0.3, 0.1, -0.1, 0.0, 0.2, 0.4, 0.3, 0.2, 0.3, 0.1, 0.1, 0.0, -0.1, 0.2, 0.1, 0.0, -0.3, 0.3, 0.2, -0.1, 0.93, 0.37, 0.53, 0.74, 0.38, 0.71, 0.48, 0.31, 0.3, 0.1, 0.44, 0.39, 0.47, 0.17, 0.31, -0.17, -0.7, -1.17, -0.5, 1.7, -0.06, 2.1, 1.99, 0.6, 1.99, 2.23, -2.0, 1.96, 1.68, 1.51, 1.79, -0.91, -2.22, -0.98, 0.33, 2.33, -1.63, 1.44, 1.27, -1.03, -0.95, -1.26, 1.02, 0.6, 1.15, 1.07, 0.77, -1.05, -1.15, 0.59, 0.34, -0.69, 0.42, 0.45, 0.35, 0.39, 0.5, 0.47, -0.1, 0.61, -0.02, 1.46, 0.3, 0.17, -1.12, 0.06, 0.06, 0.37 };   // filled by the tuning pass   // the tuner's correction per key, for the body's pull on its pitch
 
     // Each string's modes are stored in two parts: the low ones it keeps while only
     // resonating sit in one region, back to back with every other string's, and the rest

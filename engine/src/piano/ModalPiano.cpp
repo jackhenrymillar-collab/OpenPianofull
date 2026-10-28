@@ -175,7 +175,7 @@ void ModalPiano::prepare (double newSampleRate, const Settings& newSettings)
 
     // Output filters: gentle top-end roll-off on the direct bridge path, and a DC blocker
     lpCoeff = std::exp (-2.0 * M_PI * 3500.0 / sampleRate);
-    lp2Coeff = std::exp (-2.0 * M_PI * 4000.0 / sampleRate);
+    lp2Coeff = 0.0;   // the two extra poles above 8 kHz were a fit to the C5 recordings' top band: off
     dcCoeff = std::exp (-2.0 * M_PI * 20.0 / sampleRate);
 
     fullList.reserve (strings.size());
@@ -302,25 +302,21 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
     // relative to the middle of the range. Pushing harder on the bridge while feeling its
     // motion less by the same factor keeps the decay and coupling unchanged.
     {
-        static constexpr double voicingDb[30] = { 5.1, 3.9, 0.3, -1.2, -5.7, -3.0, 1.9, 8.0, 7.4, 1.8,
-                                               -0.5, -12.0, -14.3, -8.4, -11.0, -5.8, -3.1, -5.8, -9.0, -3.2,
-                                               -8.4, -6.9, -14.2, -4.0, -7.1, -4.8, -18.2, -13.2, 0.4, -4.3 }; // every 3 keys from A0
+        static constexpr double voicingDb[30] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 }; // every 3 keys from A0
         const double pos = std::clamp ((key.midiNote - kLowestKey) / 3.0, 0.0, 28.999);
         const int i = (int) pos;
         const double db = voicingDb[i] + (voicingDb[i + 1] - voicingDb[i]) * (pos - i);
         const float g = (float) std::pow (10.0, db / 20.0);
         // Tone voicing (needling or hardening the felt): the slope of the upper partials, in dB
         // per octave of partial number, fitted note by note to the recorded grand's brightness
-        static constexpr double toneDb[30] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -6.8, -7.8, -6.5, -5.2,
-                                               -0.3, 0.2, -3.5, -2.4, -1.4, -3.7, -10.9, -4.5, -3.3, -11.1,
-                                               -12.0, -9.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 }; // every 3 keys from A0
+        static constexpr double toneDb[30] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 }; // every 3 keys from A0
         const double tone = toneDb[i] + (toneDb[i + 1] - toneDb[i]) * (pos - i);
         // In the top octave and a half the bridge and board give way less and less to the upper
         // partials (up to 15 dB less per octave of partial number from C7 up). Without this the
         // 2nd and 3rd partials there sit 10 to 20 dB above the recorded grand's: thin and metallic.
         // The cut peaks at C7 and fades out by F#7: above there the recorded partials are no
         // stronger than ours, and cutting them leaves a bare, harp-like sine.
-        const double topRoll = 15.0 * std::clamp ((keyIndex - 66) / 9.0, 0.0, 1.0) * std::clamp ((81 - keyIndex) / 6.0, 0.0, 1.0);
+        const double topRoll = 0.0;   // was a 15 dB/octave cut from C7 fitted to the C5 recordings; the D's own top strings and bridge decide now
         for (int j = 0; j < s.count; ++j)
         {
             const size_t q = (size_t) (s.first + j);
@@ -596,7 +592,7 @@ void ModalPiano::buildSoundboard()
     // The solved bridge admittance is about 25x what the recordings imply (likely the
     // bridge and string-load mass missing from the solve), so the coupling is fitted down.
     const double phiScale = 1.0;   // the solved admittance, as it is
-    // The soundboard and the body around it: modes of a Yamaha C5's body, computed by
+    // The soundboard and the body around it: modes of a Steinway D's body (RT-425 geometry), computed by
     // tools/soundboard/build_board.py (BoardModes.inc). The model is a tapered, ribbed spruce
     // board with its bridges, crown and downbearing, glued into a rim that bends and twists,
     // held by back braces, standing on three legs, with the iron frame bolted on and the air
@@ -660,34 +656,8 @@ void ModalPiano::buildSoundboard()
         rawR[i] = settings.closeMics ? src.micRight : src.radRight;
         rawV[i] = src.volume;
     }
-    // At the seat the board's edge short circuit leaves the low end ~10 dB thinner than the
-    // close pair hears it. A player sits in a room whose walls and floor fill that back in, and
-    // the recordings were made close, so the seat keeps the close pair's octave-band balance
-    // below 1 kHz (smoothly, mode by mode), and its own detail and stereo image.
-    if (! settings.closeMics)
-    {
-        constexpr int kBands = 8;   // octaves from 31 Hz
-        double seat[kBands] {}, mic[kBands] {};
-        for (size_t i = 0; i < n; ++i)
-        {
-            const auto& src = kBoardModes[modes[i].n];
-            const int b = std::clamp ((int) std::floor (std::log2 (modes[i].f / 31.25)), 0, kBands - 1);
-            seat[b] += src.radLeft * src.radLeft + src.radRight * src.radRight;
-            mic[b] += src.micLeft * src.micLeft + src.micRight * src.micRight;
-        }
-        double ratio[kBands];
-        for (int b = 0; b < kBands; ++b)
-            ratio[b] = seat[b] > 0 && mic[b] > 0 ? std::sqrt (mic[b] / seat[b]) : 1.0;
-        const double ref = ratio[5];   // 1-2 kHz: leave the seat's level there as it is
-        for (size_t i = 0; i < n; ++i)
-        {
-            const double pos = std::clamp (std::log2 (modes[i].f / 31.25) - 0.5, 0.0, kBands - 1.0);
-            const int b = std::min ((int) pos, kBands - 2);
-            const double r = ratio[b] + (ratio[b + 1] - ratio[b]) * (pos - b);
-            const double g = modes[i].f < 1000.0 ? std::max (1.0, r / ref) : 1.0;
-            rawL[i] *= g; rawR[i] *= g;
-        }
-    }
+    // (The seat's octave balance used to be forced to the close pair's below 1 kHz, a fit to the
+    // C5 recordings; the seat now hears the solved body as it is.)
     {
         double sum = 0; int count = 0;
         for (size_t i = 0; i < n; ++i)
@@ -1547,7 +1517,7 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
     // with a gentler force law, so the tone is darker as well as quieter
     const double q0 = key.feltStiffness * hardness * (1.0 + 1.5 * ageFactor) * (1.0 + 0.9 * groove * (1.0 - h.softFelt))
                       * (1.0 - 0.35 * h.softFelt) * (1.0 + 0.4 * h.feltSet);
-    const double p = key.feltExponent + h.exponentBoost - 0.3 * h.softFelt;
+    const double p = key.feltExponent + h.exponentBoost;   // the unpacked felt beside the grooves is softer (q0 above), not a different law
     // Felt has memory (Stulov 1995): squeezed quickly it is stiff; squeezed slowly it has
     // time to relax and gives way. So a gentle touch makes a long, soft contact that only
     // excites the low partials, and a hard blow a short, stiff one that brings out the top.
