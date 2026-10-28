@@ -38,6 +38,7 @@ public:
     void reset() override;
 
     void noteOn (int midiNote, int velocity) override;
+    using Instrument::noteOff;
     void noteOff (int midiNote) override;
     void setSustain (bool pedalDown) override;
 

@@ -33,8 +33,10 @@ public:
     void reset() override;
 
     void noteOn (int midiNote, int velocity) override;
-    void noteOff (int midiNote) override;
-    void setSustain (bool pedalDown) override;
+    void noteOff (int midiNote) override { noteOff (midiNote, 64); }
+    void noteOff (int midiNote, int releaseVelocity) override;
+    void setSustain (bool pedalDown) override { setSustainLevel (pedalDown ? 1.0f : 0.0f); }
+    void setSustainLevel (float level) override;
     void setSostenuto (bool pedalDown) override;
     void setSoftPedal (float amount) override;
 
@@ -73,7 +75,7 @@ private:
     // the model once the knob has rested for a moment
     double sampleRate = 48000;
     float builtAge = 0.0f;
-    bool pedal = false;
+    float pedal = 0;
     float softAmount = 0.0f;
     int ageSettleSamples = 0;
     void applyLiveControls();

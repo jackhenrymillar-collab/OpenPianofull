@@ -75,8 +75,8 @@ private:
     std::atomic<float>* latchParam = nullptr;
     std::atomic<float>* velocitySensParam = nullptr;
 
-    bool midiSustain = false;
-    bool sustainApplied = false;
+    float midiSustain = 0.0f;
+    float sustainApplied = 0.0f;
     std::atomic<bool> sustainShown { false };
 
     std::atomic<float> cpuLoad { 0.0f };
