@@ -52,7 +52,16 @@ F_TOP = 5000.0
 RIM_EI = 12e9 * 0.035 * 0.26 ** 3 / 12.0 * 3.0   # laminated maple, 26 cm deep; x3: the bolted iron frame ties it
 RIM_M = 650.0 * 0.035 * 0.26                      # [kg/m]
 FRAME_MASS, FRAME_BOLTS = 125.0, 10               # iron frame [kg], spread over its bolts on the rim
-EDGE_K = 2.0e6                                    # glue joint holding the board's edge level with the rim [N/m per node]
+# The board's edge sits glued on the rim liner's ledge, a strip about 2.5 cm wide inside the
+# rim. The joint holds the edge level with the rim (the ring nodes are the rim's); against
+# rotation it is only as stiff as the ledge strip in compression across the grain, whose
+# stress field spreads about one width deep: k_rot = E_perp w^2 / 12 per metre of edge. So the
+# thinned edge rocks on its ledge rather than being clamped. Per ring node (spacing DX) the
+# hinge is EDGE_K DX^2 = k_rot DX. LEDGE_SCALE (env) scales it for A/B tests.
+LEDGE_W = float(os.environ.get("LEDGE_W", "0.025"))                      # ledge width [m]
+LINER_E = 0.4e9                                                           # maple liner across the grain [Pa]
+EDGE_K = LINER_E * LEDGE_W ** 2 / 12.0 / DX * float(os.environ.get("LEDGE_SCALE", "1"))   # [N/m per node]
+TIE_K = 1.0e8                                     # brace ends let into the rim [N/m]
 BRACE_EI, BRACE_M = 12e9 * 0.09 * 0.11 ** 3 / 12.0, 650.0 * 0.09 * 0.11   # back braces (beech/spruce, 9x11 cm)
 LEG_K = 3.0e6                                     # each leg on its castor [N/m]
 CASE_H = 0.24 + 0.08                              # rim height above the board, plus the open top's end correction [m]
@@ -70,7 +79,7 @@ DOWNBEARING = 3000.0       # [N], shared along both bridges (a quarter on the ba
 # beech ~0.012, maple ~0.010, cast iron ~0.002, glue lines ~0.05, castor cups on the floor ~0.25.
 ETA = {"along": 0.007, "across": 0.018, "shear": 0.018, "rib": 0.007, "bridge": 0.012, "crown": 0.010,
        "rim": 0.010, "rimtwist": 0.010, "glue": 0.05, "leg": 0.25, "brace": 0.010, "tie": 0.05,
-       "frame": 0.002, "bolt": 0.02, "pinblock": 0.05, "str_damped": float(os.environ.get("ETA_SD", "0.3")), "str_free": float(os.environ.get("ETA_SF", "0.02"))}
+       "frame": 0.002, "bolt": 0.02, "nose": 0.02, "pinblock": 0.05, "str_damped": float(os.environ.get("ETA_SD", "0.3")), "str_free": float(os.environ.get("ETA_SF", "0.02"))}
 PLANK_W, PLANK_SPREAD = 0.12, 0.08   # the board is glued from ~12 cm planks; each plank's stiffness varies ~8%
 RIM_GJ = 1.1e9 * 0.26 * 0.035 ** 3 / 3.0 * 0.92 * 3.0   # rim twisting stiffness (maple, x3 for the bolted frame) [N m^2]
 RIM_IP = 650.0 * 0.035 * 0.26 * (0.035 ** 2 + 0.26 ** 2) / 12.0   # rim rotary inertia per length [kg m]
@@ -516,10 +525,13 @@ def main():
     nbr = len(ends) * nb_nodes + 1                          # + the shared hub node
     Kb = sp.lil_matrix((nbr, nbr)); Mb = np.zeros(nbr)
     tie = []                                                # (brace node, ring index)
+    Cbr = np.zeros((nbr, 2)); Cbr[nbr - 1] = hub
     for e, (ex, ey) in enumerate(ends):
         L = float(np.hypot(ex - hub[0], ey - hub[1]))
         h_ = L / nb_nodes
         nodes = [nbr - 1] + [e * nb_nodes + k for k in range(nb_nodes)]   # hub .. rim end
+        for k, n_ in enumerate(nodes):
+            Cbr[n_] = hub + (np.array([ex, ey]) - hub) * k / nb_nodes
         for k in range(1, nb_nodes):
             a, b, c_ = nodes[k - 1], nodes[k], nodes[k + 1]
             v = np.zeros(nbr); v[a] += 1; v[b] -= 2; v[c_] += 1
@@ -555,10 +567,32 @@ def main():
     gparts["glue"] = gl.T @ gl * (EDGE_K * DX * DX)
     # Brace ends pinned onto the rim
     ti = spring_rows([[(pos_of[rlin[r_]], 1.0), (oB + bn_, -1.0)] for bn_, r_ in tie])
-    gparts["tie"] = ti.T @ ti * (50.0 * EDGE_K)
+    gparts["tie"] = ti.T @ ti * TIE_K
     # Frame bolts onto the nearest point of the rim
     bo = spring_rows([[(pos_of[rlin[nearest_ring(*Cfr[b_])]], 1.0), (oF + int(b_), -1.0)] for b_ in bolts])
     gparts["bolt"] = bo.T @ bo * BOLT_K
+    # Nose bolts: the plate is also held down through the board onto the back braces, by two
+    # or three bolts through its web where the struts pass over a brace (a spacer sets the
+    # plate's height; the board has a clearance hole and is not touched). They tie the plate's
+    # middle, where the struts meet, to the stiff beams instead of leaving it hanging between
+    # the rim bolts. NO_NOSE (env) leaves them out for A/B tests.
+    nose = []
+    if not os.environ.get("NO_NOSE"):
+        inner = [k_ for k_ in range(nfr) if Cfr[k_, 1] > 0.0 and Cfr[k_, 1] < 1.35 and Cfr[k_, 0] < 1.30
+                 and abs(Cfr[k_, 0] - (float(bentside(Cfr[k_, 1])) + 0.04)) > 0.05]
+        cands = []
+        for e in range(len(ends)):
+            bn = [e * nb_nodes + k for k in range(2, nb_nodes)]
+            d = np.hypot(Cfr[inner][:, None, 0] - Cbr[bn][None, :, 0], Cfr[inner][:, None, 1] - Cbr[bn][None, :, 1])
+            i_, j_ = np.unravel_index(int(np.argmin(d)), d.shape)
+            cands.append((float(d[i_, j_]), inner[i_], bn[j_]))
+        for d_, fn_, bn_ in sorted(cands):
+            if d_ < 0.06 and len(nose) < 3 and all(np.hypot(*(Cfr[fn_] - Cfr[f2])) > 0.25 for f2, _ in nose):
+                nose.append((fn_, bn_))
+        if nose:
+            ns = spring_rows([[(oF + int(fn_), 1.0), (oB + int(bn_), -1.0)] for fn_, bn_ in nose])
+            gparts["nose"] = ns.T @ ns * BOLT_K
+        print("nose bolts at " + ", ".join(f"({Cfr[fn_, 0]:.2f}, {Cfr[fn_, 1]:.2f})" for fn_, _ in nose))
     # The pin block: a laminated maple block, glued to the stretcher across the whole front,
     # that the plate's front flange is screwed down onto every few cm. It holds the front bar
     # (and the strings' far ends on it) along its whole length, not just at the end bolts: a
