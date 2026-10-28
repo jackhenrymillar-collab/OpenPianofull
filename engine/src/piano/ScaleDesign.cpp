@@ -102,6 +102,19 @@ namespace
         return (h & 0xffff) / 32767.5 - 1.0;
     }
 
+    // String tension per key as measured on a Steinway D (Chabassier & Durufle, Inria RT-425,
+    // 2012, appendix A; A0-B0 and C8 extended from their neighbours). Bass 1.7 kN falling to
+    // 740 N at E2, then 750-800 N through the tenor, easing to 580 N at the top.
+    constexpr double kSteinwayDTension[88] = {
+        1722, 1722, 1722, 1722, 1788, 1798, 1773, 1703, 1618, 1515, 1404, 1297,
+        1190, 1083, 991, 915, 853, 807, 774, 741, 799, 791, 773, 783,
+        754, 754, 756, 759, 762, 764, 766, 767, 766, 765, 763, 759,
+        755, 751, 746, 741, 735, 730, 725, 720, 715, 711, 707, 704,
+        701, 699, 697, 696, 695, 694, 694, 694, 694, 695, 695, 696,
+        697, 697, 697, 697, 697, 697, 696, 695, 693, 691, 689, 686,
+        683, 679, 674, 670, 664, 659, 652, 646, 639, 631, 623, 615,
+        606, 598, 588, 580 };
+
     struct Design
     {
         bool wound;
@@ -124,31 +137,32 @@ namespace
                                           1.27, 1.16, 1.12 };                      // keys 22, 25, 26 (treble bridge)
             if (key <= kLastBassBridgeKey)
             {
-                const double t = (key - 1) / double (kLastBassBridgeKey - 1);
                 const double pos = std::min ((key - 1) / 3.0, 5.999);
                 const int i = (int) pos;
                 d.coreDiameter = lerp (coreAt[i], coreAt[i + 1], pos - i) * 1e-3;
-                d.woundTension = lerp (1800.0, 1350.0, t);
+                d.woundTension = kSteinwayDTension[key - 1];
             }
             else
             {
-                const double t = (key - kLastBassBridgeKey - 1) / double (kLastWoundKey - kLastBassBridgeKey - 1);
                 const double pos = std::min ((key - 22) / 3.0, 1.0);
                 d.coreDiameter = (key < 22 ? coreAt[7] : key >= 26 ? coreAt[9] : lerp (coreAt[7], coreAt[8], pos)) * 1e-3;
-                d.woundTension = lerp (1150.0, 1000.0, t);
+                d.woundTension = kSteinwayDTension[key - 1];
             }
-            // The gauges were fitted on Steinway D lengths. B ~ d^4 / L^2, so keep the fitted
-            // inharmonicity on the shorter C5 strings with a core thinner by sqrt(scale).
-            d.coreDiameter *= std::sqrt (c5Scale (key));
+            // The gauges were fitted on Steinway D lengths at the old tensions (1800-1350 N bass,
+            // 1150-1000 N tenor). B ~ d^4 / (T L^2), so the fitted inharmonicity is kept on the
+            // shorter C5 strings and at the D's tensions with a core thinner by sqrt(scale) and
+            // by the fourth root of the tension ratio.
+            const double oldTension = key <= kLastBassBridgeKey ? lerp (1800.0, 1350.0, (key - 1) / double (kLastBassBridgeKey - 1))
+                                                               : lerp (1150.0, 1000.0, (key - kLastBassBridgeKey - 1) / double (kLastWoundKey - kLastBassBridgeKey - 1));
+            d.coreDiameter *= std::sqrt (c5Scale (key)) * std::pow (d.woundTension / oldTension, 0.25);
             return d;
         }
 
         // Plain wire: pick the standard gauge that gives the target tension
         d.wound = false;
-        const double t = (key - kLastWoundKey - 1) / double (88 - kLastWoundKey - 1);
-        // Tension falls from 690 N to 560 N at the top: with the gauges this gives, the plain strings'
-        // stiffness matches the recorded grand within about 10% (fitted with tools/calibrate/strings.py)
-        d.plainTargetTension = lerp (690.0, 560.0, t);
+        // The Steinway D's tensions (760 N in the tenor easing to 580 N at the top): the plain
+        // strings here have the D's lengths, so its tensions apply directly.
+        d.plainTargetTension = kSteinwayDTension[key - 1];
         const double mu = d.plainTargetTension / std::pow (2.0 * length * frequency, 2);
         double diameter = std::sqrt (4.0 * mu / (M_PI * kSteelDensity));
         diameter = std::round (diameter / 0.025e-3) * 0.025e-3;     // standard gauges
