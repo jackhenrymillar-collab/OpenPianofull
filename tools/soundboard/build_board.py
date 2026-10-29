@@ -91,10 +91,12 @@ RIM_GJ = 1.1e9 * RIM_D * RIM_T ** 3 / 3.0 * (1.0 - 0.63 * RIM_T / RIM_D)   # rim
 RIM_IP = 650.0 * RIM_T * RIM_D * (RIM_T ** 2 + RIM_D ** 2) / 12.0   # rim rotary inertia per length [kg m]
 PIN_OFFSET = 0.008          # strings bear on the bridge's front pins, ~8 mm on the speaking-length side of its centre line
 LISTEN = {"L": (1.40, -1.20, 1.00), "R": (0.00, -1.20, 1.00)}     # the player's seat, a stereo pair a little apart
-MICS = {"L": (0.70, 0.60, 0.35), "R": (0.40, 0.30, 0.35)}         # close pair 35 cm over the board: bass/tenor strings further in, treble near the hammers
-# (The pair used to stand at (1.00, 0.90) and (0.45, 0.35): the first is 6 cm under the lid near the
-# spine, where the lid's reflection cancels 1.4 and 4.3 kHz and the case air is at its most confined.
-# Both now stand under at least 0.3 m of clear air, where a recording pair can actually be put.)
+MICS = {"L": (0.80, 0.80, 0.25), "R": (0.35, 0.50, 0.25)}         # close pair 25 cm over the board: bass/tenor strings, and the treble nearer the hammers
+# (Chosen on the case-air field, which the mics hear since they stand under the lid, for the
+# flattest band response per bridge zone from 40 Hz to 4 kHz: 2.3 and 3.1 dB rms, where the
+# free-field choice (0.70, 0.60, 0.35) and (0.40, 0.30, 0.35) gave 2.9 and 3.8. In the case
+# air the position matters little, within 1.5 dB rms over the whole board, because the diffuse
+# field fills the free field's nulls. Both stand under at least 0.3 m of clear air to the lid.)
 LID_ANGLE = math.radians(42.0)   # full stick
 LID_HINGE_X = A + 0.02           # the hinge line, just outside the spine
 LID_GAP_MIN = 0.10               # the rim-to-lid gap along the bentside counts as open above this [m]
@@ -1106,7 +1108,13 @@ def main():
     # sums' units (4 pi / rho c per unit velocity). It adds to the direct sound in power, with
     # no phase of its own
     A_open = math.pi * aOpen ** 2
-    pDiffuse = math.sqrt(2.0) * np.sqrt(2.0 * RHO_AIR * C_AIR * etaRad * (2 * math.pi * f) / A_open) * (4 * math.pi / (RHO_AIR * C_AIR))
+    # The lid's first reflection is already in the direct sums, so the diffuse field is what is
+    # left after one bounce: the share that does not leave at once (Eyring), one minus the
+    # openings' share of the enclosure's surface (board, lid, rim walls and openings)
+    S_case = 2.0 * area * len(bx) + RIM_H * ds_ring * len(ringXY) + A_open
+    alphaCase = A_open / S_case
+    pDiffuse = math.sqrt(2.0 * (1.0 - alphaCase)) * np.sqrt(2.0 * RHO_AIR * C_AIR * etaRad * (2 * math.pi * f) / A_open) * (4 * math.pi / (RHO_AIR * C_AIR))
+    print(f"diffuse field under the lid: openings {A_open:.1f} m2 of {S_case:.1f} m2, absorption {alphaCase:.2f}")
     def pressure_at(pt, lid=True, floor=True, cavity=False, diffuse=False):
         pt = np.array(pt)
         # A microphone inside the case stands in the case air's standing waves: below the air
