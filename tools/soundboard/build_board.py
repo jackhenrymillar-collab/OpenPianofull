@@ -50,8 +50,9 @@ APRON_M, APRON_K = 0.35, 4.0e5           # [kg], [N/m]
 F_TOP = 5000.0
 # The body around the board (a Steinway D): the rim it is glued into, the braces under it,
 # the iron frame bolted on the rim, the legs, and the air in the case above the board.
-RIM_EI = 12e9 * 0.035 * 0.26 ** 3 / 12.0 * 3.0   # laminated maple, 26 cm deep; x3: the bolted iron frame ties it
-RIM_M = 650.0 * 0.035 * 0.26                      # [kg/m]
+RIM_T, RIM_D = 0.0826, 0.26                       # the Steinway D rim: one continuous bent rim of 18 maple laminations, 3 1/4" thick, 26 cm deep
+RIM_EI = 12e9 * RIM_T * RIM_D ** 3 / 12.0          # laminated maple (the iron frame bolted on it is solved on its own below)
+RIM_M = 650.0 * RIM_T * RIM_D                      # [kg/m]
 FRAME_MASS, FRAME_BOLTS = 125.0, 10               # iron frame [kg], spread over its bolts on the rim
 # The board's edge sits glued on the rim liner's ledge, a strip about 2.5 cm wide inside the
 # rim. The joint holds the edge level with the rim (the ring nodes are the rim's); against
@@ -63,7 +64,9 @@ LEDGE_W = float(os.environ.get("LEDGE_W", "0.025"))                      # ledge
 LINER_E = 0.4e9                                                           # maple liner across the grain [Pa]
 EDGE_K = LINER_E * LEDGE_W ** 2 / 12.0 / DX * float(os.environ.get("LEDGE_SCALE", "1"))   # [N/m per node]
 TIE_K = 1.0e8                                     # brace ends let into the rim [N/m]
-BRACE_EI, BRACE_M = 12e9 * 0.09 * 0.11 ** 3 / 12.0, 650.0 * 0.09 * 0.11   # back braces (beech/spruce, 9x11 cm)
+# Back braces: the D's five solid spruce braces hold 66,400 cm3 of wood in all; over their 3.7 m here
+# that is a 180 cm2 section, taken as 12 cm wide by 15 cm deep (spruce along the grain: E 11 GPa, 450 kg/m3)
+BRACE_EI, BRACE_M = 11e9 * 0.12 * 0.15 ** 3 / 12.0, 450.0 * 0.12 * 0.15
 LEG_K = 3.0e6                                     # each leg on its castor [N/m]
 CASE_H = 0.24 + 0.08                              # rim height above the board, plus the open top's end correction [m]
 RHO_AIR, C_AIR = 1.2, 343.0
@@ -82,8 +85,8 @@ ETA = {"along": 0.007, "across": 0.018, "shear": 0.018, "rib": 0.007, "bridge": 
        "rim": 0.010, "rimtwist": 0.010, "glue": 0.05, "leg": 0.25, "brace": 0.010, "tie": 0.05,
        "frame": 0.002, "bolt": 0.02, "nose": 0.02, "lid": 0.02, "pinblock": 0.05, "str_damped": float(os.environ.get("ETA_SD", "0.3")), "str_free": float(os.environ.get("ETA_SF", "0.02"))}
 PLANK_W, PLANK_SPREAD = 0.12, 0.08   # the board is glued from ~12 cm planks; each plank's stiffness varies ~8%
-RIM_GJ = 1.1e9 * 0.26 * 0.035 ** 3 / 3.0 * 0.92 * 3.0   # rim twisting stiffness (maple, x3 for the bolted frame) [N m^2]
-RIM_IP = 650.0 * 0.035 * 0.26 * (0.035 ** 2 + 0.26 ** 2) / 12.0   # rim rotary inertia per length [kg m]
+RIM_GJ = 1.1e9 * RIM_D * RIM_T ** 3 / 3.0 * (1.0 - 0.63 * RIM_T / RIM_D)   # rim twisting stiffness (maple, rectangular section) [N m^2]
+RIM_IP = 650.0 * RIM_T * RIM_D * (RIM_T ** 2 + RIM_D ** 2) / 12.0   # rim rotary inertia per length [kg m]
 PIN_OFFSET = 0.008          # strings bear on the bridge's front pins, ~8 mm on the speaking-length side of its centre line
 LISTEN = {"L": (1.40, -1.20, 1.00), "R": (0.00, -1.20, 1.00)}     # the player's seat, a stereo pair a little apart
 MICS = {"L": (1.05, 0.55, 0.35), "R": (0.40, 0.25, 0.35)}         # close pair over the strings, near the hammers
