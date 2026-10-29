@@ -91,7 +91,10 @@ RIM_GJ = 1.1e9 * RIM_D * RIM_T ** 3 / 3.0 * (1.0 - 0.63 * RIM_T / RIM_D)   # rim
 RIM_IP = 650.0 * RIM_T * RIM_D * (RIM_T ** 2 + RIM_D ** 2) / 12.0   # rim rotary inertia per length [kg m]
 PIN_OFFSET = 0.008          # strings bear on the bridge's front pins, ~8 mm on the speaking-length side of its centre line
 LISTEN = {"L": (1.40, -1.20, 1.00), "R": (0.00, -1.20, 1.00)}     # the player's seat, a stereo pair a little apart
-MICS = {"L": (1.00, 0.90, 0.35), "R": (0.45, 0.35, 0.35)}         # close pair over the strings: treble near the hammers, bass further in over the bass bridge (the D's board is 1.95 m long)
+MICS = {"L": (0.70, 0.60, 0.35), "R": (0.40, 0.30, 0.35)}         # close pair 35 cm over the board: bass/tenor strings further in, treble near the hammers
+# (The pair used to stand at (1.00, 0.90) and (0.45, 0.35): the first is 6 cm under the lid near the
+# spine, where the lid's reflection cancels 1.4 and 4.3 kHz and the case air is at its most confined.
+# Both now stand under at least 0.3 m of clear air, where a recording pair can actually be put.)
 LID_ANGLE = math.radians(42.0)   # full stick
 LID_HINGE_X = A + 0.02           # the hinge line, just outside the spine
 LID_GAP_MIN = 0.10               # the rim-to-lid gap along the bentside counts as open above this [m]
@@ -993,6 +996,21 @@ def main():
     lidV = Vl @ Ql if nl else np.zeros((0, len(f)))         # lid node motion along its normal, per coupled mode
     frontV = vfront @ Q                                     # frame front bar, per coupled mode
     twistQ = vtwist @ Q                                     # rim twist angle at each ring node, per coupled mode
+    # The case air's own pressure, per coupled mode: the standing waves under the lid that a
+    # microphone inside the case stands in (see pressure_at)
+    Pair = Vc[nsl:nsl + nair] / nm                          # modal pressures (air modes, coupled modes) per unit modal displacement
+    fAirTop = float(min(fa0.max(), fa1.max()))              # the air families' reach
+    def cavity_pressure(pt):
+        """pressure at a point inside the case per unit modal velocity, in the radiation sums' units"""
+        x_, y_, z_ = float(pt[0]), float(pt[1]), float(pt[2])
+        psi_m = np.asarray(interp_rows(np.array([x_]), np.array([y_])) @ psiFull).ravel()
+        h_m = RIM_TOP + max(0.0, LID_HINGE_X - x_) * math.tan(LID_ANGLE)          # lid height over the point
+        prof = np.ones(nair); prof[len(fa0):] = math.cos(math.pi * min(z_, h_m) / h_m)   # the half-wave family's profile
+        pc = (psi_m * prof) @ Pair                                                 # Pa per unit modal displacement
+        # per unit modal velocity (1 / j omega), in the free-field sums' units (which carry the
+        # near field's j rho c / 4 pi): a sealed cavity pushes back with the displacement, the
+        # free near field with the acceleration, so the sign flips
+        return -pc / (2 * math.pi * f) * (4 * math.pi / (RHO_AIR * C_AIR))
 
     # Bridge zone points: the middle of each group of keys along each bridge, on the line of the
     # front bridge pins where the strings actually bear (a little in front of the bridge's
@@ -1062,8 +1080,16 @@ def main():
     RIM_H = RIM_TOP + SKIRT
     ds_ring = ds
     ringXY = np.stack([rp[:, 0] * DX, rp[:, 1] * DX, np.full(len(rp), 0.5 * RIM_H - SKIRT)], 1)
-    def pressure_at(pt, lid=True, floor=True):
+    def pressure_at(pt, lid=True, floor=True, cavity=False):
         pt = np.array(pt)
+        # A microphone inside the case stands in the case air's standing waves: below the air
+        # families' reach it hears the solved air's pressure (the lid's and the board's sound
+        # are in it), above it the free-field sums take over; the sound coming back up from the
+        # underside is added either way
+        inCase = bool(cavity) and float(pt[2]) < RIM_TOP + 0.5 and bool(inside(float(pt[0]), float(pt[1])))
+        if inCase:
+            pcav = cavity_pressure(pt)
+            blend = np.clip((f - 0.6 * fAirTop) / (0.3 * fAirTop), 0.0, 1.0)         # 0 = all cavity, 1 = all free field
         # Sound from the underside gets out under the rim's skirt; to a listener inside or above
         # the case it then comes back up over the rim top (the mics), to the seat it comes
         # straight on from under the skirt
@@ -1097,13 +1123,28 @@ def main():
                 wl = lidV[:, i] * dAl
                 p_ += sgnL * np.sum(wl * (np.exp(-1j * kk * rl1) / rl1 - np.exp(-1j * kk * rl2) / rl2))
             p_ *= kk
+            if inCase:
+                back = -kk * np.sum(w * np.exp(-1j * kk * r2) / r2)                  # the underside's sound, over the rim
+                p_ = blend[i] * p_ + (1.0 - blend[i]) * (pcav[i] + back)
             out[i] = abs(p_) * (-1 if p_.real < 0 else 1)
         return out
     radL, radR = pressure_at(LISTEN["L"]), pressure_at(LISTEN["R"])
-    micL, micR = pressure_at(MICS["L"], floor=False), pressure_at(MICS["R"], floor=False)
+    # The case air's own pressure at the mics (MIC_AIR=1) is solved but not used yet: the air
+    # families keep the standing waves across the open front and bentside as lightly damped
+    # modes (loss 0.16-0.3), where a wave really just leaves, so the mics would hear a 15 dB
+    # mountain at 100-400 Hz. An absorbing boundary on the openings comes first.
+    MIC_AIR = bool(os.environ.get("MIC_AIR"))
+    micL, micR = pressure_at(MICS["L"], floor=False, cavity=MIC_AIR), pressure_at(MICS["R"], floor=False, cavity=MIC_AIR)
+    micLff, micRff = (pressure_at(MICS["L"], floor=False), pressure_at(MICS["R"], floor=False)) if MIC_AIR else (micL, micR)
+    if MIC_AIR:
+        sel_ = (f > 100) & (f < 0.6 * fAirTop)
+        print(f"mics in the case air: air families reach {fAirTop:.0f} Hz; 100 Hz to {0.6 * fAirTop:.0f} Hz the case air's pressure is "
+              f"{10 * np.log10(np.mean(micL[sel_] ** 2 + micR[sel_] ** 2) / np.mean(micLff[sel_] ** 2 + micRff[sel_] ** 2)):+.1f} dB on the free field's, "
+              f"same sign on {np.mean(np.sign(micL[sel_]) == np.sign(micLff[sel_])) * 100:.0f}% of the modes")
     vol = np.array([np.sum(full[bn, i]) for i in range(len(f))])
     if os.environ.get("DUMP_RAD"):   # the radiation step's inputs, for experiments on the radiation model alone
         np.savez(os.environ["DUMP_RAD"], f=f, w=full[bn], bx=bx, by=by_, dE=dE, area=area, twistQ=twistQ, ringXY=ringXY, ds_ring=ds_ring,
+                 micL=micL, micR=micR, micLff=micLff, micRff=micRff, Pair=Pair, psiFull=psiFull, nEven=len(fa0), fa=fa, fAirTop=fAirTop, airE=airE, DX=DX, nx=nx, ny=ny,
                  lidV=lidV, P3l=P3l, dEl=dEl, dAl=dAl, phi=phi, phiH=phiH, etaS=etaS, A=A, B=B, LID_HINGE_X=LID_HINGE_X, LID_TAIL=LID_TAIL, LID_FRONT=LID_FRONT,
                  RIM_TOP=RIM_TOP, FLOOR_GAP=FLOOR_GAP, LID_ANGLE=LID_ANGLE, outline=np.array(GEOM["outline"]) if GEOM.get("outline") else np.zeros((0, 2)))
 
@@ -1140,26 +1181,30 @@ def main():
     inert = (lidShare > 0.5) & (pnorm < 0.1 * np.median(pnorm))
     keepB = ~isFrame & ~inert
     print(f"lid-only modes left out: {int(inert.sum())}; board table {int(keepB.sum())} modes")
-    with open(args.out, "w") as fo:
-        fo.write("// Generated by tools/soundboard/build_board.py: do not edit by hand.\n")
-        fo.write(f"// Body modes below {F_TOP:.0f} Hz of a Steinway D: tapered, ribbed soundboard with bridges, crown and\n")
-        fo.write("// downbearing, coupled to its rim (bending and twist), back braces, legs, iron frame and the air above\n")
-        fo.write("// and below the board, all solved together. Per mode: frequency [Hz]; shape at each bridge zone\n")
-        fo.write("// (front pin line; unit modal mass, 1/sqrt(kg)); sound pressure at the player's seat (left,\n")
-        fo.write("// right) and at a close mic pair (left, right), with the open board's short circuit, the floor\n")
-        fo.write("// and the lid (relative units); net volume; loss factors: radiation, structure (from the\n")
-        fo.write("// materials it strains), air (leaving the open case); and the rim and air shares of the mode.\n")
-        fo.write(f"static constexpr int kBoardModeCount = {int(keepB.sum())};\n")
-        fo.write(f"static constexpr int kBoardZones = {N_BASS + N_TREBLE};\n")
-        fo.write("struct BoardModeData { float f; float phi[%d]; float phiH[%d]; float radLeft, radRight, micLeft, micRight, volume, "
-                 "radiationLoss, structLoss, airLoss, rimShare, airShare; };\n" % (N_BASS + N_TREBLE, N_BASS + N_TREBLE))
-        fo.write("static const BoardModeData kBoardModes[kBoardModeCount] = {\n")
-        for i in np.flatnonzero(keepB):
-            fo.write("    { %.2ff, { %s }, { %s }, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s },\n" % (
-                f[i], ", ".join(lit(v) for v in phi[:, i]), ", ".join(lit(v) for v in phiH[:, i]), lit(radL[i]), lit(radR[i]), lit(micL[i]), lit(micR[i]),
-                lit(vol[i]), lit(etaRad[i]), lit(etaStruct[i]), lit(etaAir[i]), lit(rimShare[i] + braceShare[i]), lit(airE[i])))
-        fo.write("};\n")
-    print("wrote", args.out)
+    def write_board(path, micL, micR):
+        with open(path, "w") as fo:
+          fo.write("// Generated by tools/soundboard/build_board.py: do not edit by hand.\n")
+          fo.write(f"// Body modes below {F_TOP:.0f} Hz of a Steinway D: tapered, ribbed soundboard with bridges, crown and\n")
+          fo.write("// downbearing, coupled to its rim (bending and twist), back braces, legs, iron frame and the air above\n")
+          fo.write("// and below the board, all solved together. Per mode: frequency [Hz]; shape at each bridge zone\n")
+          fo.write("// (front pin line; unit modal mass, 1/sqrt(kg)); sound pressure at the player's seat (left,\n")
+          fo.write("// right) and at a close mic pair (left, right), with the open board's short circuit, the floor\n")
+          fo.write("// and the lid (relative units); net volume; loss factors: radiation, structure (from the\n")
+          fo.write("// materials it strains), air (leaving the open case); and the rim and air shares of the mode.\n")
+          fo.write(f"static constexpr int kBoardModeCount = {int(keepB.sum())};\n")
+          fo.write(f"static constexpr int kBoardZones = {N_BASS + N_TREBLE};\n")
+          fo.write("struct BoardModeData { float f; float phi[%d]; float phiH[%d]; float radLeft, radRight, micLeft, micRight, volume, "
+                   "radiationLoss, structLoss, airLoss, rimShare, airShare; };\n" % (N_BASS + N_TREBLE, N_BASS + N_TREBLE))
+          fo.write("static const BoardModeData kBoardModes[kBoardModeCount] = {\n")
+          for i in np.flatnonzero(keepB):
+              fo.write("    { %.2ff, { %s }, { %s }, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s },\n" % (
+                  f[i], ", ".join(lit(v) for v in phi[:, i]), ", ".join(lit(v) for v in phiH[:, i]), lit(radL[i]), lit(radR[i]), lit(micL[i]), lit(micR[i]),
+                  lit(vol[i]), lit(etaRad[i]), lit(etaStruct[i]), lit(etaAir[i]), lit(rimShare[i] + braceShare[i]), lit(airE[i])))
+          fo.write("};\n")
+        print("wrote", path)
+    write_board(args.out, micL, micR)
+    if MIC_AIR and os.environ.get("ALSO_FREEFIELD"):
+        write_board(args.out + ".freefield", micLff, micRff)      # the same solve with free-field mics, for A/B
     # Frame table: the frame-heavy body modes, their shapes where each zone's strings end
     axz = np.where(np.arange(N_BASS + N_TREBLE) < N_BASS, 1.25 - 0.08 * np.arange(N_BASS + N_TREBLE), np.array(zx))
     fidx = np.flatnonzero(isFrame & (f < 3000.0))
