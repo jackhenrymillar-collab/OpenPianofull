@@ -83,7 +83,7 @@ DOWNBEARING = 3000.0       # [N], shared along both bridges (a quarter on the ba
 # beech ~0.012, maple ~0.010, cast iron ~0.002, glue lines ~0.05, castor cups on the floor ~0.25.
 ETA = {"along": 0.007, "across": 0.018, "shear": 0.018, "rib": 0.007, "bridge": 0.012, "crown": 0.010,
        "rim": 0.010, "rimtwist": 0.010, "glue": 0.05, "leg": 0.25, "brace": 0.010, "tie": 0.05,
-       "frame": 0.002, "bolt": 0.02, "nose": 0.02, "lid": 0.02, "pinblock": 0.05, "str_damped": float(os.environ.get("ETA_SD", "0.3")), "str_free": float(os.environ.get("ETA_SF", "0.02"))}
+       "frame": 0.002, "bolt": 0.02, "bell": 0.005, "nose": 0.02, "lid": 0.02, "pinblock": 0.05, "str_damped": float(os.environ.get("ETA_SD", "0.3")), "str_free": float(os.environ.get("ETA_SF", "0.02"))}
 PLANK_W, PLANK_SPREAD = 0.12, 0.08   # the board is glued from ~12 cm planks; each plank's stiffness varies ~8%
 RIM_GJ = 1.1e9 * RIM_D * RIM_T ** 3 / 3.0 * (1.0 - 0.63 * RIM_T / RIM_D)   # rim twisting stiffness (maple, rectangular section) [N m^2]
 RIM_IP = 650.0 * RIM_T * RIM_D * (RIM_T ** 2 + RIM_D ** 2) / 12.0   # rim rotary inertia per length [kg m]
@@ -227,17 +227,23 @@ FRAME_A, FRAME_I = 0.0022, 2.6e-6          # bar section [m^2], bending [m^4] (8
 FRONT_Y = -0.05                             # the front bar, just ahead of the belly rail
 BOLT_K = 2.0e7                              # each bolt into the rim [N/m]
 PINBLOCK_K = float(os.environ.get("PINBLOCK_K", "5e7"))   # the pin block under each front-bar node [N/m]
+BELL_Y, BELL_K = 0.45, 1.0e9                # the treble bell's bolt: where along the bentside, and its stiffness (steel bolt through iron) [N/m]
 
 
 def frame_bars():
     """The frame's bar network: stiffness and mass matrices, node coordinates, bolt nodes and
     the front-bar nodes (where the strings end), ordered across."""
+    # The plate covers the whole board: its flanges run along the spine and the bentside to the
+    # tail, where the hitch-pin rail crosses, and three struts fan from the front bar to the tail
+    xs_, yt_ = A + 0.02, B - 0.05
     bars = [
-        [(0.05, FRONT_Y), (1.35, FRONT_Y)],                                   # front bar (capo, agraffes)
-        [(1.35, FRONT_Y), (1.35, 1.40)],                                      # spine flange
-        [(0.98, 1.40), (1.35, 1.40)],                                         # tail rail (hitch pins)
-        [(0.05, FRONT_Y)] + [(float(bentside(y)) + 0.04, float(y)) for y in np.linspace(0.05, 1.40, 12)],  # bentside flange
-        [(0.35, FRONT_Y), (0.98, 1.38)], [(0.75, FRONT_Y), (1.15, 1.40)], [(1.05, FRONT_Y), (1.32, 1.00)],  # struts
+        [(0.05, FRONT_Y), (xs_, FRONT_Y)],                                    # front bar (capo, agraffes)
+        [(xs_, FRONT_Y), (xs_, yt_)],                                         # spine flange
+        [(float(bentside(yt_)) + 0.04, yt_), (xs_, yt_)],                     # tail rail (hitch pins)
+        [(0.05, FRONT_Y)] + [(float(bentside(y)) + 0.04, float(y)) for y in np.linspace(0.05, yt_, 18)],  # bentside flange
+        [(0.35, FRONT_Y), (float(bentside(yt_)) + 0.12, yt_ - 0.02)],         # struts
+        [(0.75, FRONT_Y), (0.5 * (float(bentside(yt_)) + xs_), yt_)],
+        [(1.05, FRONT_Y), (xs_ - 0.03, 0.68 * yt_)],
     ]
     h = 0.04
     nodes, coords = [], []
@@ -264,11 +270,16 @@ def frame_bars():
             Mv[k] += IRON_RHO * FRAME_A * ds
     C = np.array(coords)
     # Bolts: every ~30 cm along the bars that lie on the rim (front ends, spine, bentside, tail)
-    on_rim = (np.abs(C[:, 0] - 1.35) < 0.02) | (C[:, 1] > 1.38) | (np.abs(C[:, 0] - (bentside(C[:, 1]) + 0.04)) < 0.03) | \
-             ((np.abs(C[:, 1] - FRONT_Y) < 0.01) & ((C[:, 0] < 0.1) | (C[:, 0] > 1.3)))
+    on_rim = (np.abs(C[:, 0] - xs_) < 0.02) | (C[:, 1] > yt_ - 0.02) | (np.abs(C[:, 0] - (bentside(C[:, 1]) + 0.04)) < 0.03) | \
+             ((np.abs(C[:, 1] - FRONT_Y) < 0.01) & ((C[:, 0] < 0.1) | (C[:, 0] > xs_ - 0.05)))
     bolts = np.flatnonzero(on_rim)[::6]
     front = sorted([k for k in range(n) if abs(C[k, 1] - FRONT_Y) < 0.01], key=lambda k: C[k, 0])
-    return K, Mv, C, bolts, front
+    # The treble bell: a cast-iron bell bolted under the rim at the treble bend, with a steel
+    # bolt up through it into the plate's bentside flange. It holds the plate's treble corner
+    # (where the shortest strings pull) hard onto the rim: the flange node at the bend
+    on_bent = np.flatnonzero(np.abs(C[:, 0] - (bentside(C[:, 1]) + 0.04)) < 0.03)
+    bell = int(on_bent[np.argmin(np.abs(C[on_bent, 1] - BELL_Y))])
+    return K, Mv, C, bolts, front, bell
 
 
 def lid_plate(f_top):
@@ -605,7 +616,7 @@ def main():
         tie.append((nodes[-1], nearest_ring(ex, ey)))
     Kb = Kb.tocsr()
     # --- The iron frame, bolted onto the rim (its bars and bolts, see frame_bars)
-    Kfr, Mfr, Cfr, bolts, frontNodes = frame_bars()
+    Kfr, Mfr, Cfr, bolts, frontNodes, bellNode = frame_bars()
     nfr = len(Mfr)
     # Global layout: [board nodes | brace nodes | rim twist (one per ring node) | frame nodes]
     oB, oT, oF = nf, nf + nbr, nf + nbr + nr
@@ -635,6 +646,10 @@ def main():
     # Frame bolts onto the nearest point of the rim
     bo = spring_rows([[(pos_of[rlin[nearest_ring(*Cfr[b_])]], 1.0), (oF + int(b_), -1.0)] for b_ in bolts])
     gparts["bolt"] = bo.T @ bo * BOLT_K
+    if not os.environ.get("NO_BELL"):
+        be = spring_rows([[(pos_of[rlin[nearest_ring(*Cfr[bellNode])]], 1.0), (oF + int(bellNode), -1.0)]])
+        gparts["bell"] = be.T @ be * BELL_K
+        print(f"treble bell at ({Cfr[bellNode, 0]:.2f}, {Cfr[bellNode, 1]:.2f})")
     # Nose bolts: the plate is also held down through the board onto the back braces, by two
     # or three bolts through its web where the struts pass over a brace (a spacer sets the
     # plate's height; the board has a clearance hole and is not touched). They tie the plate's
@@ -642,7 +657,7 @@ def main():
     # the rim bolts. NO_NOSE (env) leaves them out for A/B tests.
     nose = []
     if not os.environ.get("NO_NOSE"):
-        inner = [k_ for k_ in range(nfr) if Cfr[k_, 1] > 0.0 and Cfr[k_, 1] < 1.35 and Cfr[k_, 0] < 1.30
+        inner = [k_ for k_ in range(nfr) if Cfr[k_, 1] > 0.0 and Cfr[k_, 1] < B - 0.12 and Cfr[k_, 0] < A - 0.05
                  and abs(Cfr[k_, 0] - (float(bentside(Cfr[k_, 1])) + 0.04)) > 0.05]
         cands = []
         for e in range(len(ends)):
