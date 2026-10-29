@@ -793,7 +793,7 @@ void ModalPiano::buildSoundboard()
     }
 
     // Overall level: a mezzo-forte middle C peaks around -20 dBFS, fortissimo around -10
-    outputGain = 21.5 * 0.4;   // the body at full strength is ~8 dB louder
+    outputGain = 21.5 * 0.74;  // the body at full strength is ~8 dB louder; 0.4 -> 0.74 keeps the old mf loudness with the 3 m/s velocity map
     buildBridgeAdmittance();
     buildBody();
 }
@@ -1427,10 +1427,6 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
     const double letOff = 2.0e-3 * (1.0 + 0.15 * rng.symmetric()) * (1.0 + 0.5 * ageFactor);
     hammerVelocity = std::sqrt (std::max (0.0025, hammerVelocity * hammerVelocity - 2.0 * 9.81 * letOff));
 
-    // Above about MIDI velocity 100 the felt is squeezed into its densest state and its
-    // force law steepens further, so the hardest blows get disproportionately brighter
-    // (in the bass the big, soft-cored heads stay compliant: the recorded bass brightens far less)
-    ks.hammer.exponentBoost = 0.5 * std::clamp ((hammerVelocity - 3.3) / 1.7, 0.0, 1.0) * std::clamp ((k - 15) / 25.0, 0.0, 1.0);
     ks.hammer.softFelt = softPedal;
     // Felt memory between blows: felt squeezed by a blow takes a fraction of a second to
     // spring back, so a key repeated quickly meets the strings with thinner, harder felt.
@@ -1625,7 +1621,7 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
     // with a gentler force law, so the tone is darker as well as quieter
     const double q0 = key.feltStiffness * hardness * (1.0 + 1.5 * ageFactor) * (1.0 + 0.9 * groove * (1.0 - h.softFelt))
                       * (1.0 - 0.35 * h.softFelt) * (1.0 + 0.4 * h.feltSet);
-    const double p = key.feltExponent + h.exponentBoost;   // the unpacked felt beside the grooves is softer (q0 above), not a different law
+    const double p = key.feltExponent;   // the unpacked felt beside the grooves is softer (q0 above), not a different law
     // Felt has memory (Stulov 1995): squeezed quickly it is stiff; squeezed slowly it has
     // time to relax and gives way. So a gentle touch makes a long, soft contact that only
     // excites the low partials, and a hard blow a short, stiff one that brings out the top.
