@@ -1687,11 +1687,13 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
             });
         }
 
-        // Hammer flight (symplectic Euler). The hammer is not rigid: its felt tip sits on a
-        // wooden head that rocks on the shank (about 1.5 kHz), and the shank bends (about
-        // 400 Hz). During the first instants of contact only the tip and head push on the
-        // string; the rest of the mass arrives through the flexing shank a little later,
-        // which rounds off the force pulse (Askenfelt & Jansson 1991; Giordano & Millis 2004).
+        // Hammer flight (symplectic Euler). Rigid by default: with Chabassier's felt law as
+        // measured, a rigid hammer gives the published contact durations. Optionally the felt
+        // tip sits on a wooden head that rocks on the shank (about 1.5 kHz) and the shank bends
+        // (about 400 Hz), so the rest of the mass arrives a little later and rounds off the
+        // force pulse (Askenfelt & Jansson 1991; Giordano & Millis 2004); but the tip-head spring
+        // is about as stiff as the felt, so this lengthens contacts and flattens the tone's
+        // brightening with velocity (see Settings::shankFlex).
         if (settings.shankFlex > 0)
         {
             const double mt = 0.3 * key.hammerMass, mh = 0.45 * key.hammerMass, ms = 0.25 * key.hammerMass;

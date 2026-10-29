@@ -1,4 +1,3 @@
-#include <cstdlib>
 /*
 OpenPiano: an open source piano engine based on physical modeling
 Copyright (C) 2021-2022 Michele Perrone, and contributors
@@ -60,11 +59,12 @@ double PianoInstrument::hammerVelocityFor (int velocity) const
 {
     // A keyboard rarely sends above ~100, so the plugin's Dynamics knob defaults to 0.8 (lighter touch)
     const double x = std::pow (std::clamp (velocity, 1, 127) / 127.0, (double) controls.dynamicsCurve);
-    // Hammer speed from 0.7 m/s (velocity 1) to 3.0 m/s (127), bent by 1.15. Fitted on the
-    // Steinway D physics so that loudness and brightness against velocity follow the
-    // recorded grand's layers at velocities 40, 60, 92 and 124 (1.0, 1.3, 1.9 and 2.9 m/s):
-    // the loudness steps between the layers match within 0.6 dB rms in every register.
-    return 0.7 * std::pow (3.0 / 0.7, std::pow (x, 1.15));
+    // Hammer speed from 0.75 m/s (velocity 1) to 3.7 m/s (127), bent by 1.2, within the 0.5-5 m/s
+    // of a played grand. Fitted on the Steinway D physics with its rigid hammer and Chabassier's
+    // felt so that loudness against velocity follows the recorded grand's layers at velocities
+    // 40, 60, 92 and 124 (1.1, 1.4, 2.2 and 3.5 m/s): the loudness steps between the layers match
+    // within 1.0 dB rms over the registers; brightness is left to the hammer physics.
+    return 0.75 * std::pow (3.7 / 0.75, std::pow (x, 1.2));
 }
 
 void PianoInstrument::noteOn (int midiNote, int velocity)

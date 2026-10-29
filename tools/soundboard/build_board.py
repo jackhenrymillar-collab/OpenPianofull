@@ -1080,7 +1080,34 @@ def main():
     RIM_H = RIM_TOP + SKIRT
     ds_ring = ds
     ringXY = np.stack([rp[:, 0] * DX, rp[:, 1] * DX, np.full(len(rp), 0.5 * RIM_H - SKIRT)], 1)
-    def pressure_at(pt, lid=True, floor=True, cavity=False):
+    # Radiation damping: power radiated over the whole sphere, both faces, with the short circuit
+    th = (np.arange(8) + 0.5) / 8 * (math.pi / 2)
+    ph = np.arange(24) / 24 * 2 * math.pi
+    TH, PH = np.meshgrid(th, ph, indexing="ij")
+    dOmega = (math.pi / 2 / 8) * (2 * math.pi / 24) * np.sin(TH).ravel()
+    ux = (np.sin(TH) * np.cos(PH)).ravel(); uy = (np.sin(TH) * np.sin(PH)).ravel()
+    etaRad = np.zeros(len(f))
+    for i in range(len(f)):
+        kk = k[i]
+        w = full[bn, i] * area * (1.0 - np.exp(-1j * kk * dE))
+        W = np.exp(-1j * kk * (np.outer(ux, bx) + np.outer(uy, by_))) @ w
+        omega = 2 * math.pi * f[i]
+        etaRad[i] = 2.0 * omega * RHO_AIR / (2 * math.pi ** 2 * C_AIR) * np.sum(np.abs(W) ** 2 * dOmega) / 2.0
+        if nl:                                                               # the lid radiates too, in its own plane
+            wl = lidV[:, i] * dAl * (1.0 - np.exp(-1j * kk * dEl))
+            Wl = np.exp(-1j * kk * (np.outer(ux, syl[:, 0]) + np.outer(uy, syl[:, 1]))) @ wl
+            etaRad[i] += 2.0 * omega * RHO_AIR / (2 * math.pi ** 2 * C_AIR) * np.sum(np.abs(Wl) ** 2 * dOmega) / 2.0
+    print("radiation loss factor: median %.4f, 10-90%% %.4f-%.4f" % (np.median(etaRad), *np.percentile(etaRad, [10, 90])))
+    # Inside the case the sound is not free: what the board and lid radiate bounces about under
+    # the lid before it leaves through the front and the bentside gap, so a microphone there also
+    # stands in a diffuse field. Per mode and unit modal velocity, the radiated power is
+    # eta_rad omega / 2, and a leaky enclosure with absorbing area A (the openings) holds the
+    # diffuse mean-square pressure 4 rho c P / A (Sabine); as an amplitude, in the free-field
+    # sums' units (4 pi / rho c per unit velocity). It adds to the direct sound in power, with
+    # no phase of its own
+    A_open = math.pi * aOpen ** 2
+    pDiffuse = math.sqrt(2.0) * np.sqrt(2.0 * RHO_AIR * C_AIR * etaRad * (2 * math.pi * f) / A_open) * (4 * math.pi / (RHO_AIR * C_AIR))
+    def pressure_at(pt, lid=True, floor=True, cavity=False, diffuse=False):
         pt = np.array(pt)
         # A microphone inside the case stands in the case air's standing waves: below the air
         # families' reach it hears the solved air's pressure (the lid's and the board's sound
@@ -1123,24 +1150,26 @@ def main():
                 wl = lidV[:, i] * dAl
                 p_ += sgnL * np.sum(wl * (np.exp(-1j * kk * rl1) / rl1 - np.exp(-1j * kk * rl2) / rl2))
             p_ *= kk
+            if diffuse:
+                p_ = (-1 if p_.real < 0 else 1) * math.sqrt(abs(p_) ** 2 + pDiffuse[i] ** 2)
             if inCase:
                 back = -kk * np.sum(w * np.exp(-1j * kk * r2) / r2)                  # the underside's sound, over the rim
                 p_ = blend[i] * p_ + (1.0 - blend[i]) * (pcav[i] + back)
             out[i] = abs(p_) * (-1 if p_.real < 0 else 1)
         return out
     radL, radR = pressure_at(LISTEN["L"]), pressure_at(LISTEN["R"])
-    # The case air's own pressure at the mics (MIC_AIR=1) is solved but not used yet: the air
-    # families keep the standing waves across the open front and bentside as lightly damped
-    # modes (loss 0.16-0.3), where a wave really just leaves, so the mics would hear a 15 dB
-    # mountain at 100-400 Hz. An absorbing boundary on the openings comes first.
-    MIC_AIR = bool(os.environ.get("MIC_AIR"))
-    micL, micR = pressure_at(MICS["L"], floor=False, cavity=MIC_AIR), pressure_at(MICS["R"], floor=False, cavity=MIC_AIR)
+    # The close mics stand in the case air: below the air families' reach they hear the solved
+    # air's pressure (the standing waves under the lid, the lid's and the board's sound in
+    # them); above it the free-field sums with the diffuse field under the lid. NO_MIC_AIR=1
+    # gives the old free-field mics; ALSO_FREEFIELD=1 writes them beside the table for A/B.
+    MIC_AIR = not os.environ.get("NO_MIC_AIR")
+    micL, micR = pressure_at(MICS["L"], floor=False, cavity=MIC_AIR, diffuse=MIC_AIR), pressure_at(MICS["R"], floor=False, cavity=MIC_AIR, diffuse=MIC_AIR)
     micLff, micRff = (pressure_at(MICS["L"], floor=False), pressure_at(MICS["R"], floor=False)) if MIC_AIR else (micL, micR)
     if MIC_AIR:
-        sel_ = (f > 100) & (f < 0.6 * fAirTop)
-        print(f"mics in the case air: air families reach {fAirTop:.0f} Hz; 100 Hz to {0.6 * fAirTop:.0f} Hz the case air's pressure is "
-              f"{10 * np.log10(np.mean(micL[sel_] ** 2 + micR[sel_] ** 2) / np.mean(micLff[sel_] ** 2 + micRff[sel_] ** 2)):+.1f} dB on the free field's, "
-              f"same sign on {np.mean(np.sign(micL[sel_]) == np.sign(micLff[sel_])) * 100:.0f}% of the modes")
+        for lo_, hi_ in ((60, 250), (250, 0.6 * fAirTop), (0.9 * fAirTop, 2000), (2000, 5000)):
+            sel_ = (f > lo_) & (f < hi_)
+            print(f"mics in the case air, {lo_:.0f}-{hi_:.0f} Hz: {10 * np.log10(np.mean(micL[sel_] ** 2 + micR[sel_] ** 2) / np.mean(micLff[sel_] ** 2 + micRff[sel_] ** 2)):+.1f} dB on the free field's "
+                  f"(air families reach {fAirTop:.0f} Hz; openings {A_open:.1f} m2)")
     vol = np.array([np.sum(full[bn, i]) for i in range(len(f))])
     if os.environ.get("DUMP_RAD"):   # the radiation step's inputs, for experiments on the radiation model alone
         np.savez(os.environ["DUMP_RAD"], f=f, w=full[bn], bx=bx, by=by_, dE=dE, area=area, twistQ=twistQ, ringXY=ringXY, ds_ring=ds_ring,
@@ -1154,24 +1183,6 @@ def main():
             t += ".0"
         return t + "f"
 
-    # Radiation damping: power radiated over the whole sphere, both faces, with the short circuit
-    th = (np.arange(8) + 0.5) / 8 * (math.pi / 2)
-    ph = np.arange(24) / 24 * 2 * math.pi
-    TH, PH = np.meshgrid(th, ph, indexing="ij")
-    dOmega = (math.pi / 2 / 8) * (2 * math.pi / 24) * np.sin(TH).ravel()
-    ux = (np.sin(TH) * np.cos(PH)).ravel(); uy = (np.sin(TH) * np.sin(PH)).ravel()
-    etaRad = np.zeros(len(f))
-    for i in range(len(f)):
-        kk = k[i]
-        w = full[bn, i] * area * (1.0 - np.exp(-1j * kk * dE))
-        W = np.exp(-1j * kk * (np.outer(ux, bx) + np.outer(uy, by_))) @ w
-        omega = 2 * math.pi * f[i]
-        etaRad[i] = 2.0 * omega * RHO_AIR / (2 * math.pi ** 2 * C_AIR) * np.sum(np.abs(W) ** 2 * dOmega) / 2.0
-        if nl:                                                               # the lid radiates too, in its own plane
-            wl = lidV[:, i] * dAl * (1.0 - np.exp(-1j * kk * dEl))
-            Wl = np.exp(-1j * kk * (np.outer(ux, syl[:, 0]) + np.outer(uy, syl[:, 1]))) @ wl
-            etaRad[i] += 2.0 * omega * RHO_AIR / (2 * math.pi ** 2 * C_AIR) * np.sum(np.abs(Wl) ** 2 * dOmega) / 2.0
-    print("radiation loss factor: median %.4f, 10-90%% %.4f-%.4f" % (np.median(etaRad), *np.percentile(etaRad, [10, 90])))
 
     # Modes that mostly move the frame go to the frame table; the rest to the board table
     isFrame = frameShare > 0.5

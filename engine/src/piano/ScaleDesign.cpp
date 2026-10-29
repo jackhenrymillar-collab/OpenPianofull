@@ -256,11 +256,13 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         // keyboard. No per-note voicing here: a technician's work is left to the voicing tables.
         key.hammerMass = -6.2348e-5 * n + 0.0112;
         key.feltExponent = 2.4295e-4 * n * n - 0.007703 * n + 2.337;
-        // Chabassier's felt is one power law with a hysteretic damping term; ours has a soft outer layer over
-        // the core and relaxes with time, so the same force needs a stiffer core. The factor 10 was fitted
-        // once for the whole keyboard (not per note): it gives the recorded 124-40 dynamic range (about
-        // 10 dB in the bass rising to 17 dB at the top) and the smallest brightness gap at every velocity.
-        key.feltStiffness = 10.0 * std::pow (10.0, 5.3097e-2 * n + 7.6425) * std::pow (1.0e-3, key.feltExponent);   // K per mm
+        // Chabassier's stiffness is used as measured. With a rigid hammer and no soft outer layer
+        // (see ModalPiano::Settings) it gives the published hammer-string contact durations on a
+        // D: about 2 ms at C4, 1.2 ms at C6 and 0.9 ms at C7 at mezzo-forte, 30% shorter at
+        // fortissimo (Askenfelt & Jansson 1990). The old factor of 10 was compensating for the
+        // outer layer and the hammer's internal springs, which lengthened every contact by 25-50%
+        // and linearised the blow, so the tone brightened too little with velocity.
+        key.feltStiffness = std::pow (10.0, 5.3097e-2 * n + 7.6425) * std::pow (1.0e-3, key.feltExponent);   // K per mm
         key.outerFeltDepth = lerp (1.0e-3, 0.1e-3, std::pow ((k - 1) / 87.0, 0.7));
         key.strikeRatio = kStrikeDistance[k - 1] / kLength[k - 1];   // about 0.12 of the speaking length on the D, top to bottom
         key.hammerWidth = lerp (12e-3, 5e-3, (k - 1) / 87.0);
