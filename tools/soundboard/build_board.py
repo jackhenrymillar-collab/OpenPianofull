@@ -1113,8 +1113,26 @@ def main():
     # openings' share of the enclosure's surface (board, lid, rim walls and openings)
     S_case = 2.0 * area * len(bx) + RIM_H * ds_ring * len(ringXY) + A_open
     alphaCase = A_open / S_case
-    pDiffuse = math.sqrt(2.0 * (1.0 - alphaCase)) * np.sqrt(2.0 * RHO_AIR * C_AIR * etaRad * (2 * math.pi * f) / A_open) * (4 * math.pi / (RHO_AIR * C_AIR))
-    print(f"diffuse field under the lid: openings {A_open:.1f} m2 of {S_case:.1f} m2, absorption {alphaCase:.2f}")
+    # The radiated power is taken from the same sums the mics use, integrated over a far
+    # hemisphere (both faces), so the diffuse field is in their units by construction; the
+    # loss-factor estimate above overstated it by 1.5 dB at 200 Hz rising to 6.5 dB at 2 kHz
+    R_far = 30.0
+    thF = (np.arange(6) + 0.5) / 6 * (math.pi / 2); phF = np.arange(12) / 12 * 2 * math.pi
+    P_rad = np.zeros(len(f))
+    for t_ in thF:
+        for p_ in phF:
+            ptF = np.array([0.5 * A + R_far * math.sin(t_) * math.cos(p_), 0.5 * B + R_far * math.sin(t_) * math.sin(p_), R_far * math.cos(t_)])
+            dSF = R_far * R_far * math.sin(t_) * (math.pi / 2 / 6) * (2 * math.pi / 12)
+            r1F = np.linalg.norm(nodes3 - ptF, axis=1); r2F = r1F + dE + SKIRT
+            for i in range(len(f)):
+                kk = k[i]
+                pF = kk * np.sum(full[bn, i] * area * (np.exp(-1j * kk * r1F) / r1F - np.exp(-1j * kk * r2F) / r2F))
+                P_rad[i] += abs(pF) ** 2 / (2 * RHO_AIR * C_AIR) * dSF
+    P_rad *= 2.0
+    pDiffOld = math.sqrt(2.0 * (1.0 - alphaCase)) * np.sqrt(2.0 * RHO_AIR * C_AIR * etaRad * (2 * math.pi * f) / A_open) * (4 * math.pi / (RHO_AIR * C_AIR))
+    pDiffuse = math.sqrt(2.0 * (1.0 - alphaCase)) * np.sqrt(4.0 * RHO_AIR * C_AIR * P_rad / A_open)
+    print(f"diffuse field under the lid: openings {A_open:.1f} m2 of {S_case:.1f} m2, absorption {alphaCase:.2f}; power from the far field "
+          f"(the loss-factor estimate was {np.median(20 * np.log10(pDiffOld / np.maximum(pDiffuse, 1e-30))):+.1f} dB above it, median)")
     def pressure_at(pt, lid=True, floor=True, cavity=False, diffuse=False):
         pt = np.array(pt)
         # A microphone inside the case stands in the case air's standing waves: below the air
