@@ -68,9 +68,11 @@ TIE_K = 1.0e8                                     # brace ends let into the rim 
 # that is a 180 cm2 section, taken as 12 cm wide by 15 cm deep (spruce along the grain: E 11 GPa, 450 kg/m3)
 BRACE_EI, BRACE_M = 11e9 * 0.12 * 0.15 ** 3 / 12.0, 450.0 * 0.12 * 0.15
 LEG_K = 3.0e6                                     # each leg on its castor [N/m]
-CASE_H = 0.24 + 0.08                              # rim height above the board, plus the open top's end correction [m]
+RIM_TOP = 0.09                                    # the board sits this far below the rim top on the D (plate, strings and the rim's lip above it) [m]
+SKIRT = 0.26 - RIM_TOP                            # ... and the rest of the 26 cm rim hangs below the board [m]
+CASE_H = RIM_TOP + 0.08                           # rim height above the board, plus the open top's end correction [m]
 RHO_AIR, C_AIR = 1.2, 343.0
-FLOOR_GAP = 0.62           # board underside to the floor [m] (the rim skirt hangs ~10 cm below the board, then it is open)
+FLOOR_GAP = 0.70           # board underside to the floor [m] (keys at 73 cm; the rim's skirt hangs 17 cm below the board, then it is open)
 # Crown and downbearing. The ribs are planed to an arch (radius about 20 m), so the board is a
 # shallow shell: bending it also stretches it, which stiffens the low modes. The strings press
 # the bridges down (downbearing, about 1.7% of the total string tension, ~3 kN on a C5); that
@@ -89,9 +91,8 @@ RIM_GJ = 1.1e9 * RIM_D * RIM_T ** 3 / 3.0 * (1.0 - 0.63 * RIM_T / RIM_D)   # rim
 RIM_IP = 650.0 * RIM_T * RIM_D * (RIM_T ** 2 + RIM_D ** 2) / 12.0   # rim rotary inertia per length [kg m]
 PIN_OFFSET = 0.008          # strings bear on the bridge's front pins, ~8 mm on the speaking-length side of its centre line
 LISTEN = {"L": (1.40, -1.20, 1.00), "R": (0.00, -1.20, 1.00)}     # the player's seat, a stereo pair a little apart
-MICS = {"L": (1.05, 0.55, 0.35), "R": (0.40, 0.25, 0.35)}         # close pair over the strings, near the hammers
+MICS = {"L": (1.00, 0.90, 0.35), "R": (0.45, 0.35, 0.35)}         # close pair over the strings: treble near the hammers, bass further in over the bass bridge (the D's board is 1.95 m long)
 LID_ANGLE = math.radians(42.0)   # full stick
-RIM_TOP = 0.24                   # rim top above the board [m]; the lid rests there along the spine
 LID_HINGE_X = A + 0.02           # the hinge line, just outside the spine
 LID_GAP_MIN = 0.10               # the rim-to-lid gap along the bentside counts as open above this [m]
 LID_FRONT = float(os.environ.get("LID_FRONT", "0.40"))   # the main lid's front edge: the front flap is folded back on full stick [m from the belly rail]
@@ -1057,12 +1058,16 @@ def main():
         d_edge, rr = setup
         rF = np.sqrt(C_AIR / max(fi, 1.0) * rr)
         return 0.5 * (1.0 + erf(d_edge * math.sqrt(2.0) / rF))
-    img_floor = np.stack([bx, by_, np.full_like(bx, -2 * (FLOOR_GAP + 0.13))], 1)
-    RIM_H = 0.26
+    img_floor = np.stack([bx, by_, np.full_like(bx, -2 * FLOOR_GAP)], 1)
+    RIM_H = RIM_TOP + SKIRT
     ds_ring = ds
-    ringXY = np.stack([rp[:, 0] * DX, rp[:, 1] * DX, np.full(len(rp), 0.5 * 0.26 - 0.1)], 1)
+    ringXY = np.stack([rp[:, 0] * DX, rp[:, 1] * DX, np.full(len(rp), 0.5 * RIM_H - SKIRT)], 1)
     def pressure_at(pt, lid=True, floor=True):
         pt = np.array(pt)
+        # Sound from the underside gets out under the rim's skirt; to a listener inside or above
+        # the case it then comes back up over the rim top (the mics), to the seat it comes
+        # straight on from under the skirt
+        around = 2 * SKIRT + RIM_TOP if pt[2] < RIM_TOP + 0.5 else SKIRT
         lidSetup = lid_window_setup(pt)
         # The lid panel's own sound: the listener hears the face turned towards them (its
         # motion is counted along the normal, away from the case), with the other face's
@@ -1071,7 +1076,7 @@ def main():
         rl1 = np.linalg.norm(P3l - pt, axis=1) if nl else np.zeros(0); rl2 = rl1 + dEl
         rr1 = np.linalg.norm(ringXY - pt, axis=1)
         r1 = np.linalg.norm(nodes3 - pt, axis=1)
-        r2 = r1 + dE
+        r2 = r1 + dE + around
         r3 = np.linalg.norm(img_floor - pt, axis=1) + 0.5 * dE
         r4 = np.linalg.norm(img_lid - pt, axis=1)
         out = np.zeros(len(f))
@@ -1097,6 +1102,10 @@ def main():
     radL, radR = pressure_at(LISTEN["L"]), pressure_at(LISTEN["R"])
     micL, micR = pressure_at(MICS["L"], floor=False), pressure_at(MICS["R"], floor=False)
     vol = np.array([np.sum(full[bn, i]) for i in range(len(f))])
+    if os.environ.get("DUMP_RAD"):   # the radiation step's inputs, for experiments on the radiation model alone
+        np.savez(os.environ["DUMP_RAD"], f=f, w=full[bn], bx=bx, by=by_, dE=dE, area=area, twistQ=twistQ, ringXY=ringXY, ds_ring=ds_ring,
+                 lidV=lidV, P3l=P3l, dEl=dEl, dAl=dAl, phi=phi, phiH=phiH, etaS=etaS, A=A, B=B, LID_HINGE_X=LID_HINGE_X, LID_TAIL=LID_TAIL, LID_FRONT=LID_FRONT,
+                 RIM_TOP=RIM_TOP, FLOOR_GAP=FLOOR_GAP, LID_ANGLE=LID_ANGLE, outline=np.array(GEOM["outline"]) if GEOM.get("outline") else np.zeros((0, 2)))
 
     def lit(v):
         t = "%.5g" % v
