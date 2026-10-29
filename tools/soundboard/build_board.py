@@ -1133,6 +1133,55 @@ def main():
     pDiffuse = math.sqrt(2.0 * (1.0 - alphaCase)) * np.sqrt(4.0 * RHO_AIR * C_AIR * P_rad / A_open)
     print(f"diffuse field under the lid: openings {A_open:.1f} m2 of {S_case:.1f} m2, absorption {alphaCase:.2f}; power from the far field "
           f"(the loss-factor estimate was {np.median(20 * np.log10(pDiffOld / np.maximum(pDiffuse, 1e-30))):+.1f} dB above it, median)")
+    # The case air at a microphone, driven. The coupled modes above carry the air families as
+    # undamped standing waves (their loss only shortens the coupled mode's ringing), and with
+    # the pressure released at the tongue ends the waves across the open wedge reflect in full,
+    # so a mic in them heard resonances 10 dB above what leaves the case. Here the air under
+    # the lid is solved as driven by each mode's board motion at that mode's frequency, with
+    # the openings' radiation impedance at the tongue ends: resistance rho c R with
+    # R = min(1, (k h)^2 / 2) for the opening's local height h, so long waves see a pressure
+    # release (and the tongue's end correction) and short ones simply leave. Four vertical
+    # families (uniform, and cos(v pi z / h) for v = 1..3) carry the field up to about 1.3
+    # times the air families' reach, where the free field and the diffuse field take over.
+    # Checked against the coupled air below 90 Hz (quasi-static confinement, within 1 dB).
+    fCavTop = 1.3 * fAirTop
+    _cavSel = np.flatnonzero(f < fCavTop)
+    _nfaces = np.zeros(na)
+    for q_, (i_, j_) in enumerate(aij):
+        for a_, b_ in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            ii_, jj_ = i_ + a_, j_ + b_
+            if not (0 <= ii_ < nxa and 0 <= jj_ < nya and maskA[ii_, jj_]): _nfaces[q_] += 1
+    _imp = np.flatnonzero(dirich); _hImp = hAv[_imp]; _nfImp = _nfaces[_imp]
+    _Mair = sp.diags(hAv)
+    _cavCache = {}
+    def driven_air_at(pt):
+        key = tuple(float(v) for v in pt)
+        if key in _cavCache: return _cavCache[key]
+        pts = [key] + [tuple(float(v) for v in q) for q in MICS.values() if tuple(float(v) for v in q) != key]
+        outs = {q: np.zeros(len(f), complex) for q in pts}
+        NV = 4
+        for i in _cavSel:
+            kk = k[i]
+            R_ = np.maximum(np.minimum(1.0, (kk * _hImp) ** 2 / 2.0), 1e-3)
+            dimp = np.zeros(na, complex); dimp[_imp] = 1j * kk * _hImp * _nfImp / (R_ * DX)
+            rhs = np.zeros(na, complex); rhs[bInA] = 1j * 2 * math.pi * f[i] * RHO_AIR * full[bn, i]
+            pv = []
+            for v in range(NV):
+                Aop = LapA.astype(complex) + sp.diags(dimp) - kk ** 2 * _Mair
+                if v > 0: Aop = Aop + sp.diags((v * math.pi / hAv) ** 2 * hAv)
+                pv.append(sla.spsolve(((1.0 if v == 0 else 0.5) * Aop).tocsc(), rhs))
+            for q in pts:
+                x_, y_, z_ = q
+                fx, fy = x_ / DX + pad, y_ / DX + pad; i0, j0 = int(fx), int(fy); ax, ay = fx - i0, fy - j0
+                h_m = RIM_TOP + max(0.0, LID_HINGE_X - x_) * math.tan(LID_ANGLE)
+                tot = 0j
+                for di, dj, wq in ((0, 0, (1 - ax) * (1 - ay)), (1, 0, ax * (1 - ay)), (0, 1, (1 - ax) * ay), (1, 1, ax * ay)):
+                    qq = posA[(i0 + di) * nya + (j0 + dj)]
+                    if qq >= 0: tot += wq * sum(pv[v][qq] * math.cos(v * math.pi * min(z_, h_m) / h_m) for v in range(NV))
+                outs[q][i] = tot * (4 * math.pi / (RHO_AIR * C_AIR))           # the free-field sums' units
+        for q in pts: _cavCache[q] = outs[q]
+        print(f"case air at the mics, driven: {len(_cavSel)} modes below {fCavTop:.0f} Hz, {len(_imp)} opening nodes")
+        return _cavCache[key]
     def pressure_at(pt, lid=True, floor=True, cavity=False, diffuse=False):
         pt = np.array(pt)
         # A microphone inside the case stands in the case air's standing waves: below the air
@@ -1141,8 +1190,8 @@ def main():
         # underside is added either way
         inCase = bool(cavity) and float(pt[2]) < RIM_TOP + 0.5 and bool(inside(float(pt[0]), float(pt[1])))
         if inCase:
-            pcav = cavity_pressure(pt)
-            blend = np.clip((f - 0.6 * fAirTop) / (0.3 * fAirTop), 0.0, 1.0)         # 0 = all cavity, 1 = all free field
+            pcav = cavity_pressure(pt) if os.environ.get("OLD_CAVITY") else driven_air_at(pt)
+            blend = np.clip((f - fAirTop) / (0.3 * fAirTop), 0.0, 1.0)               # 0 = all cavity, 1 = all free field
         # Sound from the underside gets out under the rim's skirt; to a listener inside or above
         # the case it then comes back up over the rim top (the mics), to the seat it comes
         # straight on from under the skirt
@@ -1201,7 +1250,8 @@ def main():
         np.savez(os.environ["DUMP_RAD"], f=f, w=full[bn], bx=bx, by=by_, dE=dE, area=area, twistQ=twistQ, ringXY=ringXY, ds_ring=ds_ring,
                  micL=micL, micR=micR, micLff=micLff, micRff=micRff, Pair=Pair, psiFull=psiFull, nEven=len(fa0), fa=fa, fAirTop=fAirTop, airE=airE, DX=DX, nx=nx, ny=ny,
                  lidV=lidV, P3l=P3l, dEl=dEl, dAl=dAl, phi=phi, phiH=phiH, etaS=etaS, A=A, B=B, LID_HINGE_X=LID_HINGE_X, LID_TAIL=LID_TAIL, LID_FRONT=LID_FRONT,
-                 RIM_TOP=RIM_TOP, FLOOR_GAP=FLOOR_GAP, LID_ANGLE=LID_ANGLE, outline=np.array(GEOM["outline"]) if GEOM.get("outline") else np.zeros((0, 2)))
+                 RIM_TOP=RIM_TOP, FLOOR_GAP=FLOOR_GAP, LID_ANGLE=LID_ANGLE, outline=np.array(GEOM["outline"]) if GEOM.get("outline") else np.zeros((0, 2)),
+                 LapA_data=LapA.data, LapA_indices=LapA.indices, LapA_indptr=LapA.indptr, hAv=hAv, dirich=dirich, bInA=bInA, aij=aij, pad=pad, nxa=nxa, nya=nya, SKIRT=SKIRT, LID_GAP_MIN=LID_GAP_MIN)
 
     def lit(v):
         t = "%.5g" % v
