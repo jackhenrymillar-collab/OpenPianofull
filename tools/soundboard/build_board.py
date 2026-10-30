@@ -133,6 +133,10 @@ def load_geometry(path):
     if "grain_deg" in g: G["GRAIN"] = math.radians(float(g["grain_deg"]))
     if "A" in g: G["LID_HINGE_X"] = A + 0.02
     if "B" in g: G["LID_TAIL"] = B + 0.10
+    if "case_outer" in g:
+        co_ = np.asarray(g["case_outer"], float)
+        G["LID_HINGE_X"] = float(co_[:, 0].max())        # hinged on the spine's outer edge
+        G["LID_TAIL"] = float(co_[:, 1].max())           # and as long as the case
     if "rib_w" in g or "rib_t" in g:
         G["RIB_EI"] = 2.0 * E_L * RIB_W * RIB_T ** 3 / 12.0
         G["RIB_M"] = RHO * RIB_W * RIB_T
@@ -177,6 +181,42 @@ def inside(x, y):
         x, y = np.asarray(x, float), np.asarray(y, float)
         return Path(np.asarray(GEOM["outline"], float)).contains_points(np.column_stack([x.ravel(), y.ravel()])).reshape(x.shape)
     return (y >= 0) & (y <= B) & (x <= A) & (x >= bentside(y))
+
+
+def _poly_area(poly):
+    p = np.asarray(poly, float)
+    return 0.5 * abs(np.sum(p[:, 0] * np.roll(p[:, 1], -1) - np.roll(p[:, 0], -1) * p[:, 1]))
+
+
+def _min_x_crossing(poly, y, default):
+    pts = np.asarray(poly, float)
+    y = np.asarray(y, float)
+    out = np.full(y.shape, default, float)
+    for (x0, y0), (x1, y1) in zip(pts, np.roll(pts, -1, axis=0)):
+        if y0 == y1:
+            continue
+        u = (y - min(y0, y1)) / abs(y1 - y0)
+        hit = (u >= 0) & (u <= 1)
+        xc = x0 + (x1 - x0) * (y - y0) / (y1 - y0)
+        out = np.where(hit, np.minimum(out, xc), out)
+    return out
+
+
+def lid_edge_x(y):
+    """Where the lid's free edge sits over the treble side: the case's outer edge when it is
+    traced (the lid covers the whole case), else 4 cm in from the board edge as before."""
+    if "case_outer" in GEOM:
+        return _min_x_crossing(GEOM["case_outer"], y, A)
+    return np.asarray(bentside(y), float) - 0.04
+
+
+def inside_case(x, y):
+    """Inside the rim's inner face (the air over the board reaches out to it)."""
+    if "case_inner" not in GEOM:
+        return inside(x, y)
+    from matplotlib.path import Path
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    return Path(np.asarray(GEOM["case_inner"], float)).contains_points(np.column_stack([x.ravel(), y.ravel()])).reshape(x.shape) | inside(x, y)
 
 
 def scale_lengths():
@@ -242,7 +282,15 @@ def frame_bars():
     # The plate covers the whole board: its flanges run along the spine and the bentside to the
     # tail, where the hitch-pin rail crosses, and three struts fan from the front bar to the tail
     xs_, yt_ = A + 0.02, B - 0.05
-    bars = [
+    traced = "frame_bars" in GEOM
+    if traced:
+        # bars traced from a photo of the plate: the first is the front bar (capo, agraffes);
+        # flanges named bentside/tail lie on the rim
+        bars = [[tuple(p) for p in b] for b in GEOM["frame_bars"]]
+        names = GEOM.get("frame_bar_names", [""] * len(bars))
+    else:
+        names = ["front", "spine", "tail", "bentside", "strut", "strut", "strut"]
+        bars = [
         [(0.05, FRONT_Y), (xs_, FRONT_Y)],                                    # front bar (capo, agraffes)
         [(xs_, FRONT_Y), (xs_, yt_)],                                         # spine flange
         [(float(bentside(yt_)) + 0.04, yt_), (xs_, yt_)],                     # tail rail (hitch pins)
@@ -250,7 +298,7 @@ def frame_bars():
         [(0.35, FRONT_Y), (float(bentside(yt_)) + 0.12, yt_ - 0.02)],         # struts
         [(0.75, FRONT_Y), (0.5 * (float(bentside(yt_)) + xs_), yt_)],
         [(1.05, FRONT_Y), (xs_ - 0.03, 0.68 * yt_)],
-    ]
+        ]
     h = 0.04
     nodes, coords = [], []
     def node_at(x, y):
@@ -261,6 +309,20 @@ def frame_bars():
     chains = []
     for pts_ in bars:
         P_ = np.array(pts_)
+        if traced:
+            # every traced vertex is a node (that is where bars meet), segments split to <= h
+            xs, ys = [P_[0, 0]], [P_[0, 1]]
+            for (x0, y0), (x1, y1) in zip(P_[:-1], P_[1:]):
+                m_ = max(1, int(math.ceil(math.hypot(x1 - x0, y1 - y0) / h)))
+                for j in range(1, m_ + 1):
+                    xs.append(x0 + (x1 - x0) * j / m_); ys.append(y0 + (y1 - y0) * j / m_)
+            ch = []
+            for x, y in zip(xs, ys):
+                k = node_at(x, y)
+                if not ch or ch[-1] != k:
+                    ch.append(k)
+            chains.append((ch, None))
+            continue
         seg = np.hypot(*np.diff(P_, axis=0).T); s_ = np.concatenate([[0], np.cumsum(seg)])
         n_ = max(3, int(s_[-1] / h) + 1)
         si = np.linspace(0, s_[-1], n_)
@@ -268,24 +330,163 @@ def frame_bars():
         chains.append(([node_at(x, y) for x, y in zip(xs, ys)], s_[-1] / (n_ - 1)))
     n = len(coords)
     K = np.zeros((n, n)); Mv = np.zeros(n)
-    for ch, ds in chains:
+    Cn = np.array(coords)
+    for (ch, ds), nm in zip(chains, names):
+        if ds is None:
+            # the flanges on the rim and the hitch-pin rail are flat strips, about half the
+            # section of the 8 cm deep struts and a quarter of their bending stiffness
+            sa, si_ = (0.5, 0.25) if nm in ("bentside", "tail", "spine", "tenor_hitch") else (1.0, 1.0)
+            # uneven spacing: curvature at b from its two neighbours, energy EI k^2 (d1 + d2) / 2
+            for a, b, c in zip(ch[:-2], ch[1:-1], ch[2:]):
+                d1 = float(np.hypot(*(Cn[b] - Cn[a]))); d2 = float(np.hypot(*(Cn[c] - Cn[b])))
+                v = np.zeros(n); v[a] += 2 / (d1 * (d1 + d2)); v[c] += 2 / (d2 * (d1 + d2)); v[b] -= v[a] + v[c]
+                K += np.outer(v, v) * IRON_E * FRAME_I * si_ * (d1 + d2) / 2
+            for a, b in zip(ch[:-1], ch[1:]):
+                d_ = float(np.hypot(*(Cn[b] - Cn[a])))
+                Mv[a] += IRON_RHO * FRAME_A * sa * d_ / 2; Mv[b] += IRON_RHO * FRAME_A * sa * d_ / 2
+            continue
         for a, b, c in zip(ch[:-2], ch[1:-1], ch[2:]):
             v = np.zeros(n); v[a] += 1; v[b] -= 2; v[c] += 1
             K += np.outer(v, v) * IRON_E * FRAME_I / ds ** 3
         for k in ch:
             Mv[k] += IRON_RHO * FRAME_A * ds
+    n_bar = n
+    if traced and GEOM.get("plate_mass"):
+        # The traced bars carry the section of 8 cm deep ribbed struts everywhere, which made
+        # the plate far heavier than published (over 300 lb to about 450 lb for a concert grand).
+        # The cast section is thinner than that: scale the bars' section (area and bending
+        # stiffness together, a thinner rib of the same depth) so the plate with its webs
+        # weighs the target.
+        mweb = 0.0
+        if GEOM.get("plate_webs") and not os.environ.get("NO_WEB"):
+            from matplotlib.path import Path as _P
+            for web in GEOM["plate_webs"]:
+                a_ = _poly_area(web["outline"]) - sum(math.pi * r_ * r_ for _, _, r_ in web.get("holes", [])) \
+                    - sum(_poly_area(w_) for w_ in web.get("windows", []))
+                mweb += IRON_RHO * WEB_T * a_
+        sc_ = (float(GEOM["plate_mass"]) - mweb) / Mv.sum()
+        print(f"plate mass: bars {Mv.sum():.0f} kg traced at full section, scaled x{sc_:.2f} so bars + webs ({mweb:.0f} kg) = {float(GEOM['plate_mass']):.0f} kg")
+        K *= sc_; Mv *= sc_
+    if traced and GEOM.get("plate_webs") and not os.environ.get("NO_WEB"):
+        K, Mv, coords = add_webs(K, Mv, coords)
+    else:
+        K = sp.csr_matrix(K)
     C = np.array(coords)
-    # Bolts: every ~30 cm along the bars that lie on the rim (front ends, spine, bentside, tail)
-    on_rim = (np.abs(C[:, 0] - xs_) < 0.02) | (C[:, 1] > yt_ - 0.02) | (np.abs(C[:, 0] - (bentside(C[:, 1]) + 0.04)) < 0.03) | \
-             ((np.abs(C[:, 1] - FRONT_Y) < 0.01) & ((C[:, 0] < 0.1) | (C[:, 0] > xs_ - 0.05)))
-    bolts = np.flatnonzero(on_rim)[::6]
-    front = sorted([k for k in range(n) if abs(C[k, 1] - FRONT_Y) < 0.01], key=lambda k: C[k, 0])
+    FRAME_INFO["rim_nodes"] = sorted({k for (ch, _), nm in zip(chains, names) if nm in ("front", "spine", "tail", "bentside") for k in ch})
+    if traced:
+        # the bolts where the photo shows them (on the flanges and the front corners)
+        bolts = sorted({int(np.argmin(np.hypot(C[:n_bar, 0] - bx, C[:n_bar, 1] - by))) for bx, by in GEOM["frame_bolts"]})
+        front = sorted(chains[0][0], key=lambda k: C[k, 0])
+        on_bent = np.array(chains[names.index("bentside")][0])
+    else:
+        # Bolts: every ~30 cm along the bars that lie on the rim (front ends, spine, bentside, tail)
+        on_rim = (np.abs(C[:, 0] - xs_) < 0.02) | (C[:, 1] > yt_ - 0.02) | (np.abs(C[:, 0] - (bentside(C[:, 1]) + 0.04)) < 0.03) | \
+                 ((np.abs(C[:, 1] - FRONT_Y) < 0.01) & ((C[:, 0] < 0.1) | (C[:, 0] > xs_ - 0.05)))
+        bolts = np.flatnonzero(on_rim)[::6]
+        front = sorted([k for k in range(n) if abs(C[k, 1] - FRONT_Y) < 0.01], key=lambda k: C[k, 0])
+        on_bent = np.flatnonzero(np.abs(C[:, 0] - (bentside(C[:, 1]) + 0.04)) < 0.03)
     # The treble bell: a cast-iron bell bolted under the rim at the treble bend, with a steel
     # bolt up through it into the plate's bentside flange. It holds the plate's treble corner
     # (where the shortest strings pull) hard onto the rim: the flange node at the bend
-    on_bent = np.flatnonzero(np.abs(C[:, 0] - (bentside(C[:, 1]) + 0.04)) < 0.03)
     bell = int(on_bent[np.argmin(np.abs(C[on_bent, 1] - BELL_Y))])
     return K, Mv, C, bolts, front, bell
+
+
+FRAME_INFO = {}
+
+# The plate's webs: the solid cast-iron panels between the struts and flanges (on a D, the big
+# web over the treble side with its round openings, and the bass tail corner), as thin iron
+# plates on a grid. The bars running over and along a web are cast with it: each bar node there
+# is tied to the web under it.
+WEB_T = float(os.environ.get("WEB_T", "0.008"))     # web thickness [m]
+WEB_DX, WEB_NU, WEB_TIE_K = 0.02, 0.26, 1.0e9
+
+
+def add_webs(Kbar, Mbar, coords):
+    from matplotlib.path import Path
+    nb = len(Mbar)
+    coords = list(coords)
+    Cb = np.array(coords)
+    d = WEB_DX
+    Dw = IRON_E * WEB_T ** 3 / (12.0 * (1.0 - WEB_NU ** 2))
+    madd, blocks, ties = [], [], []
+    for web in GEOM["plate_webs"]:
+        poly = np.asarray(web["outline"], float)
+        lo = poly.min(0) - d; hi = poly.max(0) + d
+        xs = np.arange(lo[0], hi[0] + 1e-9, d); ys = np.arange(lo[1], hi[1] + 1e-9, d)
+        X, Y = np.meshgrid(xs, ys, indexing="ij")
+        pts = np.column_stack([X.ravel(), Y.ravel()])
+        m = Path(poly).contains_points(pts)
+        for hx, hy, hr in web.get("holes", []):
+            m &= np.hypot(pts[:, 0] - hx, pts[:, 1] - hy) > hr
+        for w in web.get("windows", []):
+            m &= ~Path(np.asarray(w, float)).contains_points(pts)
+        m = m.reshape(X.shape)
+        inner = ndimage.binary_erosion(m, structure=np.ones((3, 3)))
+        # keep only the nodes some curvature stencil reaches (no loose nodes)
+        foot = np.zeros_like(m)
+        for (i, j) in np.argwhere(inner):
+            for di, dj in ((0, 0), (-1, 0), (1, 0), (0, -1), (0, 1), (1, 1)):
+                foot[i + di, j + dj] = True
+        m &= foot
+        gid = -np.ones(X.shape, int)
+        for (i, j) in np.argwhere(m):
+            gid[i, j] = len(coords); coords.append((float(X[i, j]), float(Y[i, j]))); madd.append(IRON_RHO * WEB_T * d * d)
+        def op(stencil):
+            r, c, v = [], [], []
+            for k, (i, j) in enumerate(np.argwhere(inner)):
+                for (di, dj, w_) in stencil:
+                    r.append(k); c.append(gid[i + di, j + dj]); v.append(w_ / d ** 2)
+            return r, c, v
+        blocks.append((op([(-1, 0, 1), (0, 0, -2), (1, 0, 1)]), op([(0, -1, 1), (0, 0, -2), (0, 1, 1)]),
+                       op([(0, 0, 1), (1, 1, 1), (1, 0, -1), (0, 1, -1)]), int(inner.sum())))
+        # ties: bar nodes over the web (or on its edge) follow the web under them
+        for k in range(nb):
+            fx, fy = (Cb[k, 0] - xs[0]) / d, (Cb[k, 1] - ys[0]) / d
+            i0, j0 = int(math.floor(fx)), int(math.floor(fy))
+            if not (0 <= i0 < len(xs) - 1 and 0 <= j0 < len(ys) - 1):
+                continue
+            corners = [(i0, j0), (i0 + 1, j0), (i0, j0 + 1), (i0 + 1, j0 + 1)]
+            ax_, ay_ = fx - i0, fy - j0
+            wts = [(1 - ax_) * (1 - ay_), ax_ * (1 - ay_), (1 - ax_) * ay_, ax_ * ay_]
+            if all(gid[c_] >= 0 for c_ in corners):
+                ties.append((k, [(int(gid[c_]), w_) for c_, w_ in zip(corners, wts)]))
+            else:
+                near = [(math.hypot(Cb[k, 0] - X[c_], Cb[k, 1] - Y[c_]), int(gid[c_])) for c_ in corners if gid[c_] >= 0]
+                if near and min(near)[0] < 0.75 * d:
+                    ties.append((k, [(min(near)[1], 1.0)]))
+    n = len(coords)
+    K = sp.csr_matrix(Kbar)
+    K = sp.csr_matrix((K.data, K.indices, K.indptr), shape=(nb, nb))
+    K = sp.block_diag([K, sp.csr_matrix((n - nb, n - nb))], format="csr")
+    for (rx, ry, rxy, ni) in blocks:
+        Cxx = sp.csr_matrix((rx[2], (rx[0], rx[1])), shape=(ni, n))
+        Cyy = sp.csr_matrix((ry[2], (ry[0], ry[1])), shape=(ni, n))
+        Cxy = sp.csr_matrix((rxy[2], (rxy[0], rxy[1])), shape=(ni, n))
+        K = K + (Cxx.T @ Cxx + Cyy.T @ Cyy + WEB_NU * (Cxx.T @ Cyy + Cyy.T @ Cxx) + 2.0 * (1.0 - WEB_NU) * Cxy.T @ Cxy) * (Dw * d * d)
+    r, c, v = [], [], []
+    for t_, (k, terms) in enumerate(ties):
+        r.append(t_); c.append(k); v.append(1.0)
+        for (g, w_) in terms:
+            r.append(t_); c.append(g); v.append(-w_)
+    T = sp.csr_matrix((v, (r, c)), shape=(len(ties), n))
+    K = (K + T.T @ T * WEB_TIE_K).tocsr()
+    Mv = np.concatenate([Mbar, np.array(madd)])
+    print(f"plate webs: {n - nb} nodes ({WEB_DX * 100:.0f} cm grid, {WEB_T * 1000:.0f} mm iron), {sum(madd):.0f} kg; "
+          f"{len(ties)} bar nodes cast into them; plate {Mv.sum():.0f} kg in all")
+    FRAME_INFO["web_nodes"] = list(range(nb, n))
+    return K, Mv, coords
+
+
+def string_front(key):
+    """Where a key's strings end on the front bar (agraffe or capo): from the geometry file when
+    it gives the ends (bass A0..E2 and treble F2..C8, by key), else the generic layout."""
+    sf = GEOM.get("string_front")
+    if sf:
+        (a, b), k0, k1 = (sf["bass"], 1, 20) if key <= 20 else (sf["treble"], 21, 88)
+        u = (key - k0) / (k1 - k0)
+        return a[0] + u * (b[0] - a[0]), a[1] + u * (b[1] - a[1])
+    return None
 
 
 def lid_plate(f_top):
@@ -296,7 +497,7 @@ def lid_plate(f_top):
     in space and over the board plane, the node area and each node's distance to the lid's edge."""
     d = 0.03
     ys = np.arange(LID_FRONT, LID_TAIL + 1e-9, d)
-    smax = (LID_HINGE_X - (np.asarray(bentside(np.clip(ys, 0, B)), float) - 0.04)) / math.cos(LID_ANGLE)
+    smax = (LID_HINGE_X - lid_edge_x(np.clip(ys, 0, LID_TAIL))) / math.cos(LID_ANGLE)
     ss = np.arange(0.0, smax.max() + 1e-9, d)
     nsg, nyg = len(ss), len(ys)
     mask = ss[:, None] <= smax[None, :]                                     # (s, y)
@@ -343,7 +544,8 @@ def lid_plate(f_top):
 
 def frame_modes(zone_x, zone_is_bass, f_top):
     """The frame alone on rigid bolts (kept for reference; the body model solves it with the rim)."""
-    K, Mv, C, bolts, front = frame_bars()
+    K, Mv, C, bolts, front, _ = frame_bars()
+    K = K.toarray()
     n = len(Mv); coords = C
     for b in bolts:
         K[b, b] += BOLT_K
@@ -600,8 +802,8 @@ def main():
 
     # --- Back braces: beams under the board (not touching it) from a hub towards the tail out
     # to the rim, each with its own nodes, the ends pinned onto the rim and the hub shared
-    hub = np.array([0.70, 1.05])
-    ends = [(A, 0.35), (A, 0.95), (0.95, B), (0.35, 1.05), (0.12, 0.45)]
+    hub = np.array(GEOM.get("brace_hub", [0.70, 1.05]), float)
+    ends = [tuple(e) for e in GEOM["brace_ends"]] if "brace_ends" in GEOM else [(A, 0.35), (A, 0.95), (0.95, B), (0.35, 1.05), (0.12, 0.45)]
     nb_nodes = 12
     nbr = len(ends) * nb_nodes + 1                          # + the shared hub node
     Kb = sp.lil_matrix((nbr, nbr)); Mb = np.zeros(nbr)
@@ -663,8 +865,9 @@ def main():
     # the rim bolts. NO_NOSE (env) leaves them out for A/B tests.
     nose = []
     if not os.environ.get("NO_NOSE"):
+        rimset = set(FRAME_INFO.get("rim_nodes", []))
         inner = [k_ for k_ in range(nfr) if Cfr[k_, 1] > 0.0 and Cfr[k_, 1] < B - 0.12 and Cfr[k_, 0] < A - 0.05
-                 and abs(Cfr[k_, 0] - (float(bentside(Cfr[k_, 1])) + 0.04)) > 0.05]
+                 and abs(Cfr[k_, 0] - (float(bentside(Cfr[k_, 1])) + 0.04)) > 0.05 and k_ not in rimset]
         cands = []
         for e in range(len(ends)):
             bn = [e * nb_nodes + k for k in range(2, nb_nodes)]
@@ -716,10 +919,20 @@ def main():
         else:
             bx_, by_ = treble_bridge((88 - key) / (88 - 21)); ang = 0.0
         bx_, by_ = float(bx_), float(by_)
+        sfp = string_front(key)
+        if sfp is not None:
+            # the string's own direction, from its end on the front bar to the bridge: the back
+            # length carries on the same way to the hitch pin
+            ang = math.atan2(bx_ - sfp[0], by_ - sfp[1])
         Br = interp_rows(np.array([bx_]), np.array([by_]))
         bterms = [(int(pos_of[c_]), float(v_)) for c_, v_ in zip(Br.indices, Br.data) if pos_of[c_] >= 0]
-        # speaking length: to the front bar, along the string
-        fn_, _ = frame_node_near(bx_ - Ls * math.sin(ang), FRONT_Y, frontNodes)
+        # speaking length: to the front bar. The treble strings run straight ahead of their
+        # bridge point; the cross-strung bass runs forward and towards the spine, to the pins
+        # at the bass end of the pin block (as the frame table's zone ends do)
+        if sfp is not None:
+            fn_, _ = frame_node_near(sfp[0], sfp[1], frontNodes)
+        else:
+            fn_, _ = frame_node_near(1.25 - 0.012 * (key - 1) if key <= 20 else bx_, FRONT_Y, frontNodes)
         # back length: to the frame behind the bridge, or the rim if no bar is near
         hx, hy = bx_ + Lb * math.sin(ang), by_ + Lb * math.cos(ang)
         hn_, hd = frame_node_near(hx, hy)
@@ -793,30 +1006,63 @@ def main():
     boxAir = bool(os.environ.get("BOX_AIR"))
     if boxAir:
         hLid = np.full(nbd, CASE_H); openB = np.zeros(nbd, bool)
+    # The air reaches out past the vibrating board to the rim's inner face (the board's glued
+    # edge runs in under the inner rim, the air above it does not stop there): with the case
+    # traced, the air grid covers everything inside the rim, the board nodes a part of it.
+    # Its open edges are the case's: across the front and along the bentside wherever the
+    # lid stands clear of the rim top.
+    caseAir = ("case_inner" in GEOM) and not boxAir and not os.environ.get("BOARD_AIR")
     # The openings are not pressure-release planes at the rim: the air just outside them moves
     # with the mode (the end correction, which lowers the resonances) and only beyond that is
     # the pressure released. The air grid is the board grid padded outwards, and each open
     # edge node grows a tongue of outside air END_CORR times the opening's local height,
     # at that height, released at its far end.
     END_CORR = float(os.environ.get("END_CORR", "0.6"))
-    pad = int(math.ceil(max(END_CORR, 0.0) * max(gap.max(), 0.01) / DX)) + 2 if not boxAir else 1
+    lidH = lambda x_: RIM_TOP + np.maximum(0.0, LID_HINGE_X - x_) * math.tan(LID_ANGLE)
+    if caseAir:
+        ci_ = np.asarray(GEOM["case_inner"], float)
+        gmax = float(lidH(ci_[:, 0].min()) - RIM_TOP)
+        marg = int(math.ceil(max(0.0, -ci_[:, 0].min(), ci_[:, 0].max() - (nx - 1) * DX, ci_[:, 1].max() - (ny - 1) * DX) / DX)) + 1
+    else:
+        gmax, marg = float(gap.max()), 0
+    pad = int(math.ceil(max(END_CORR, 0.0) * max(gmax, 0.01) / DX)) + 2 + marg if not boxAir else 1
     nxa, nya = nx + 2 * pad, ny + 2 * pad
     maskA = np.zeros((nxa, nya), bool); maskA[pad:pad + nx, pad:pad + ny] = board
-    hA = np.zeros((nxa, nya)); hA[pad:pad + nx, pad:pad + ny].flat[bi] = hLid
+    XA, YA = np.meshgrid((np.arange(nxa) - pad) * DX, (np.arange(nya) - pad) * DX, indexing="ij")
+    if caseAir:
+        maskA |= inside_case(XA, YA) & (YA >= -1e-9)
+    hA = np.where(maskA, lidH(XA), 0.0) if not boxAir else np.zeros((nxa, nya))
+    if boxAir:
+        hA[pad:pad + nx, pad:pad + ny].flat[bi] = hLid
+    if caseAir:
+        nb4 = np.zeros_like(maskA)
+        for a, b in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nb4 |= ~np.roll(np.pad(maskA, 1), (a, b), axis=(0, 1))[1:-1, 1:-1]
+        edgeA = maskA & nb4
+        gapA = hA - RIM_TOP
+        openA_m = edgeA & ((YA < 0.5 * DX) | ((XA < A - 0.06) & (gapA > LID_GAP_MIN)))
+        openIJ = np.argwhere(openA_m); openGap = gapA[openA_m]
+    else:
+        openIJ = np.argwhere(board)[openB] + pad; openGap = gap[openB]
     ext = np.zeros((nxa, nya), bool)
     bij = np.argwhere(board)
     ri_, rj_ = np.meshgrid(np.arange(-pad, pad + 1), np.arange(-pad, pad + 1), indexing="ij")
     rr2 = ri_ ** 2 + rj_ ** 2
-    for k_ in np.flatnonzero(openB):
-        i, j = bij[k_] + pad
-        rad = END_CORR * gap[k_] / DX
+    for (i, j), g_ in zip(openIJ, openGap):
+        rad = END_CORR * g_ / DX
         disc = rr2 <= rad * rad
-        sl = (slice(i - pad, i + pad + 1), slice(j - pad, j + pad + 1))
-        grow = disc & ~maskA[sl]
+        i0_, i1_, j0_, j1_ = max(0, i - pad), min(nxa, i + pad + 1), max(0, j - pad), min(nya, j + pad + 1)
+        sl = (slice(i0_, i1_), slice(j0_, j1_))
+        dsc = disc[i0_ - (i - pad):i1_ - (i - pad), j0_ - (j - pad):j1_ - (j - pad)]
+        grow = dsc & ~maskA[sl]
         ext[sl] |= grow
-        hA[sl] = np.where(grow, np.maximum(hA[sl], gap[k_]), hA[sl])
+        hA[sl] = np.where(grow, np.maximum(hA[sl], g_), hA[sl])
     maskA |= ext
-    print(f"case air: {int(openB.sum())} open edge nodes, {int(ext.sum())} outside-air nodes for the end correction")
+    nOpen = len(openIJ)
+    if caseAir:
+        print(f"case air over the rim's inner face: {int((maskA & ~ext).sum())} nodes ({int(board.sum())} on the board), "
+              f"{(maskA & ~ext).sum() * DX * DX:.2f} m2")
+    print(f"case air: {nOpen} open edge nodes, {int(ext.sum())} outside-air nodes for the end correction")
     aidx = np.flatnonzero(maskA.ravel()); na = len(aidx)
     posA = -np.ones(nxa * nya, int); posA[aidx] = np.arange(na)
     hAv = hA.ravel()[aidx]
@@ -826,7 +1072,7 @@ def main():
     extv = ext.ravel()[aidx]
     dirich = np.zeros(na, bool)
     if END_CORR <= 0.0 and not boxAir:                                       # no end correction: released at the rim itself
-        dirich[bInA[openB]] = True
+        dirich[posA[openIJ[:, 0] * nya + openIJ[:, 1]]] = True
     lr_, lc_, lv_ = [], [], []
     ur_, uc_, uv_ = [], [], []                                               # the plain Laplacian on the board, for the air below
     aij = np.argwhere(maskA)
@@ -850,7 +1096,7 @@ def main():
     Lap = sp.csr_matrix((uv_, (ur_, uc_)), shape=(nbd, nbd)) / DX ** 2
     keepN = np.flatnonzero(~dirich)
     Abd = nbd * DX * DX
-    aOpen = math.sqrt(max(1e-6, (gap[openB] * DX).sum()) / math.pi)        # the openings' equivalent radius (above the rim)
+    aOpen = math.sqrt(max(1e-6, (openGap * DX).sum()) / math.pi)        # the openings' equivalent radius (above the rim)
     def wedge_family(vertical):
         """Air modes of one vertical family: shapes at the board (mean square 1 there), frequencies,
         the volume integral of psi^2 (per unit pressure) and the radiation loss out of the openings."""
@@ -887,13 +1133,13 @@ def main():
         eta_ = C_AIR ** 3 * R_ * flux / (om ** 3 * lam_)
         if boxAir:                                                           # the old open-top box, for A/B
             eta_ = 2 * np.minimum(1.0, (om / C_AIR * math.sqrt(Abd / math.pi)) ** 2 / 2.0) * C_AIR / (om * CASE_H)
-        return psi, fr, lam_, eta_
-    psi0, fa0, lam0, eta0 = wedge_family(False)
-    psi1, fa1, lam1, eta1 = wedge_family(True)
+        return psi, fr, lam_, eta_, psiA
+    psi0, fa0, lam0, eta0, psiA0 = wedge_family(False)
+    psi1, fa1, lam1, eta1, psiA1 = wedge_family(True)
     aw = np.concatenate([psi0, psi1], 1); fa = np.concatenate([fa0, fa1]); LamV = np.concatenate([lam0, lam1])
     etaA_modes = np.concatenate([eta0, eta1])
     nair = aw.shape[1]
-    print(f"case air (lid at {math.degrees(LID_ANGLE):.0f} deg, {openB.sum()} open edge nodes, opening radius {aOpen:.2f} m): "
+    print(f"case air (lid at {math.degrees(LID_ANGLE):.0f} deg, {nOpen} open edge nodes, opening radius {aOpen:.2f} m): "
           f"even family from {fa0[:4].round(0)} Hz (loss {eta0[:4].round(2)}), half-wave family from {fa1[:3].round(0)} Hz (loss {eta1[:3].round(2)}); "
           f"loss factors median {np.median(etaA_modes):.3f}")
     full_s = P @ vecs
@@ -910,8 +1156,20 @@ def main():
         fl, Vl, P3l, syl, dAl, dEl = np.zeros(0), np.zeros((0, 0)), np.zeros((0, 3)), np.zeros((0, 2)), 1.0, np.zeros(0)
     nl = len(fl)
     psiFull = np.zeros((nx * ny, nair)); psiFull[bi] = aw
-    onb = inside(P3l[:, 0], P3l[:, 1]) if nl else np.zeros(0, bool)
-    Psi_l = interp_rows(np.clip(P3l[:, 0], 0.0, A), np.clip(P3l[:, 1], 0.0, B)) @ psiFull if nl else np.zeros((0, nair))
+    onb = inside_case(P3l[:, 0], P3l[:, 1]) if nl else np.zeros(0, bool)
+    if nl:
+        # the air's shapes under each lid node, bilinear on the air grid (out to the rim)
+        psiAll = np.concatenate([psiA0, psiA1], 1)
+        fxl = P3l[:, 0] / DX + pad; fyl = P3l[:, 1] / DX + pad
+        i0l = np.clip(np.floor(fxl).astype(int), 0, nxa - 2); j0l = np.clip(np.floor(fyl).astype(int), 0, nya - 2)
+        axl, ayl = np.clip(fxl - i0l, 0, 1), np.clip(fyl - j0l, 0, 1)
+        Psi_l = np.zeros((len(P3l), nair))
+        for di, dj, wq in ((0, 0, (1 - axl) * (1 - ayl)), (1, 0, axl * (1 - ayl)), (0, 1, (1 - axl) * ayl), (1, 1, axl * ayl)):
+            qq = posA[(i0l + di) * nya + (j0l + dj)]
+            ok_ = qq >= 0
+            Psi_l[ok_] += wq[ok_, None] * psiAll[qq[ok_]]
+    else:
+        Psi_l = np.zeros((0, nair))
     if nl:
         Psi_l[~onb] = 0.0
         Psi_l[:, len(fa0):] *= -1.0                                          # the half-wave family: cos(pi) at the lid
@@ -1069,7 +1327,7 @@ def main():
         spec = img_lid + t_[:, None] * (pt[None, :] - img_lid)
         s_ = (spec - hinge) @ tlid                                           # up the lid [m]
         ys_ = spec[:, 1]
-        s_max = (LID_HINGE_X - (np.asarray(bentside(np.clip(ys_, 0, B)), float) - 0.04)) / math.cos(LID_ANGLE)
+        s_max = (LID_HINGE_X - lid_edge_x(np.clip(ys_, 0, LID_TAIL))) / math.cos(LID_ANGLE)
         d_edge = np.minimum.reduce([s_, s_max - s_, ys_ - LID_FRONT, LID_TAIL - ys_])
         r1 = np.linalg.norm(spec - nodes3, axis=1); r2 = np.linalg.norm(pt[None, :] - spec, axis=1)
         return d_edge, r1 * r2 / np.maximum(r1 + r2, 1e-6)
@@ -1123,7 +1381,7 @@ def main():
         for p_ in phF:
             ptF = np.array([0.5 * A + R_far * math.sin(t_) * math.cos(p_), 0.5 * B + R_far * math.sin(t_) * math.sin(p_), R_far * math.cos(t_)])
             dSF = R_far * R_far * math.sin(t_) * (math.pi / 2 / 6) * (2 * math.pi / 12)
-            r1F = np.linalg.norm(nodes3 - ptF, axis=1); r2F = r1F + dE + SKIRT
+            r1F = np.linalg.norm(nodes3 - ptF, axis=1); r2F = r1F + dE + SKIRT + RIM_T
             for i in range(len(f)):
                 kk = k[i]
                 pF = kk * np.sum(full[bn, i] * area * (np.exp(-1j * kk * r1F) / r1F - np.exp(-1j * kk * r2F) / r2F))
@@ -1206,14 +1464,15 @@ def main():
         # families' reach it hears the solved air's pressure (the lid's and the board's sound
         # are in it), above it the free-field sums take over; the sound coming back up from the
         # underside is added either way
-        inCase = bool(cavity) and float(pt[2]) < RIM_TOP + 0.5 and bool(inside(float(pt[0]), float(pt[1])))
+        inCase = bool(cavity) and float(pt[2]) < RIM_TOP + 0.5 and bool(inside_case(float(pt[0]), float(pt[1])))
         if inCase:
             pcav = cavity_pressure(pt) if os.environ.get("OLD_CAVITY") else driven_air_at(pt)
             blend = np.clip((f - fCavLo) / (fCavHi - fCavLo), 0.0, 1.0)              # 0 = all cavity, 1 = all free field
         # Sound from the underside gets out under the rim's skirt; to a listener inside or above
         # the case it then comes back up over the rim top (the mics), to the seat it comes
         # straight on from under the skirt
-        around = 2 * SKIRT + RIM_TOP if pt[2] < RIM_TOP + 0.5 else SKIRT
+        # (and round the rim's thickness: under its foot, and over its top again to the mics)
+        around = 2 * SKIRT + RIM_TOP + 2 * RIM_T if pt[2] < RIM_TOP + 0.5 else SKIRT + RIM_T
         lidSetup = lid_window_setup(pt)
         # The lid panel's own sound: the listener hears the face turned towards them (its
         # motion is counted along the normal, away from the case), with the other face's
@@ -1312,8 +1571,19 @@ def main():
         write_board(args.out + ".freefield", micLff, micRff)      # the same solve with free-field mics, for A/B
     # Frame table: the frame-heavy body modes, their shapes where each zone's strings end
     axz = np.where(np.arange(N_BASS + N_TREBLE) < N_BASS, 1.25 - 0.08 * np.arange(N_BASS + N_TREBLE), np.array(zx))
+    if GEOM.get("string_front"):
+        # each zone's middle key, and where its strings end on the front bar
+        zkeys = [20 - 19 * (2 * (N_BASS - 1 - z) + 1) / (2 * N_BASS) for z in range(N_BASS)] + \
+                [88 - 67 * (2 * (N_TREBLE - 1 - z) + 1) / (2 * N_TREBLE) for z in range(N_TREBLE)]
+        axz = np.array([string_front(int(round(k_)))[0] for k_ in zkeys])
     fidx = np.flatnonzero(isFrame & (f < 3000.0))
     fphi = np.array([[np.interp(x_, frontX, frontV[:, i]) for x_ in axz] for i in fidx]).reshape(len(fidx), N_BASS + N_TREBLE)
+    # The plate's webs bring many local panel modes that hardly move the front bar where the
+    # strings end: the engine only drives the frame there, so they would do nothing but cost time
+    if len(fidx):
+        live = np.abs(fphi).max(1) >= 0.02 * np.abs(fphi).max()
+        print(f"frame table: {live.sum()} of {len(fidx)} frame modes move the strings' ends (>= 2% of the strongest)")
+        fidx, fphi = fidx[live], fphi[live]
     frad = np.array([radL[i] for i in fidx])
     write_frame(args.frame_out, f[fidx], fphi, frad, etaStruct[fidx])
 
