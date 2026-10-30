@@ -60,6 +60,18 @@ namespace
         697, 697, 697, 697, 697, 697, 696, 695, 693, 691, 689, 686,
         683, 679, 674, 670, 664, 659, 652, 646, 639, 631, 623, 615,
         606, 598, 588, 580 };
+    // The technician's voicing of the top two octaves (C6 to C8, one entry per key). Up there
+    // the hammer's blow lasts three to six periods of the string, so the fundamental sits near
+    // a null of the force pulse's spectrum and a tenth more or less felt stiffness moves a
+    // note's loudness by 10 dB; every concert grand is voiced hammer by hammer for that reason.
+    // These factors on the felt stiffness were set once for even mezzo-forte loudness against
+    // each key's neighbours (a five-key running median of the unvoiced levels, so the register
+    // trend is left to the physics), within what needling and hardening can do (1/3 to 3 times).
+    // Unevenness 3.6 -> 1.2 dB rms; D#6 and G#7 stay 5 and 3 dB quiet, which is not the hammer.
+    constexpr double kTopVoicing[25] = {
+        0.33, 0.86, 1.00, 3.00, 0.78, 0.40, 1.06, 1.00, 1.51, 0.71, 3.00, 3.00, 1.00,
+        0.33, 0.53, 3.00, 0.87, 3.00, 0.55, 0.89, 1.59, 1.00, 1.55, 0.56, 1.00 };
+
     constexpr double kStrikeDistance[88] = {
         0.241, 0.241, 0.241, 0.241, 0.240, 0.238, 0.236, 0.233, 0.229, 0.225, 0.221, 0.217,
         0.211, 0.205, 0.199, 0.192, 0.186, 0.179, 0.173, 0.165, 0.220, 0.211, 0.199, 0.191,
@@ -263,6 +275,8 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         // outer layer and the hammer's internal springs, which lengthened every contact by 25-50%
         // and linearised the blow, so the tone brightened too little with velocity.
         key.feltStiffness = std::pow (10.0, 5.3097e-2 * n + 7.6425) * std::pow (1.0e-3, key.feltExponent);   // K per mm
+        if (key.midiNote >= 84)
+            key.feltStiffness *= kTopVoicing[std::min (24, key.midiNote - 84)];
         // Felt is not elastic: part of the push depends on how fast it is being squeezed, and
         // that part is lost as heat (Stulov 1995). Chabassier's D (RT-425, eq. 5, table A) gives
         // the ratio of the viscous to the elastic term as a time: 3.4 ms at C1, falling to
