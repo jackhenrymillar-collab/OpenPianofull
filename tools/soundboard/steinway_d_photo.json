@@ -1511,23 +1511,25 @@
   [
    1.4046,
    1.9926
+  ]
+ ],
+ "brace_hub": [
+  0.7823,
+  1.0192
+ ],
+ "nose_bolts": [
+  [
+   0.7823,
+   1.0192
   ],
   [
    1.2046,
    1.2198
   ],
   [
-   0.7823,
-   1.0192
-  ],
-  [
    0.515,
    0.489
   ]
- ],
- "brace_hub": [
-  0.7,
-  1.05
  ],
  "brace_ends": [
   [
@@ -1535,8 +1537,8 @@
    0.3522
   ],
   [
-   1.3968,
-   0.9531
+   1.401,
+   1.3131
   ],
   [
    0.946,
@@ -1547,8 +1549,8 @@
    1.05
   ],
   [
-   0.1748,
-   0.3793
+   0.2682,
+   -0.0005
   ]
  ],
  "plate_webs": [
@@ -2014,7 +2016,8 @@
    -0.5652
   ],
   "keyslip_front_y": -0.5779,
-  "keybed_depth": 0.5779,
+  "keybed_depth": 0.6399,
+  "keybed_back_y": 0.062,
   "keyboard_x": [
    0.0832,
    1.3138
@@ -2023,7 +2026,7 @@
    -0.0819,
    1.4497
   ],
-  "_comment": "case front from the photo: plate front edge, fallboard, keys (visible part), key slip; keybed from the belly rail (y 0) to the key slip front, 4.45 cm thick (spec); keyboard x from C8 to A0 (52 white keys)"
+  "_comment": "case front from the photo: plate front edge, fallboard, keys (visible part), key slip; keybed from the key slip front to 6.2 cm behind the belly rail line (spec: longest key 62.2 cm from the key front, so the action and keybed reach in under the rail), 4.45 cm thick (spec); keyboard x from C8 to A0 (52 white keys)"
  },
  "case_outer": [
   [

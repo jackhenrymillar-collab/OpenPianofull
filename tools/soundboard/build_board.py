@@ -50,9 +50,16 @@ APRON_M, APRON_K = 0.35, 4.0e5           # [kg], [N/m]
 F_TOP = 5000.0
 # The body around the board (a Steinway D): the rim it is glued into, the braces under it,
 # the iron frame bolted on the rim, the legs, and the air in the case above the board.
-RIM_T, RIM_D = 0.0826, 0.26                       # the Steinway D rim: one continuous bent rim of 18 maple laminations, 3 1/4" thick, 26 cm deep
-RIM_EI = 12e9 * RIM_T * RIM_D ** 3 / 12.0          # laminated maple (the iron frame bolted on it is solved on its own below)
-RIM_M = 650.0 * RIM_T * RIM_D                      # [kg/m]
+RIM_T, RIM_D = 0.0826, 0.33                       # the Steinway D rim: one continuous bent rim of 18 maple laminations, 3 1/4" thick (spec);
+                                                  # 33 cm deep (side photo, scaled on the top-of-key height 71.5 cm and the lid-closed height ~1 m)
+RIM_OUT_T = 0.057                                 # the outer rim, full depth (overhead photo: 5-6 cm of black rim top) ...
+RIM_TOP = 0.14                                    # the board sits this far below the rim top: rim top ~0.98 m, keys 0.715 m, board ~12.5 cm over the keys [m]
+SKIRT = RIM_D - RIM_TOP                           # ... the rim below the board [m]
+# ... and the inner rim inside it (the rest of the 8.26 cm), from the rim's foot up to the board, which is glued on it
+_rs = [(RIM_OUT_T, RIM_D, RIM_D / 2), (RIM_T - RIM_OUT_T, SKIRT, SKIRT / 2)]    # (thickness, height, centroid above the foot)
+_ra = sum(t * h for t, h, _ in _rs); _rz = sum(t * h * z for t, h, z in _rs) / _ra
+RIM_EI = 12e9 * sum(t * h ** 3 / 12.0 + t * h * (z - _rz) ** 2 for t, h, z in _rs)   # laminated maple, bending up and down (the iron frame is solved on its own below)
+RIM_M = 650.0 * _ra                               # [kg/m]
 FRAME_MASS, FRAME_BOLTS = 125.0, 10               # iron frame [kg], spread over its bolts on the rim
 # The board's edge sits glued on the rim liner's ledge, a strip about 2.5 cm wide inside the
 # rim. The joint holds the edge level with the rim (the ring nodes are the rim's); against
@@ -68,11 +75,9 @@ TIE_K = 1.0e8                                     # brace ends let into the rim 
 # that is a 180 cm2 section, taken as 12 cm wide by 15 cm deep (spruce along the grain: E 11 GPa, 450 kg/m3)
 BRACE_EI, BRACE_M = 11e9 * 0.12 * 0.15 ** 3 / 12.0, 450.0 * 0.12 * 0.15
 LEG_K = 3.0e6                                     # each leg on its castor [N/m]
-RIM_TOP = 0.09                                    # the board sits this far below the rim top on the D (plate, strings and the rim's lip above it) [m]
-SKIRT = 0.26 - RIM_TOP                            # ... and the rest of the 26 cm rim hangs below the board [m]
 CASE_H = RIM_TOP + 0.08                           # rim height above the board, plus the open top's end correction [m]
 RHO_AIR, C_AIR = 1.2, 343.0
-FLOOR_GAP = 0.70           # board underside to the floor [m] (keys at 73 cm; the rim's skirt hangs 17 cm below the board, then it is open)
+FLOOR_GAP = 0.84           # board underside to the floor [m] (rim top ~0.98 m less the 14 cm to the board; the rim's foot is 0.65 m up, then it is open)
 # Crown and downbearing. The ribs are planed to an arch (radius about 20 m), so the board is a
 # shallow shell: bending it also stretches it, which stiffens the low modes. The strings press
 # the bridges down (downbearing, about 1.7% of the total string tension, ~3 kN on a C5); that
@@ -87,8 +92,8 @@ ETA = {"along": 0.007, "across": 0.018, "shear": 0.018, "rib": 0.007, "bridge": 
        "rim": 0.010, "rimtwist": 0.010, "glue": 0.05, "leg": 0.25, "brace": 0.010, "tie": 0.05,
        "frame": 0.002, "bolt": 0.02, "bell": 0.005, "nose": 0.02, "lid": 0.02, "pinblock": 0.05, "str_damped": float(os.environ.get("ETA_SD", "0.3")), "str_free": float(os.environ.get("ETA_SF", "0.02"))}
 PLANK_W, PLANK_SPREAD = 0.12, 0.08   # the board is glued from ~12 cm planks; each plank's stiffness varies ~8%
-RIM_GJ = 1.1e9 * RIM_D * RIM_T ** 3 / 3.0 * (1.0 - 0.63 * RIM_T / RIM_D)   # rim twisting stiffness (maple, rectangular section) [N m^2]
-RIM_IP = 650.0 * RIM_T * RIM_D * (RIM_T ** 2 + RIM_D ** 2) / 12.0   # rim rotary inertia per length [kg m]
+RIM_GJ = 1.1e9 * (SKIRT * RIM_T ** 3 / 3.0 * (1.0 - 0.63 * RIM_T / SKIRT) + RIM_TOP * RIM_OUT_T ** 3 / 3.0 * (1.0 - 0.63 * RIM_OUT_T / RIM_TOP))   # rim twisting stiffness (both rims below the board, the outer one above) [N m^2]
+RIM_IP = 650.0 * sum(t * h * ((t ** 2 + h ** 2) / 12.0 + (z - _rz) ** 2) for t, h, z in _rs)   # rim rotary inertia per length [kg m]
 # The front of the case. Across the keyboard end the rim is not a plain rim wall: the belly rail
 # (the rim's section, under the board's front edge) carries the keybed screwed under its foot,
 # a 4.45 cm laminated plank (Steinway D specification) reaching forward to the key slip, with
@@ -101,7 +106,7 @@ KEYBED_D = 0.58          # belly rail to the key slip's front [m] (overhead phot
 ACTION_M = 14.0          # keys, key frame and action standing on the keybed, per metre of keyboard [kg/m] (~20 kg over 1.45 m)
 ACTION_X = 0.30          # their centre of mass, forward of the rail [m]
 PINBLOCK_M = 7.0         # the pin block over the rail (laminated maple, 22 x 4.5 cm) [kg/m]
-def front_section(depth=None):
+def front_section(depth=None, back=0.0):
     """(EI, GJ, mass per length, rotary inertia per length) of the belly rail with the keybed."""
     d = KEYBED_D if depth is None else depth
     Ew, Ef = 12e9, KEYBED_E
@@ -112,7 +117,8 @@ def front_section(depth=None):
     GJ = RIM_GJ + KEYBED_G * d * KEYBED_T ** 3 / 3.0
     mw, mf = 650.0 * aw, KEYBED_RHO * af
     m = mw + mf + ACTION_M + PINBLOCK_M
-    IP = RIM_IP + mf * d ** 2 / 3.0 + ACTION_M * ACTION_X ** 2 + PINBLOCK_M * 0.11 ** 2
+    c_ = d / 2 - back                                       # the keybed's centre, forward of the rail
+    IP = RIM_IP + mf * (d ** 2 / 12.0 + c_ ** 2) + ACTION_M * ACTION_X ** 2 + PINBLOCK_M * 0.11 ** 2
     return EI, GJ, m, IP
 PIN_OFFSET = 0.008          # strings bear on the bridge's front pins, ~8 mm on the speaking-length side of its centre line
 LISTEN = {"L": (1.40, -1.20, 1.00), "R": (0.00, -1.20, 1.00)}     # the player's seat, a stereo pair a little apart
@@ -639,7 +645,9 @@ def main():
     P = sp.csr_matrix((np.ones(nf), (np.flatnonzero(free.ravel()), np.arange(nf))), shape=(nx * ny, nf))
 
     # Thickness: 9 mm in the middle, 6 mm at the edge
-    dist = ndimage.distance_transform_edt(board) * DX
+    # (padded with empty nodes all round: the transform does not count the array's own border
+    # as an edge, and the board's straight spine and front edges lie on it)
+    dist = ndimage.distance_transform_edt(np.pad(board, 1)) [1:-1, 1:-1] * DX
     h = H_EDGE + (H_MID - H_EDGE) * np.clip(dist / dist.max(), 0, 1) ** 0.7
     # Planks: strips along the grain, each a little stiffer or softer than its neighbours
     c0, s0 = math.cos(GRAIN), math.sin(GRAIN)
@@ -811,7 +819,7 @@ def main():
     # the front edge (the belly rail with the keybed under it) has its own section
     frontRing = rp[:, 1] * DX < 1.5 * DX
     if GEOM.get("front") and not os.environ.get("NO_KEYBED"):
-        fEI, fGJ, fM, fIP = front_section(float(GEOM["front"].get("keybed_depth", KEYBED_D)))
+        fEI, fGJ, fM, fIP = front_section(float(GEOM["front"].get("keybed_depth", KEYBED_D)), float(GEOM["front"].get("keybed_back_y", 0.0)))
         print(f"front of the case (belly rail + keybed {GEOM['front'].get('keybed_depth', KEYBED_D):.2f} m deep, {KEYBED_T * 100:.2f} cm): "
               f"EI x{fEI / RIM_EI:.1f}, GJ x{fGJ / RIM_GJ:.1f}, mass {fM:.0f} kg/m (rim {RIM_M:.0f}), rotary inertia x{fIP / RIM_IP:.0f}; {int(frontRing.sum())} ring nodes")
     else:
@@ -839,7 +847,7 @@ def main():
     frontLegs = []
     if GEOM.get("front") and not os.environ.get("NO_KEYBED"):
         cfx = GEOM["front"]["case_front_x"]
-        legLever = 0.85 * float(GEOM["front"].get("keybed_depth", KEYBED_D))
+        legLever = 0.85 * (float(GEOM["front"].get("keybed_depth", KEYBED_D)) - float(GEOM["front"].get("keybed_back_y", 0.0)))
         frontLegs = [nearest_ring(min(A, cfx[1]), 0.0), nearest_ring(max(0.0, cfx[0]), 0.0)]
         legs = [nearest_ring(0.75, B)]
     for r_ in legs:
@@ -851,6 +859,11 @@ def main():
     ends = [tuple(e) for e in GEOM["brace_ends"]] if "brace_ends" in GEOM else [(A, 0.35), (A, 0.95), (0.95, B), (0.35, 1.05), (0.12, 0.45)]
     nb_nodes = 12
     nbr = len(ends) * nb_nodes + 1                          # + the shared hub node
+    # the spec's brace volume (66,400 cm3 of spruce) over these braces' length, 12 cm wide
+    Ltot_ = sum(float(np.hypot(ex - hub[0], ey - hub[1])) for ex, ey in ends)
+    bd_ = 66400e-6 / (0.12 * Ltot_)
+    BRACE_EI, BRACE_M = 11e9 * 0.12 * bd_ ** 3 / 12.0, 450.0 * 0.12 * bd_
+    print(f"braces: {len(ends)} from the hub at ({hub[0]:.2f}, {hub[1]:.2f}), {Ltot_:.2f} m in all, 12 x {bd_ * 100:.1f} cm")
     Kb = sp.lil_matrix((nbr, nbr)); Mb = np.zeros(nbr)
     tie = []                                                # (brace node, ring index)
     Cbr = np.zeros((nbr, 2)); Cbr[nbr - 1] = hub
@@ -914,7 +927,16 @@ def main():
     # middle, where the struts meet, to the stiff beams instead of leaving it hanging between
     # the rim bolts. NO_NOSE (env) leaves them out for A/B tests.
     nose = []
-    if not os.environ.get("NO_NOSE"):
+    if GEOM.get("nose_bolts") and not os.environ.get("NO_NOSE"):
+        # where the photo shows them: the plate's interior bolts, each down into the brace under it
+        for px_, py_ in GEOM["nose_bolts"]:
+            fn_ = int(np.argmin(np.hypot(Cfr[:, 0] - px_, Cfr[:, 1] - py_)))
+            bn_ = int(np.argmin(np.hypot(Cbr[:, 0] - px_, Cbr[:, 1] - py_)))
+            print(f"nose bolt at ({px_:.2f}, {py_:.2f}): plate node {np.hypot(*(Cfr[fn_] - (px_, py_))) * 100:.0f} cm off, brace node {np.hypot(*(Cbr[bn_] - (px_, py_))) * 100:.0f} cm off")
+            nose.append((fn_, bn_))
+        ns = spring_rows([[(oF + int(fn_), 1.0), (oB + int(bn_), -1.0)] for fn_, bn_ in nose])
+        gparts["nose"] = ns.T @ ns * BOLT_K
+    elif not os.environ.get("NO_NOSE"):
         rimset = set(FRAME_INFO.get("rim_nodes", []))
         inner = [k_ for k_ in range(nfr) if Cfr[k_, 1] > 0.0 and Cfr[k_, 1] < B - 0.12 and Cfr[k_, 0] < A - 0.05
                  and abs(Cfr[k_, 0] - (float(bentside(Cfr[k_, 1])) + 0.04)) > 0.05 and k_ not in rimset]
@@ -1239,6 +1261,12 @@ def main():
     # across it and, from about 280 Hz, up and down between board and floor. The board pushes
     # it the opposite way to the air above.
     ii2 = np.flatnonzero(interior.ravel()[bi])                               # interior nodes, in board numbering
+    if GEOM.get("front") and not os.environ.get("NO_KEYBED"):
+        # except along the front: the belly rail runs down under the board's front edge to the
+        # keybed, so the air under the board is walled in there (no release, a hard wall)
+        frontB = (~interior.ravel()[bi]) & (yb_ < 1.5 * DX) & (xb_ > 2 * DX) & (xb_ < A - 2 * DX)
+        ii2 = np.flatnonzero(interior.ravel()[bi] | frontB)
+        print(f"air under the board: walled along the front edge ({int(frontB.sum())} edge nodes), released round the rest of the rim's foot")
     Ld = Lap.tocsr()[ii2][:, ii2]
     nu_ = 40
     uv, uw = sla.eigsh(Ld.tocsc(), k=nu_, sigma=0, which="LM")
@@ -1370,9 +1398,10 @@ def main():
         # forward from the rail's foot to the key slip, so the underside's sound gets out round
         # the spine, the tail and the bentside, or forward under the whole keybed
         npad = int(math.ceil(1.0 / DX))
-        ext_ = np.concatenate([np.repeat(board[:, :1], npad, axis=1), board], axis=1)
-        dOpen = (ndimage.distance_transform_edt(ext_) * DX)[:, npad:]
-        kd_ = float(GEOM["front"].get("keybed_depth", KEYBED_D))
+        frontRow_ = board[:, :3].any(1)                      # the board's extent along its front edge
+        ext_ = np.concatenate([np.repeat(frontRow_[:, None], npad, axis=1), board | (frontRow_[:, None] & (np.arange(ny)[None, :] < 3))], axis=1)
+        dOpen = (ndimage.distance_transform_edt(np.pad(ext_, ((1, 1), (0, 1)))) * DX)[1:-1, npad:-1]
+        kd_ = float(GEOM["front"].get("keybed_depth", KEYBED_D)) - float(GEOM["front"].get("keybed_back_y", 0.0))   # rail to the key slip's front
         dE = np.minimum(dOpen.ravel()[bn], by_ + kd_)
         print(f"underside path with the front closed by the belly rail and keybed: distance to an open edge median {np.median(dE):.2f} m "
               f"(was {np.median(dist.ravel()[bn]):.2f}), front quarter {np.median(dE[by_ < 0.5]):.2f} (was {np.median(dist.ravel()[bn][by_ < 0.5]):.2f})")
