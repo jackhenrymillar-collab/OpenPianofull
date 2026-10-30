@@ -1442,8 +1442,8 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
     ks.hammer.active = true;
     ks.hammer.position = nearest - letOff; // just let off, flying free
     ks.hammer.velocity = std::max (0.05, hammerVelocity);
-    ks.hammer.headPos = ks.hammer.shankPos = nearest - letOff;
-    ks.hammer.headVel = ks.hammer.shankVel = ks.hammer.velocity;
+    ks.hammer.shankPos = nearest - letOff;
+    ks.hammer.shankVel = ks.hammer.velocity;
     ks.hammer.samplesSinceStrike = 0;
     ks.hammer.samplesApart = 0;
     for (int i = 0; i < ks.numStrings; ++i)
@@ -1453,7 +1453,7 @@ void ModalPiano::strike (int midiNote, double hammerVelocity)
         forModes (s, s.count, [&] (size_t j) { u += m.phi[j] * m.zi[j]; });
         ks.hammer.lastCompression[(size_t) i] = nearest - letOff - u - ks.hammer.gap[(size_t) i];
         ks.hammer.forceSum[(size_t) i] = 0;
-        ks.hammer.feltHistory[(size_t) i] = 0;
+        ks.hammer.lastFelt[(size_t) i] = 0;
     }
     checkActivity();
 }
@@ -1622,14 +1622,13 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
     const double q0 = key.feltStiffness * hardness * (1.0 + 1.5 * ageFactor) * (1.0 + 0.9 * groove * (1.0 - h.softFelt))
                       * (1.0 - 0.35 * h.softFelt) * (1.0 + 0.4 * h.feltSet);
     const double p = key.feltExponent;   // the unpacked felt beside the grooves is softer (q0 above), not a different law
-    // Felt has memory (Stulov 1995): squeezed quickly it is stiff; squeezed slowly it has
-    // time to relax and gives way. So a gentle touch makes a long, soft contact that only
-    // excites the low partials, and a hard blow a short, stiff one that brings out the top.
-    const double memory = settings.feltMemory;
     const double coreDepth = key.outerFeltDepth * 1000.0 * settings.outerFeltScale * (1.0 - 0.6 * ageFactor) * (1.0 - 0.5 * groove) * (1.0 - 0.3 * h.feltSet); // [mm]
     // Treble hammers are smaller and their outer felt firmer, or soft notes there would vanish
     const double outer = settings.outerFelt * std::pow (10.0, std::max (0.0, (keyIndex - 39) / 48.0) * trebleFirmness);
-    const double relax = 1.0 - std::exp (-dt / std::max (1e-6, settings.feltRelaxTime));
+    // The felt's loss (see ScaleDesign): the viscous term is the elastic one's rate of change
+    // times the key's felt time. It stiffens the felt as it is squeezed and softens it as it
+    // lets go, so the hammer gets back less than it gave; the felt never pulls on the string.
+    const double tau = key.feltDamping;
     // Squeeze at which the contact patch is hammerWidth long (a firm mezzo-forte blow)
     const double contactRef = 1.55e-3 * std::exp (-0.0185 * keyIndex);
 
@@ -1651,12 +1650,9 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
             const double elastic = compression > 0
                 ? outer * std::pow (xmm, p) + std::pow (std::max (0.0, xmm - coreDepth), p)
                 : 0.0;
-            auto& history = h.feltHistory[(size_t) i];
-            history += (elastic - history) * relax;
-            // The relaxed part never takes more than 70% of the push: squeezed felt always pushes
-            // back a little, so the contact unloads smoothly. (Letting the force drop to zero
-            // while still squeezed made loud bass hammers leave the strings and strike again.)
-            const double f = compression > 0 ? q0 * h.feltScale[(size_t) i] * std::max (0.3 * elastic, elastic - memory * history) : 0.0;
+            const double viscous = tau * (elastic - h.lastFelt[(size_t) i]) / dt;
+            h.lastFelt[(size_t) i] = elastic;
+            const double f = compression > 0 ? q0 * h.feltScale[(size_t) i] * std::max (0.0, elastic + viscous) : 0.0;
 
             // The felt crown is round: squeezed by d, it flattens into a patch about
             // 2 sqrt(2 R d) long. A light touch meets the string almost at a point; a hard
@@ -1687,27 +1683,23 @@ void ModalPiano::runHammerKey (int keyIndex, double ub, double& forceSum, double
             });
         }
 
-        // Hammer flight (symplectic Euler). Rigid by default: with Chabassier's felt law as
-        // measured, a rigid hammer gives the published contact durations. Optionally the felt
-        // tip sits on a wooden head that rocks on the shank (about 1.5 kHz) and the shank bends
-        // (about 400 Hz), so the rest of the mass arrives a little later and rounds off the
-        // force pulse (Askenfelt & Jansson 1991; Giordano & Millis 2004); but the tip-head spring
-        // is about as stiff as the felt, so this lengthens contacts and flattens the tone's
-        // brightening with velocity (see Settings::shankFlex).
+        // Hammer flight (symplectic Euler). The head (Chabassier's measured head masses, 11 g
+        // at A0 to 5.8 g at C8) rides on the end of the shank, a hornbeam cantilever (E 13 GPa,
+        // 6.5 mm thick, 125 mm from the flange, about 3.3 g, of which a third counts at its
+        // end as it swings about the flange). Its bending stiffness 3EI/L^3 is about 1.75 kN/m,
+        // so with the head on its end it bends at 60-100 Hz: during the 1-2 ms blow the hammer
+        // is rigid for the strings (contact durations as published: about 2 ms at C4, 1.2 ms
+        // at C6), and the bending only shapes how the hammer leaves (Askenfelt & Jansson 1991).
         if (settings.shankFlex > 0)
         {
-            const double mt = 0.3 * key.hammerMass, mh = 0.45 * key.hammerMass, ms = 0.25 * key.hammerMass;
-            const double fr = 1500.0 / std::sqrt (settings.shankFlex), fb = 400.0 / std::sqrt (settings.shankFlex);
-            const double mr = mt * mh / (mt + mh), mb = mh * ms / (mh + ms);
-            const double kr = std::pow (2.0 * M_PI * fr, 2) * mr, kb = std::pow (2.0 * M_PI * fb, 2) * mb;
-            const double cr = 2.0 * 0.4 * std::sqrt (kr * mr), cb = 2.0 * 0.1 * std::sqrt (kb * mb);
-            const double fRock = kr * (h.headPos - h.position) + cr * (h.headVel - h.velocity);
-            const double fBend = kb * (h.shankPos - h.headPos) + cb * (h.shankVel - h.headVel);
-            h.velocity += (fRock - hammerForce) / mt * dt;
-            h.headVel += (fBend - fRock) / mh * dt;
+            const double mh = key.hammerMass, ms = 1.1e-3;
+            const double EI = 13e9 * M_PI * std::pow (6.5e-3, 4) / 64.0;
+            const double kb = settings.shankFlex * 3.0 * EI / std::pow (0.125, 3);
+            const double cb = 2.0 * 0.1 * std::sqrt (kb * mh * ms / (mh + ms));
+            const double fBend = kb * (h.shankPos - h.position) + cb * (h.shankVel - h.velocity);
+            h.velocity += (fBend - hammerForce) / mh * dt;
             h.shankVel += (-fBend) / ms * dt;
             h.position += h.velocity * dt;
-            h.headPos += h.headVel * dt;
             h.shankPos += h.shankVel * dt;
         }
         else

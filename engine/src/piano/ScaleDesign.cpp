@@ -263,6 +263,12 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         // outer layer and the hammer's internal springs, which lengthened every contact by 25-50%
         // and linearised the blow, so the tone brightened too little with velocity.
         key.feltStiffness = std::pow (10.0, 5.3097e-2 * n + 7.6425) * std::pow (1.0e-3, key.feltExponent);   // K per mm
+        // Felt is not elastic: part of the push depends on how fast it is being squeezed, and
+        // that part is lost as heat (Stulov 1995). Chabassier's D (RT-425, eq. 5, table A) gives
+        // the ratio of the viscous to the elastic term as a time: 3.4 ms at C1, falling to
+        // 0.3 ms at C3, 27 us at C5 and under 1 us at C8. So the bass felt loses much of each
+        // blow (the contact lasts 3-4 ms there) and the treble felt is nearly elastic.
+        key.feltDamping = std::pow (10.0, -4.366e-2 * n - 2.294);
         key.outerFeltDepth = lerp (1.0e-3, 0.1e-3, std::pow ((k - 1) / 87.0, 0.7));
         key.strikeRatio = kStrikeDistance[k - 1] / kLength[k - 1];   // about 0.12 of the speaking length on the D, top to bottom
         key.hammerWidth = lerp (12e-3, 5e-3, (k - 1) / 87.0);

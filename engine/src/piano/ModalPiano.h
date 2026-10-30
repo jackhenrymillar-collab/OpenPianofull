@@ -65,8 +65,6 @@ public:
         double longitudinalLossSlope = 0.15; // and its rise with frequency [1/s per Hz]
         bool contactSpread = true;          // the felt's contact patch widens as it is squeezed
         double crown = 1.0;                 // soundboard crown and downbearing (0 = flat, unloaded board)
-        double feltMemory = 0.95;           // felt relaxation strength (0 = perfectly elastic)
-        double feltRelaxTime = 3.0e-3;     // [s] how quickly squeezed felt relaxes
         double actionNoise = 1.0;           // key, hammer and damper noises (0 = silent action)
         double outerFelt = 0.02;            // stiffness of the soft outer felt, relative to the core
         double outerFeltScale = 0.0;        // depth of the soft outer felt (0 = Chabassier's single-layer felt as
@@ -81,11 +79,12 @@ public:
         double lid = 1.0;                   // lid opening (0 = closed, 1 = fully open)
         bool closeMics = false;             // listen from a close stereo mic pair (as on studio sample sets) instead of the player's seat
         double age = 0.0;                   // 0 = new piano, 1 = old and worn (see prepare)
-        double shankFlex = 0.0;             // hammer shank bending and head rocking (0 = rigid hammer). The
-                                            // tip-head spring is about as stiff as the felt itself, so a flexing
-                                            // hammer linearises the blow: contacts come out 25-50% too long and
-                                            // the tone barely brightens with velocity. Rigid, with the measured felt
-                                            // law, the contact durations match the published ones.
+        double shankFlex = 1.0;             // hammer shank bending (0 = rigid hammer). The shank is a hornbeam
+                                            // cantilever, about 6.5 mm thick and 125 mm from the flange to the head,
+                                            // so with the head on its end it bends at 60-100 Hz: far too slow to act
+                                            // inside a 1-2 ms blow (the hammer is rigid for the strings), but it sets
+                                            // how the hammer rebounds. (An earlier guess of 400 Hz, plus a 1.5 kHz
+                                            // head-rocking spring, acted inside the blow and lengthened it by 25-50%.)
         double softLift = 0.0;              // lifts the volume of soft bass notes without changing their tone, fading to none at the top (0 = off)
     };
 
@@ -159,13 +158,12 @@ private:
     {
         bool active = false;
         double position = 0, velocity = 0; // felt tip, moving towards the strings is positive
-        double headPos = 0, headVel = 0;   // the head's wooden core, which rocks against the tip
         double shankPos = 0, shankVel = 0; // the shank, which bends under the head
         int samplesSinceStrike = 0, samplesApart = 0;
         double feltSet = 0;        // copied from the key at the strike
         std::array<double, 3> gap {};          // hammer not perfectly level across the unison
         std::array<double, 3> lastCompression {};
-        std::array<double, 3> feltHistory {};  // relaxing part of the felt force, per string
+        std::array<double, 3> lastFelt {};     // the felt's elastic term a step ago, per string (for its damping)
         std::array<double, 3> forceSum {};     // per string, over the current sample
         std::array<double, 3> feltScale { 1, 1, 1 }; // each string meets slightly different felt
         double softFelt = 0;                   // una corda: struck with the softer, unworn felt
@@ -204,7 +202,7 @@ private:
     int tensionCounter = 0;
     long long sampleClock = 0;
     std::vector<double> tuneFactor;
-    static constexpr std::array<double, 88> kTunerCents { 3.2, 2.2, 1.4, 0.6, 3.3, 1.2, 0.9, 1.2, 4.8, 4.1, 0.3, 2.7, 0.0, 1.0, 4.0, 2.7, 3.8, 1.5, 1.6, -0.1, -0.16, -3.89, 1.6, 1.92, -0.5, -1.17, -3.08, -3.75, -4.02, -1.28, 2.7, 2.81, 2.53, 0.71, -0.87, -1.91, -1.72, -0.75, -1.42, 1.5, -2.48, -1.06, 2.31, 2.2, 3.01, 2.85, 1.9, 2.02, 1.78, 1.5, -2.23, 1.35, -1.1, 0.88, -5.21, -5.21, -5.41, 1.58, 0.97, -7.14, -7.33, -8.28, 0.76, -0.78, -1.42, 0.69, -3.49, -1.05, 0.83, 0.29, -0.48, 1.33, 0.14, 0.55, 0.33, -0.11, -0.02, -0.91, -1.18, 1.33, -1.16, -1.18, -0.83, 0.21, 0.24, 0.76, -0.9, 0.31 };   // filled by the tuning pass   // the tuner's correction per key, for the body's pull on its pitch
+    static constexpr std::array<double, 88> kTunerCents { 3.2, 2.2, 1.4, 0.6, 3.3, 1.2, 0.9, 1.2, 4.9, 4.1, 0.3, 2.7, 0.0, 1.1, 4.0, 2.7, 3.8, 1.5, 1.6, -0.2, -0.26, -3.91, 1.68, 1.88, -0.46, -1.33, -3.1, -3.77, -4.06, -1.24, 2.72, 2.81, 2.55, 0.69, -0.93, -1.99, -1.66, -0.81, -1.46, 1.5, -2.42, -1.08, 2.35, 2.2, 2.95, 2.79, 1.9, 2.04, 1.78, 1.53, -2.17, 1.36, -1.06, 0.9, -5.21, -5.19, -5.37, 1.66, 1.07, -7.19, -7.29, -8.32, 0.74, -0.84, -1.42, 0.73, -3.41, -0.45, 0.79, 0.29, -0.52, 1.27, 0.08, 0.45, 0.29, -0.11, 0.14, -0.97, -1.24, 1.37, -1.14, 0.44, -0.83, 0.19, 0.18, 0.78, -0.96, -0.31 };   // filled by the tuning pass   // the tuner's correction per key, for the body's pull on its pitch
 
     // Each string's modes are stored in two parts: the low ones it keeps while only
     // resonating sit in one region, back to back with every other string's, and the rest
