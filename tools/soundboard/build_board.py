@@ -304,6 +304,7 @@ FRAME_A, FRAME_I = 0.0022, 2.6e-6          # bar section [m^2], bending [m^4] (8
 FRONT_Y = -0.05                             # the front bar, just ahead of the belly rail
 BOLT_K = 2.0e7                              # each bolt into the rim [N/m]
 PINBLOCK_K = float(os.environ.get("PINBLOCK_K", "5e7"))   # the pin block under each front-bar node [N/m]
+PINBLOCK_KA = float(os.environ.get("PINBLOCK_KA", "3.3e10"))   # the pin block under the pin-field web, per unit area [N/m^3]
 BELL_Y, BELL_K = 0.45, 1.0e9                # the treble bell's bolt: where along the bentside, and its stiffness (steel bolt through iron) [N/m]
 
 
@@ -957,10 +958,28 @@ def main():
     # that the plate's front flange is screwed down onto every few cm. It holds the front bar
     # (and the strings' far ends on it) along its whole length, not just at the end bolts: a
     # stiff, lossy wooden support (screw joints and wood, eta ~0.05)
+    # A point forward of the rail (y < 0) sits on the pin block's lever: it moves w - lever * twist
+    # of the front ring, like the front legs. The plate's pin-field web lies on the pin block over
+    # its whole area (bolted and screwed down through it, the pin holes drilled through both), so
+    # each web node over the block is held by the block's wood under its own patch (laminated
+    # maple across its plies, E ~1.5 GPa over 4.5 cm: PINBLOCK_KA per unit area).
     if not os.environ.get('NO_PINBLOCK'):
+        def pin_row(fn):
+            r_ = nearest_ring(Cfr[fn, 0], max(0.0, Cfr[fn, 1]))
+            row = [(pos_of[rlin[r_]], 1.0), (oF + int(fn), -1.0)]
+            if Cfr[fn, 1] < 0 and GEOM.get("front") and not os.environ.get("NO_KEYBED"):
+                row.append((oT + r_, Cfr[fn, 1]))
+            return row
         pinN = list(frontNodes) + [k_ for k_ in FRAME_INFO.get("pin_nodes", []) if k_ not in set(frontNodes)]
-        pb = spring_rows([[(pos_of[rlin[nearest_ring(Cfr[fn, 0], max(0.0, Cfr[fn, 1]))]], 1.0), (oF + int(fn), -1.0)] for fn in pinN])
+        pb = spring_rows([pin_row(fn) for fn in pinN])
         gparts["pinblock"] = pb.T @ pb * PINBLOCK_K
+        if GEOM.get("front") and not os.environ.get("NO_PINFIELD"):
+            yF = float(GEOM["front"].get("plate_front_y", -0.33))
+            pf = [k_ for k_ in FRAME_INFO.get("web_nodes", []) if yF - 1e-6 <= Cfr[k_, 1] < -0.5 * WEB_DX and k_ not in set(pinN)]
+            if pf:
+                pw = spring_rows([pin_row(fn) for fn in pf])
+                gparts["pinblock"] = gparts["pinblock"] + pw.T @ pw * (PINBLOCK_KA * WEB_DX * WEB_DX)
+                print(f"pin field: {len(pf)} web nodes held by the pin block ({PINBLOCK_KA * WEB_DX ** 2:.2g} N/m each)")
     # The strings themselves. Every string under tension T is a spring between the bridge and
     # the iron frame: T / L along its speaking length to the agraffe or capo bar on the front bar,
     # and T / Lb along its short back length to the hitch pin on the frame behind the bridge.
@@ -1677,11 +1696,26 @@ def main():
         axz = np.array([string_front(int(round(k_)))[0] for k_ in zkeys])
     fidx = np.flatnonzero(isFrame & (f < 3000.0))
     fphi = np.array([[np.interp(x_, frontX, frontV[:, i]) for x_ in axz] for i in fidx]).reshape(len(fidx), N_BASS + N_TREBLE)
-    # The plate's webs bring many local panel modes that hardly move the front bar where the
-    # strings end: the engine only drives the frame there, so they would do nothing but cost time
+    # The plate's webs bring many panel modes. A string feels its far end through that end's
+    # mobility, beside the bridge's at its other end: a frame mode whose peak mobility where the
+    # zone's strings end (phi^2 / (w eta)) stays well under the bridge's own mobility there (the
+    # board table's |Y| at that zone, averaged over a third octave) changes the string's losses
+    # and pitch by a few percent at most, so the engine leaves it out (FRAME_KEEP, default 0.1)
     if len(fidx):
-        live = np.abs(fphi).max(1) >= 0.02 * np.abs(fphi).max()
-        print(f"frame table: {live.sum()} of {len(fidx)} frame modes move the strings' ends (>= 2% of the strongest)")
+        keepF = float(os.environ.get("FRAME_KEEP", "0.1"))
+        bi_ = np.flatnonzero(keepB); wB = 2 * np.pi * f[bi_]; etB = (etaRad + etaStruct + etaAir)[bi_]
+        def board_Y(z, fq):
+            wq = 2 * np.pi * fq
+            return np.abs(np.sum(1j * wq * phi[z, bi_] ** 2 / (wB ** 2 - wq ** 2 + 1j * etB * wB * wq)))
+        ratio = np.zeros(len(fidx))
+        for k_, i in enumerate(fidx):
+            z = int(np.argmax(fphi[k_] ** 2))
+            Yf = fphi[k_, z] ** 2 / (2 * np.pi * f[i] * max(etaStruct[i], 1e-4))
+            fs_ = f[i] * 2.0 ** np.linspace(-1 / 6, 1 / 6, 15)
+            ratio[k_] = Yf / np.exp(np.mean(np.log([board_Y(z, x_) for x_ in fs_])))
+        live = ratio >= keepF
+        print(f"frame table: {live.sum()} of {len(fidx)} frame modes reach {keepF:g} of the bridge's mobility where the strings end "
+              f"({(ratio >= 1).sum()} above it)")
         fidx, fphi = fidx[live], fphi[live]
     frad = np.array([radL[i] for i in fidx])
     write_frame(args.frame_out, f[fidx], fphi, frad, etaStruct[fidx])
