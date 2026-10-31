@@ -284,6 +284,15 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
         const cd poleOs = std::exp (cd (-sigma, w) * (Ts / os));
         const cd gain = pole * (Ts / w);          // impulse-invariant acceleration input
         const cd gainOs = poleOs * (Ts / os / w);
+        // The bridge's acceleration each sample is the change of its velocity over that sample,
+        // so it belongs to the sample's middle: the free strings (stepModesDeferred) take it
+        // half a sample before the state they report. Taken a whole sample early, as the state
+        // update alone would have it, the string's force against the bridge's velocity has a
+        // negative real part just below each partial (0.1% of its peak at 1 kHz, 60% at 20 kHz),
+        // and with the bridge's sideways mobility above 3 kHz that fed a note's own sideways
+        // modes until they grew (C6 on the photo-traced body: +4 dB/s). At half a sample the
+        // discrete admittance is positive real at every frequency, like the string's own.
+        const cd gainBridge = std::exp (cd (-sigma, w) * (0.5 * Ts)) * (Ts / w);
 
         // Bridge coupling. With the bridge end moving by u_b, mode n feels an
         // acceleration beta * u_b'' (beta = -2 (-1)^(n+1) / (n pi)), and the string pushes
@@ -299,7 +308,7 @@ int ModalPiano::addString (const StringSpec& spec, int keyIndex, Kind kind, doub
         m.prFree.push_back ((float) pole.real()); m.piFree.push_back ((float) pole.imag());
         m.prDamp.push_back (0); m.piDamp.push_back (0);
         m.gr.push_back ((float) gain.real()); m.gi.push_back ((float) gain.imag());
-        m.bgr.push_back ((float) (gain.real() * beta)); m.bgi.push_back ((float) (gain.imag() * beta));
+        m.bgr.push_back ((float) (gainBridge.real() * beta)); m.bgi.push_back ((float) (gainBridge.imag() * beta));
         m.fk.push_back ((float) (spec.tension * sign * n * M_PI / L));
         m.beta.push_back ((float) beta);
         m.alt.push_back ((float) sign);
