@@ -68,9 +68,11 @@ namespace
     // each key's neighbours (a five-key running median of the unvoiced levels, so the register
     // trend is left to the physics), within what needling and hardening can do (1/3 to 3 times).
     // Unevenness 3.6 -> 1.2 dB rms; D#6 and G#7 stay 5 and 3 dB quiet, which is not the hammer.
+    constexpr double kFeltScale = 0.1;        // of RT-425's proposed felt stiffness (see below)
+    constexpr double kFeltHysteresis = 0.03;  // of RT-425's viscous-to-elastic time (see below)
     constexpr double kTopVoicing[25] = {
-        0.33, 0.86, 1.00, 3.00, 0.78, 0.40, 1.06, 1.00, 1.51, 0.71, 3.00, 3.00, 1.00,
-        0.33, 0.53, 3.00, 0.87, 3.00, 0.55, 0.89, 1.59, 1.00, 1.55, 0.56, 1.00 };
+        1.00, 0.67, 1.18, 0.90, 1.00, 1.00, 1.37, 2.12, 0.49, 0.68, 1.84, 0.89, 0.85,
+        1.49, 1.00, 0.55, 1.00, 1.00, 1.46, 1.00, 2.06, 0.74, 0.43, 3.00, 1.00 };
 
     constexpr double kStrikeDistance[88] = {
         0.241, 0.241, 0.241, 0.241, 0.240, 0.238, 0.236, 0.233, 0.229, 0.225, 0.221, 0.217,
@@ -269,21 +271,29 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         // keyboard. No per-note voicing here: a technician's work is left to the voicing tables.
         key.hammerMass = -6.2348e-5 * n + 0.0112;
         key.feltExponent = 2.4295e-4 * n * n - 0.007703 * n + 2.337;
-        // Chabassier's stiffness is used as measured. With a rigid hammer and no soft outer layer
-        // (see ModalPiano::Settings) it gives the published hammer-string contact durations on a
-        // D: about 2 ms at C4, 1.2 ms at C6 and 0.9 ms at C7 at mezzo-forte, 30% shorter at
-        // fortissimo (Askenfelt & Jansson 1990). The old factor of 10 was compensating for the
-        // outer layer and the hammer's internal springs, which lengthened every contact by 25-50%
-        // and linearised the blow, so the tone brightened too little with velocity.
-        key.feltStiffness = std::pow (10.0, 5.3097e-2 * n + 7.6425) * std::pow (1.0e-3, key.feltExponent);   // K per mm
+        // The report's stiffness (eq. 4) is a proposal, not a measurement, and with it the felt
+        // hardly compresses: 0.3 mm at C4 fortissimo, where measured hammers give about 1 mm, so
+        // the blow is set by the string's impedance and not by the felt. The force then rises to
+        // its peak within 0.1 ms of contact at every dynamic, the pulse carries far too much
+        // above 2 kHz at pianissimo (the tenor's soft notes sat 17 dB too bright up there
+        // against the recordings) and brightens too little with velocity. One tenth of that
+        // stiffness (kFeltScale) puts the felt back in charge: C4 compresses 0.6 mm at pp and
+        // 0.8 mm at ff, the soft and loud notes' content above 2 kHz matches the recorded grand
+        // within 1.5 dB from A2 to G#4 and its rise with velocity within 1 dB (16 dB), with
+        // contact durations of 2.5 ms at C4, 1.8 at C6 and 1.5 at C7 at mezzo-forte.
+        key.feltStiffness = kFeltScale * std::pow (10.0, 5.3097e-2 * n + 7.6425) * std::pow (1.0e-3, key.feltExponent);   // K per mm
         if (key.midiNote >= 84)
             key.feltStiffness *= kTopVoicing[std::min (24, key.midiNote - 84)];
         // Felt is not elastic: part of the push depends on how fast it is being squeezed, and
-        // that part is lost as heat (Stulov 1995). Chabassier's D (RT-425, eq. 5, table A) gives
-        // the ratio of the viscous to the elastic term as a time: 3.4 ms at C1, falling to
-        // 0.3 ms at C3, 27 us at C5 and under 1 us at C8. So the bass felt loses much of each
-        // blow (the contact lasts 3-4 ms there) and the treble felt is nearly elastic.
-        key.feltDamping = std::pow (10.0, -4.366e-2 * n - 2.294);
+        // that part is lost as heat (Stulov 1995). RT-425's eq. 5 makes the ratio of the viscous
+        // to the elastic term a time of 3.4 ms at C1, longer than the blow itself: the bass
+        // felt then acts as a dashpot (97% of the force viscous, the force a step at contact
+        // instead of a 4 ms bell) and the blow is linear, so it neither brightens nor shortens
+        // with velocity. Measured hammers (Stulov 1995, Giordano & Millis 2004) show a loading
+        // curve some 30-50% above the unloading one at a fast blow, which the same law gives
+        // with the time cut to 3% (kFeltHysteresis): 100 us at C1, 1 us at C5. The bass pulse is
+        // then a smooth bell and the treble felt stays nearly elastic.
+        key.feltDamping = kFeltHysteresis * std::pow (10.0, -4.366e-2 * n - 2.294);
         key.outerFeltDepth = lerp (1.0e-3, 0.1e-3, std::pow ((k - 1) / 87.0, 0.7));
         key.strikeRatio = kStrikeDistance[k - 1] / kLength[k - 1];   // about 0.12 of the speaking length on the D, top to bottom
         key.hammerWidth = lerp (12e-3, 5e-3, (k - 1) / 87.0);
