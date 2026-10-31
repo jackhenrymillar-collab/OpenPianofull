@@ -682,8 +682,8 @@
   ],
   [
    [
-    1.0958,
-    0.2061
+    1.355,
+    0.02
    ],
    [
     0.5491,
@@ -692,8 +692,8 @@
   ],
   [
    [
-    1.1669,
-    0.3165
+    1.355,
+    0.181
    ],
    [
     0.6033,
@@ -702,8 +702,8 @@
   ],
   [
    [
-    1.2349,
-    0.4278
+    1.355,
+    0.341
    ],
    [
     0.6205,
@@ -712,8 +712,8 @@
   ],
   [
    [
-    1.2953,
-    0.5665
+    1.355,
+    0.524
    ],
    [
     0.6238,
@@ -732,8 +732,8 @@
   ],
   [
    [
-    1.3654,
-    0.8535
+    1.355,
+    0.861
    ],
    [
     0.6527,
@@ -742,8 +742,8 @@
   ],
   [
    [
-    1.3665,
-    1.0502
+    1.355,
+    1.058
    ],
    [
     0.6665,
@@ -752,8 +752,8 @@
   ],
   [
    [
-    1.3654,
-    1.2216
+    1.355,
+    1.229
    ],
    [
     0.6739,
@@ -762,8 +762,8 @@
   ],
   [
    [
-    1.3708,
-    1.4046
+    1.355,
+    1.416
    ],
    [
     0.7036,
@@ -772,8 +772,8 @@
   ],
   [
    [
-    1.3711,
-    1.5815
+    1.355,
+    1.593
    ],
    [
     0.8245,
@@ -782,8 +782,8 @@
   ],
   [
    [
-    1.3696,
-    1.7649
+    1.355,
+    1.775
    ],
    [
     1.0344,
@@ -2401,5 +2401,6 @@
   ]
  ],
  "plate_mass": 160.0,
- "_comment_case": "case_outer: outer edge of the rim traced from the overhead photo (behind the belly rail); case_inner: its inner face, case_outer offset in by the spec rim thickness 8.26 cm (photo: black outer rim 5-6 cm + inner-rim liner ~2.5 cm). plate_mass: target plate mass [kg]; published estimates over 300 lb to about 450 lb (136-204 kg)."
+ "_comment_case": "case_outer: outer edge of the rim traced from the overhead photo (behind the belly rail); case_inner: its inner face, case_outer offset in by the spec rim thickness 8.26 cm (photo: black outer rim 5-6 cm + inner-rim liner ~2.5 cm). plate_mass: target plate mass [kg]; published estimates over 300 lb to about 450 lb (136-204 kg).",
+ "_comment_ribs": "2026-10-31: ribs 6-9 run to the board edge at the spine (x 1.355) like every other rib. The report's figure stopped them on a diagonal 15-30 cm short of the spine, which left a 35 x 40 cm unribbed panel beside the bass bridge resonating at 85-97 Hz; the D's ribs are fitted into the rim all round."
 }

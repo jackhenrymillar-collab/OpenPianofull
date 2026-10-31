@@ -792,8 +792,11 @@ void ModalPiano::buildSoundboard()
         highLeftState = highRightState = highLeftState2 = highRightState2 = 0;
     }
 
-    // Overall level: a mezzo-forte middle C peaks around -20 dBFS, fortissimo around -10
-    outputGain = 21.5 * 0.74;  // the body at full strength is ~8 dB louder; 0.4 -> 0.74 keeps the old mf loudness with the 3 m/s velocity map
+    // Overall level: a mezzo-forte middle C peaks around -26 dBFS, fortissimo around -16, so
+    // that a full fortissimo chord with the pedal down stays under the plugin's safety clipper
+    // (it rounds off peaks above -2 dBFS; a Nocturne render at the old gain pushed 6000
+    // samples into it, which was heard as distortion on the loud notes)
+    outputGain = 21.5 * 0.74 * 0.5;
     buildBridgeAdmittance();
     buildBody();
 }

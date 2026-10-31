@@ -68,11 +68,11 @@ namespace
     // each key's neighbours (a five-key running median of the unvoiced levels, so the register
     // trend is left to the physics), within what needling and hardening can do (1/3 to 3 times).
     // Unevenness 3.6 -> 1.2 dB rms; D#6 and G#7 stay 5 and 3 dB quiet, which is not the hammer.
-    constexpr double kFeltScale = 0.1;        // of RT-425's proposed felt stiffness (see below)
-    constexpr double kFeltHysteresis = 0.03;  // of RT-425's viscous-to-elastic time (see below)
+    constexpr double kFeltScale = 0.3;        // of RT-425's proposed felt stiffness (see below)
+    constexpr double kFeltHysteresis = 0.1;   // of RT-425's viscous-to-elastic time (see below)
     constexpr double kTopVoicing[25] = {
-        1.00, 0.67, 1.18, 0.90, 1.00, 1.00, 1.37, 2.12, 0.49, 0.68, 1.84, 0.89, 0.85,
-        1.49, 1.00, 0.55, 1.00, 1.00, 1.46, 1.00, 2.06, 0.74, 0.43, 3.00, 1.00 };
+        1.00, 0.49, 2.05, 0.60, 1.00, 1.00, 1.00, 1.16, 1.53, 1.00, 1.00, 0.33, 0.41,
+        2.68, 0.73, 0.93, 1.00, 1.01, 1.48, 0.98, 2.68, 0.72, 0.37, 3.00, 1.03 };
 
     constexpr double kStrikeDistance[88] = {
         0.241, 0.241, 0.241, 0.241, 0.240, 0.238, 0.236, 0.233, 0.229, 0.225, 0.221, 0.217,
@@ -276,11 +276,13 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         // the blow is set by the string's impedance and not by the felt. The force then rises to
         // its peak within 0.1 ms of contact at every dynamic, the pulse carries far too much
         // above 2 kHz at pianissimo (the tenor's soft notes sat 17 dB too bright up there
-        // against the recordings) and brightens too little with velocity. One tenth of that
-        // stiffness (kFeltScale) puts the felt back in charge: C4 compresses 0.6 mm at pp and
-        // 0.8 mm at ff, the soft and loud notes' content above 2 kHz matches the recorded grand
-        // within 1.5 dB from A2 to G#4 and its rise with velocity within 1 dB (16 dB), with
-        // contact durations of 2.5 ms at C4, 1.8 at C6 and 1.5 at C7 at mezzo-forte.
+        // against the recordings) and brightens too little with velocity. A tenth of that
+        // stiffness matched the tenor's content above 2 kHz but was heard as soft and dull
+        // over the whole piano. At three tenths (kFeltScale) the felt is in charge without
+        // going limp: the tenor's loud notes match the recorded grand above 2 kHz within 1 dB,
+        // its soft ones sit 8 dB bright, the brightening with velocity (spectral centroid,
+        // ff over pp) is 1.23 against the recorded 1.28 and the contact durations are 2.2 ms
+        // at C4, 1.5 at C6 and 1.2 at C7 at mezzo-forte (published: 2.0, 1.2 and 0.96).
         key.feltStiffness = kFeltScale * std::pow (10.0, 5.3097e-2 * n + 7.6425) * std::pow (1.0e-3, key.feltExponent);   // K per mm
         if (key.midiNote >= 84)
             key.feltStiffness *= kTopVoicing[std::min (24, key.midiNote - 84)];
@@ -291,8 +293,8 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         // instead of a 4 ms bell) and the blow is linear, so it neither brightens nor shortens
         // with velocity. Measured hammers (Stulov 1995, Giordano & Millis 2004) show a loading
         // curve some 30-50% above the unloading one at a fast blow, which the same law gives
-        // with the time cut to 3% (kFeltHysteresis): 100 us at C1, 1 us at C5. The bass pulse is
-        // then a smooth bell and the treble felt stays nearly elastic.
+        // with the time cut to a tenth (kFeltHysteresis): 340 us at C1, 3 us at C5. The bass
+        // pulse is then a smooth bell and the treble felt stays nearly elastic.
         key.feltDamping = kFeltHysteresis * std::pow (10.0, -4.366e-2 * n - 2.294);
         key.outerFeltDepth = lerp (1.0e-3, 0.1e-3, std::pow ((k - 1) / 87.0, 0.7));
         key.strikeRatio = kStrikeDistance[k - 1] / kLength[k - 1];   // about 0.12 of the speaking length on the D, top to bottom
