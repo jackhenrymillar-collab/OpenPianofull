@@ -68,13 +68,13 @@ namespace
     // each key's neighbours (a five-key running median of the unvoiced levels, so the register
     // trend is left to the physics), within what needling and hardening can do (1/2 to 2 times).
     // With the hard treble felt the strings' impedance sets the blow and the felt moves a
-    // note's loudness much less: unevenness 2.9 -> 2.1 dB rms, C6 and G#7 stay 5 dB quiet.
+    // note's loudness much less: unevenness 2.7 -> 1.8 dB rms, C6 and G#7 stay 5 dB quiet.
     // The remaining ripple is the fundamental's place against the pulse's null, not the hammer.
     constexpr double kFeltScale = 0.3;        // of RT-425's proposed felt stiffness (see below)
     constexpr double kFeltHysteresis = 0.1;   // of RT-425's viscous-to-elastic time (see below)
     constexpr double kTopVoicing[25] = {
-        2.00, 0.50, 0.50, 1.00, 1.00, 1.00, 1.00, 2.00, 0.50, 1.00, 1.66, 1.00, 0.50,
-        2.00, 0.50, 1.10, 1.00, 0.67, 1.00, 1.00, 2.00, 0.77, 0.50, 2.00, 1.12 };
+        2.00, 0.50, 0.50, 1.00, 1.00, 1.00, 1.33, 2.00, 0.50, 0.93, 1.71, 1.00, 0.50,
+        2.00, 0.50, 1.94, 1.00, 0.50, 1.49, 1.00, 2.00, 0.69, 0.50, 1.34, 1.00 };
 
     constexpr double kStrikeDistance[88] = {
         0.241, 0.241, 0.241, 0.241, 0.240, 0.238, 0.236, 0.233, 0.229, 0.225, 0.221, 0.217,
@@ -304,6 +304,20 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         {
             const double xRef = k <= 64 ? 0.5 + 0.1 * std::max (0.0, (k - 52) / 12.0) : std::min (1.1, 0.6 + 0.5 * (k - 64) / 12.0);
             key.feltStiffness *= std::pow (1.0 / xRef, key.feltExponent - pReport) * std::pow (2.0, hardening);   // (K is per mm)
+        }
+        // The top octave's hammers are harder still: small, lacquered heads that a voicer leaves
+        // hard so the shortest strings speak at all. With the law above a C8 fortissimo still
+        // compressed the felt 1.0 mm (measured treble hammers: 0.2-0.4 mm) and a pianissimo blow
+        // sat in the soft toe, where the contact outlasts four periods of the string and the
+        // pulse's spectrum has a null at the fundamental: the recorded grand's C8 fundamental
+        // is 21 dB quieter at pp than at ff, this model's was 52 dB. From F6 to C8 the felt
+        // becomes ten times stiffer at 1 mm and its law nearly quadratic (p 2.5, as hard
+        // felt measures), so the contact barely changes with velocity: C8 compresses 0.3 mm
+        // at ff, its fundamental at pp and ff within 2 dB of the recording.
+        {
+            const double top = std::clamp ((k - 70) / 18.0, 0.0, 1.0);
+            key.feltStiffness *= std::pow (10.0, top);
+            key.feltExponent += top * (2.5 - key.feltExponent);
         }
         if (key.midiNote >= 84)
             key.feltStiffness *= kTopVoicing[std::min (24, key.midiNote - 84)];
