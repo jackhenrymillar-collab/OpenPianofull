@@ -66,13 +66,15 @@ namespace
     // note's loudness by 10 dB; every concert grand is voiced hammer by hammer for that reason.
     // These factors on the felt stiffness were set once for even mezzo-forte loudness against
     // each key's neighbours (a five-key running median of the unvoiced levels, so the register
-    // trend is left to the physics), within what needling and hardening can do (1/3 to 3 times).
-    // Unevenness 3.6 -> 1.2 dB rms; D#6 and G#7 stay 5 and 3 dB quiet, which is not the hammer.
+    // trend is left to the physics), within what needling and hardening can do (1/2 to 2 times).
+    // With the hard treble felt the strings' impedance sets the blow and the felt moves a
+    // note's loudness much less: unevenness 2.9 -> 2.1 dB rms, C6 and G#7 stay 5 dB quiet.
+    // The remaining ripple is the fundamental's place against the pulse's null, not the hammer.
     constexpr double kFeltScale = 0.3;        // of RT-425's proposed felt stiffness (see below)
     constexpr double kFeltHysteresis = 0.1;   // of RT-425's viscous-to-elastic time (see below)
     constexpr double kTopVoicing[25] = {
-        1.00, 0.49, 2.05, 0.60, 1.00, 1.00, 1.00, 1.16, 1.53, 1.00, 1.00, 0.33, 0.41,
-        2.68, 0.73, 0.93, 1.00, 1.01, 1.48, 0.98, 2.68, 0.72, 0.37, 3.00, 1.03 };
+        2.00, 0.50, 0.50, 1.00, 1.00, 1.00, 1.00, 2.00, 0.50, 1.00, 1.66, 1.00, 0.50,
+        2.00, 0.50, 1.10, 1.00, 0.67, 1.00, 1.00, 2.00, 0.77, 0.50, 2.00, 1.12 };
 
     constexpr double kStrikeDistance[88] = {
         0.241, 0.241, 0.241, 0.241, 0.240, 0.238, 0.236, 0.233, 0.229, 0.225, 0.221, 0.217,
@@ -270,7 +272,18 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         // (stiffness K in F = K x^p) and its force law steeper (p from 2.3 to 3.5) up the
         // keyboard. No per-note voicing here: a technician's work is left to the voicing tables.
         key.hammerMass = -6.2348e-5 * n + 0.0112;
-        key.feltExponent = 2.4295e-4 * n * n - 0.007703 * n + 2.337;
+        const double pReport = 2.4295e-4 * n * n - 0.007703 * n + 2.337;
+        // Treble felt is harder and more nonlinear than the report's law. The recorded grand's
+        // C6 goes from nothing above 3 kHz at mezzo-forte to a flat shelf of partials out to
+        // 15 kHz at fortissimo (its partials 8-12 only 50-80 dB under the fundamental, and
+        // ringing for a second); with p = 2.8 the blow's spectrum rolls off 25-45 dB below
+        // that by 10 kHz at every stiffness, because the strings' impedance limits the blow in
+        // the treble and the felt only compresses some 15 percent more from mf to ff. A steeper
+        // law gives the contrast: soft blows stay in the soft toe of the curve, hard ones meet
+        // a stiff felt that puts a sharp top on the pulse. p rises from the report's value at
+        // C4 to 4.8 at C6 and stays there (hard, lacquered treble hammers measure p of 4 to 5)
+        const double hardening = std::clamp ((k - 40) / 24.0, 0.0, 1.0);
+        key.feltExponent = std::min (pReport + 2.0 * hardening, 4.8);
         // The report's stiffness (eq. 4) is a proposal, not a measurement, and with it the felt
         // hardly compresses: 0.3 mm at C4 fortissimo, where measured hammers give about 1 mm, so
         // the blow is set by the string's impedance and not by the felt. The force then rises to
@@ -283,7 +296,15 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         // its soft ones sit 8 dB bright, the brightening with velocity (spectral centroid,
         // ff over pp) is 1.23 against the recorded 1.28 and the contact durations are 2.2 ms
         // at C4, 1.5 at C6 and 1.2 at C7 at mezzo-forte (published: 2.0, 1.2 and 0.96).
-        key.feltStiffness = kFeltScale * std::pow (10.0, 5.3097e-2 * n + 7.6425) * std::pow (1.0e-3, key.feltExponent);   // K per mm
+        key.feltStiffness = kFeltScale * std::pow (10.0, 5.3097e-2 * n + 7.6425) * std::pow (1.0e-3, pReport);   // K per mm
+        // The steeper law keeps the report's force at the key's own fortissimo compression
+        // (0.5 mm at C4-C5, 0.6 at C6, 1.1 from C7 up, as the engine logs it), so loud blows
+        // keep their peak force and contact time; then the treble felt is twice as stiff,
+        // which sets the fortissimo shelf's level (C6 partials 8-12 within 8 dB of the recording)
+        {
+            const double xRef = k <= 64 ? 0.5 + 0.1 * std::max (0.0, (k - 52) / 12.0) : std::min (1.1, 0.6 + 0.5 * (k - 64) / 12.0);
+            key.feltStiffness *= std::pow (1.0 / xRef, key.feltExponent - pReport) * std::pow (2.0, hardening);   // (K is per mm)
+        }
         if (key.midiNote >= 84)
             key.feltStiffness *= kTopVoicing[std::min (24, key.midiNote - 84)];
         // Felt is not elastic: part of the push depends on how fast it is being squeezed, and

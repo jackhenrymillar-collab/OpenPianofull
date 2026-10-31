@@ -46,11 +46,13 @@ namespace
     constexpr double kAirDensity = 1.2, kAirViscosity = 1.5e-5;   // kg/m^3, m^2/s
     double internalDecay (double f, const StringSpec& spec)
     {
-        // Material constants, chosen once for the whole keyboard on the late decay rates of the
-        // octave bands (A0-B1 2.7, C6-B6 6, C7-C8 12 dB/s on the reference grand): the
-        // viscoelastic loss factor of the steel and a constant loss per cycle for plain and for
-        // copper-wound strings (the winding rubs on the core)
-        constexpr double dVe = 2.2e-3, d0P = 1.0e-4, d0W = 3.0e-4;
+        // Material constants, chosen once for the whole keyboard: the viscoelastic loss factor
+        // of the steel on the decay of the treble's high partials (the recorded C6's partials
+        // 8-10, at 9-12 kHz, lose 110-160 dB/s in their first 300 ms; twice this value had
+        // them twice as fast), and a constant loss per cycle for plain and for copper-wound
+        // strings (the winding rubs on the core) on the late decay rates of the octave bands
+        // (A0-B1 2.7, C6-B6 6, C7-C8 12 dB/s on the reference grand)
+        constexpr double dVe = 1.1e-3, d0P = 1.0e-4, d0W = 3.0e-4;
         const double w = 2.0 * M_PI * f;
         const double d = spec.outerDiameter;
         const double rhoEff = spec.linearDensity / (M_PI * d * d / 4.0);              // mass per volume the air sees
