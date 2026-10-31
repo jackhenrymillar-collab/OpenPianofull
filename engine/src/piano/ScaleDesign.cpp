@@ -240,11 +240,12 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         key.stretchCents = 1200.0 * std::log2 (key.targetFrequency / equalTempered (key.midiNote));
 
         // Unison: trichord offsets around the centre; the exact amount varies per key.
-        // One tuner's rule for the whole keyboard: after a concert tuning the strings of a unison
-        // drift 0.5 to 1.5 cents either side of the centre (Weinreich's measured grands sit 1 to
-        // 3 cents across the unison). No register is tuned closer or looser than another: how fast
-        // a unison's in-step motion drains and how long its out-of-step tail rings is left to the
-        // bridge coupling, not to the tuning
+        // One tuner's rule for the whole keyboard: a careful concert tuning leaves the strings of a
+        // unison a few tenths of a cent either side of the centre. That close, the bridge locks
+        // them together: the in-step motion drains fast (the prompt sound) and the out-of-step
+        // motion rings on as the long tail, which is the treble's double decay (A4-F#5 early
+        // 28 dB/s, late 3.7 against 33 and 3.2 recorded; at 1 cent the early slope was 16 and
+        // the tail 6). No register is tuned closer or looser than another
         const double spread = unisonSpreadCents * (1.0 + 0.5 * keyNoise (k, 1));
         // Every key's pattern differs: which string is high or low, and by how much
         const double offsets3[3] = { -spread * (1.0 + 0.15 * keyNoise (k, 3)), 0.25 * spread * keyNoise (k, 2),
