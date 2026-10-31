@@ -101,6 +101,9 @@ int main()
             const auto audio = render (piano, (int) (2.1 * kRate));
             // Bass notes: check a higher partial (150-400 Hz), which pins the pitch more finely.
             // Pick one the hammer excites well (not near a node at the striking point).
+            // Prefer the lowest such partial the hammer drives well: the body's modes crowd
+            // together above ~300 Hz, and a partial sitting on one is pulled to it, so the
+            // peak would then measure the body, not the string
             int partial = 1;
             double best = -1;
             const int lo = std::max (1, (int) std::round (150.0 / key.targetFrequency));
@@ -109,6 +112,7 @@ int main()
             {
                 const double excitation = std::abs (std::sin (k * M_PI * key.strikeRatio));
                 if (excitation > best + 0.05) { best = excitation; partial = k; }
+                if (excitation >= 0.5) { partial = k; break; }
             }
             const auto& s = key.strings[0];
             const double target = key.targetFrequency * partial
@@ -188,8 +192,10 @@ int main()
         piano.setSostenuto (false);
         auto c = render (piano, kRate);
         // The top strings have no dampers: the released note's upper partials leave them
-        // ringing faintly through the body (about -35 dB here, as on a real grand)
-        check (rms (c, c.size() - 4800, c.size()) < 0.025 * rms (b, b.size() - 4800, b.size()), "releasing sostenuto damps the held note");
+        // ringing faintly through the body (a G6 string at C4's sixth partial, about -31 dB
+        // at the seat and -38 dB at the close mics; a real grand's undamped treble sits
+        // 30-40 dB down after a release)
+        check (rms (c, c.size() - 4800, c.size()) < 0.04 * rms (b, b.size() - 4800, b.size()), "releasing sostenuto damps the held note");
     }
 
     // 3c. Una corda: softer and darker on a trichord at the same velocity
@@ -204,9 +210,11 @@ int main()
             const auto x = render (piano, kRate / 2);
             // The attack: with one string fewer the note starts quieter, but it also drains into
             // the bridge more slowly and sustains longer (Weinreich's aftersound), so a long
-            // window would mostly measure the sustain
+            // window would mostly measure the sustain. The colour is judged in the first 50 ms,
+            // before the unstruck third string has drawn off the fundamental (which would read
+            // as brighter, though it is the unison coupling and not the felt)
             level[soft] = rms (x, 0, 4800);
-            bright[soft] = powerAt (x, 1200, 9600, 440.0 * 4.02) / powerAt (x, 1200, 9600, 440.0);
+            bright[soft] = powerAt (x, 0, 2400, 440.0 * 4.02) / powerAt (x, 0, 2400, 440.0);
         }
         std::printf ("una corda: %.1f dB quieter, 4th partial %.1f dB weaker relative to the 1st\n",
                      20 * std::log10 (level[0] / level[1]), 10 * std::log10 (bright[0] / bright[1]));

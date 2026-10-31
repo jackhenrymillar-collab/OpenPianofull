@@ -16,22 +16,13 @@ namespace openpiano::piano
 
 // Sources
 // -------
-// Speaking lengths: Yamaha C5 (about 200 cm), the piano of the Salamander reference recordings.
-//   No full C5 table is published, so these are the Steinway D lengths of Chabassier & Duruflé
-//   (INRIA RT-0425, 2012) kept from C4 up and shortened below it: x0.80 at F2 rising to x1 at C4,
-//   x0.66-0.72 on the bass bridge (A0 about 1.33 m), in line with measured 2 m grands.
-//   The jump at key 21 is the break between the bass bridge and the treble bridge.
-// String layout: monochords A0-E1, bichords F1-E2 (bass bridge), trichords F2-C8, with the
-//   first trichords still copper-wound. Dampers stop at F6, as on concert grands.
-// Hammers (key number n = 1..88), from J. O. Smith, "Physical Audio Signal Processing",
-//   after Conklin, Hall and Stulov:
-//   mass m = 11.074 - 0.074 n + 0.0001 n^2 grams
-//   felt force F = Q0 * x^p, x = felt compression in mm, Q0 = 183 e^(0.045 n), p = 2.5 to 4 from bass to treble
-// Wire: steel E = 2.0e11 Pa, density 7850 kg/m^3; copper winding 8960 kg/m^3.
-//   Plain strings use standard piano-wire gauges in 0.025 mm steps, chosen for a tension of
-//   690 N falling to 560 N at the top, fitted to the stiffness of a recorded grand
-//   (about 1.0 mm at C4 and 0.8 mm at C8). Inharmonicity B = pi^3 E d^4 / (64 T L^2) from the
-//   steel core, the standard result for stiff strings (Fletcher 1964).
+// Scale: the Steinway D of Chabassier & Duruflé (INRIA RT-0425, 2012), appendix A: speaking lengths,
+//   wire gauges, tensions and striking points of every key. The jump at key 21 is the break between
+//   the bass bridge and the treble bridge.
+// String layout: monochords A0-E1, bichords F1-E2 (bass bridge, copper-wound), plain trichords F2-C8. Dampers stop at F6, as on concert grands.
+// Hammers: the same report's per-key head mass, felt exponent and stiffness laws (see below).
+// Wire: steel E = 2.0e11 Pa, density 7850 kg/m^3; copper winding 8960 kg/m^3. Inharmonicity
+//   B = pi^3 E d^4 / (64 T L^2) from the steel core, the standard result for stiff strings (Fletcher 1964).
 // Tuning: A4 = 440 Hz. A3-A4 is the temperament octave; every other octave is tuned
 //   upwards and downwards as a beatless octave on the actual (inharmonic) partials, as an
 //   aural tuner would: 4:2 in the middle, 6:3 and 8:4 in the bass, 2:1 in the top octaves.
@@ -39,26 +30,63 @@ namespace openpiano::piano
 
 namespace
 {
-    constexpr double kSteinwayD[88] = {
+    // Steinway D scale, every key from Chabassier & Durufle (Inria RT-425, 2012), appendix A:
+    // speaking length, wire diameter (the steel core of the wound strings), tension at pitch and
+    // the hammer's striking distance from the agraffe. A0-B0 and C8 are extended from their neighbours.
+    constexpr double kLength[88] = {
         2.010, 2.009, 2.008, 2.007, 1.997, 1.981, 1.965, 1.938, 1.911, 1.879, 1.842, 1.805,
-        1.762, 1.709, 1.655, 1.602, 1.548, 1.495, 1.442, 1.378, 1.837, 1.757,
-        1.660, 1.591, 1.482, 1.403, 1.329, 1.259, 1.192, 1.129, 1.070, 1.013, 0.960, 0.909,
-        0.861, 0.816, 0.773, 0.732, 0.694, 0.657, 0.622, 0.590, 0.559, 0.529,
-        0.501, 0.475, 0.450, 0.426, 0.404, 0.383, 0.363, 0.344, 0.326, 0.308, 0.292, 0.277,
-        0.262, 0.249, 0.236, 0.223, 0.211, 0.200, 0.190, 0.180, 0.171, 0.162,
-        0.153, 0.145, 0.138, 0.130, 0.124, 0.117, 0.111, 0.105, 0.100, 0.095, 0.090, 0.085,
-        0.081, 0.076, 0.072, 0.069, 0.065, 0.062, 0.058, 0.055, 0.052, 0.049
-    };
+        1.762, 1.709, 1.655, 1.602, 1.548, 1.495, 1.442, 1.378, 1.837, 1.757, 1.660, 1.591,
+        1.482, 1.403, 1.329, 1.259, 1.192, 1.129, 1.070, 1.013, 0.960, 0.909, 0.861, 0.816,
+        0.773, 0.732, 0.694, 0.657, 0.622, 0.590, 0.559, 0.529, 0.501, 0.475, 0.450, 0.426,
+        0.404, 0.383, 0.363, 0.344, 0.326, 0.308, 0.292, 0.277, 0.262, 0.249, 0.236, 0.223,
+        0.211, 0.200, 0.190, 0.180, 0.171, 0.162, 0.153, 0.145, 0.138, 0.130, 0.124, 0.117,
+        0.111, 0.105, 0.100, 0.095, 0.090, 0.085, 0.081, 0.076, 0.072, 0.069, 0.065, 0.062,
+        0.058, 0.055, 0.052, 0.049 };
+    constexpr double kDiameterMm[88] = {
+        1.480, 1.480, 1.480, 1.480, 1.505, 1.506, 1.492, 1.460, 1.419, 1.370, 1.316, 1.262,
+        1.207, 1.148, 1.096, 1.051, 1.012, 0.982, 0.960, 0.937, 1.117, 1.108, 1.091, 1.095,
+        1.071, 1.067, 1.065, 1.063, 1.061, 1.059, 1.057, 1.053, 1.049, 1.045, 1.039, 1.033,
+        1.027, 1.020, 1.013, 1.006, 0.999, 0.991, 0.984, 0.977, 0.970, 0.964, 0.958, 0.952,
+        0.947, 0.941, 0.937, 0.932, 0.928, 0.924, 0.921, 0.917, 0.914, 0.910, 0.907, 0.904,
+        0.901, 0.898, 0.894, 0.891, 0.887, 0.883, 0.879, 0.875, 0.870, 0.866, 0.860, 0.855,
+        0.850, 0.844, 0.837, 0.831, 0.824, 0.817, 0.810, 0.802, 0.795, 0.787, 0.778, 0.770,
+        0.761, 0.752, 0.743, 0.770 };
+    constexpr double kTension[88] = {
+        1722, 1722, 1722, 1722, 1788, 1798, 1773, 1703, 1618, 1515, 1404, 1297,
+        1190, 1083, 991, 915, 853, 807, 774, 741, 799, 791, 773, 783,
+        754, 754, 756, 759, 762, 764, 766, 767, 766, 765, 763, 759,
+        755, 751, 746, 741, 735, 730, 725, 720, 715, 711, 707, 704,
+        701, 699, 697, 696, 695, 694, 694, 694, 694, 695, 695, 696,
+        697, 697, 697, 697, 697, 697, 696, 695, 693, 691, 689, 686,
+        683, 679, 674, 670, 664, 659, 652, 646, 639, 631, 623, 615,
+        606, 598, 588, 580 };
+    // The technician's voicing of the top two octaves (C6 to C8, one entry per key). Up there
+    // the hammer's blow lasts three to six periods of the string, so the fundamental sits near
+    // a null of the force pulse's spectrum and a tenth more or less felt stiffness moves a
+    // note's loudness by 10 dB; every concert grand is voiced hammer by hammer for that reason.
+    // These factors on the felt stiffness were set once for even mezzo-forte loudness against
+    // each key's neighbours (a five-key running median of the unvoiced levels, so the register
+    // trend is left to the physics), within what needling and hardening can do (1/2 to 2 times).
+    // With the hard treble felt the strings' impedance sets the blow and the felt moves a
+    // note's loudness much less: unevenness 2.7 -> 1.8 dB rms, C6 and G#7 stay 5 dB quiet.
+    // The remaining ripple is the fundamental's place against the pulse's null, not the hammer.
+    constexpr double kFeltScale = 0.3;        // of RT-425's proposed felt stiffness (see below)
+    constexpr double kFeltHysteresis = 0.1;   // of RT-425's viscous-to-elastic time (see below)
+    constexpr double kTopVoicing[25] = {
+        2.00, 0.50, 0.50, 1.00, 1.00, 1.00, 1.33, 2.00, 0.50, 0.93, 1.71, 1.00, 0.50,
+        2.00, 0.50, 1.94, 1.00, 0.50, 1.49, 1.00, 2.00, 0.69, 0.50, 1.34, 1.00 };
 
-    // Scale from Steinway D to Yamaha C5 lengths (see the source note above)
-    double c5Scale (int key)
-    {
-        if (key >= 40) return 1.0;
-        if (key > 20) return 0.80 + 0.20 * (key - 21) / 19.0;
-        return 0.66 + 0.06 * (key - 1) / 19.0;
-    }
+    constexpr double kStrikeDistance[88] = {
+        0.241, 0.241, 0.241, 0.241, 0.240, 0.238, 0.236, 0.233, 0.229, 0.225, 0.221, 0.217,
+        0.211, 0.205, 0.199, 0.192, 0.186, 0.179, 0.173, 0.165, 0.220, 0.211, 0.199, 0.191,
+        0.178, 0.168, 0.160, 0.151, 0.143, 0.136, 0.128, 0.122, 0.115, 0.109, 0.103, 0.098,
+        0.093, 0.088, 0.083, 0.079, 0.075, 0.071, 0.067, 0.064, 0.060, 0.057, 0.054, 0.051,
+        0.048, 0.046, 0.044, 0.041, 0.039, 0.037, 0.035, 0.033, 0.031, 0.030, 0.028, 0.027,
+        0.025, 0.024, 0.023, 0.022, 0.020, 0.019, 0.018, 0.017, 0.017, 0.016, 0.015, 0.014,
+        0.013, 0.013, 0.012, 0.011, 0.011, 0.010, 0.010, 0.009, 0.009, 0.008, 0.008, 0.007,
+        0.007, 0.007, 0.006, 0.006 };
 
-    double lengthOf (int key) { return kSteinwayD[key - 1] * c5Scale (key); }
+    double lengthOf (int key) { return kLength[key - 1]; }
 
     constexpr double kSteelE = 2.0e11;
     constexpr double kSteelDensity = 7850.0;
@@ -67,7 +95,7 @@ namespace
 
     constexpr int kLastMonochordKey = 8;   // E1
     constexpr int kLastBassBridgeKey = 20; // E2
-    constexpr int kLastWoundKey = 26;      // A#2
+    constexpr int kLastWoundKey = 20;      // E2: on the D the treble bridge starts with plain wire
     constexpr int kLastDamperMidi = 89;    // F6
 
     double lerp (double a, double b, double t) { return a + (b - a) * t; }
@@ -112,50 +140,12 @@ namespace
 
     Design designFor (int key, double previousPlainDiameter, double frequency, double length)
     {
+        (void) previousPlainDiameter; (void) frequency; (void) length;
         Design d {};
-        if (key <= kLastWoundKey)
-        {
-            d.wound = true;
-            // Core gauges, fitted so the inharmonicity follows a recorded grand (fitted B from
-            // Salamander C5 single notes): stiffest at A0, falling to a minimum around F#2-A2
-            // and rising again into the plain strings. Thick cores at the very bottom are what
-            // give the lowest notes their slightly "out of tune with themselves" partials.
-            constexpr double coreAt[] = { 2.03, 1.86, 1.72, 1.51, 1.45, 1.37, 1.22,  // keys 1, 4, ... 19
-                                          1.27, 1.16, 1.12 };                      // keys 22, 25, 26 (treble bridge)
-            if (key <= kLastBassBridgeKey)
-            {
-                const double t = (key - 1) / double (kLastBassBridgeKey - 1);
-                const double pos = std::min ((key - 1) / 3.0, 5.999);
-                const int i = (int) pos;
-                d.coreDiameter = lerp (coreAt[i], coreAt[i + 1], pos - i) * 1e-3;
-                d.woundTension = lerp (1800.0, 1350.0, t);
-            }
-            else
-            {
-                const double t = (key - kLastBassBridgeKey - 1) / double (kLastWoundKey - kLastBassBridgeKey - 1);
-                const double pos = std::min ((key - 22) / 3.0, 1.0);
-                d.coreDiameter = (key < 22 ? coreAt[7] : key >= 26 ? coreAt[9] : lerp (coreAt[7], coreAt[8], pos)) * 1e-3;
-                d.woundTension = lerp (1150.0, 1000.0, t);
-            }
-            // The gauges were fitted on Steinway D lengths. B ~ d^4 / L^2, so keep the fitted
-            // inharmonicity on the shorter C5 strings with a core thinner by sqrt(scale).
-            d.coreDiameter *= std::sqrt (c5Scale (key));
-            return d;
-        }
-
-        // Plain wire: pick the standard gauge that gives the target tension
-        d.wound = false;
-        const double t = (key - kLastWoundKey - 1) / double (88 - kLastWoundKey - 1);
-        // Tension falls from 690 N to 560 N at the top: with the gauges this gives, the plain strings'
-        // stiffness matches the recorded grand within about 10% (fitted with tools/calibrate/strings.py)
-        d.plainTargetTension = lerp (690.0, 560.0, t);
-        const double mu = d.plainTargetTension / std::pow (2.0 * length * frequency, 2);
-        double diameter = std::sqrt (4.0 * mu / (M_PI * kSteelDensity));
-        diameter = std::round (diameter / 0.025e-3) * 0.025e-3;     // standard gauges
-        diameter = std::clamp (diameter, 0.775e-3, 1.25e-3);
-        if (previousPlainDiameter > 0)
-            diameter = std::min (diameter, previousPlainDiameter);  // gauges only get thinner going up
-        d.coreDiameter = diameter;
+        d.wound = key <= kLastWoundKey;
+        d.coreDiameter = kDiameterMm[key - 1] * 1e-3;
+        d.woundTension = kTension[key - 1];
+        d.plainTargetTension = kTension[key - 1];
         return d;
     }
 
@@ -254,26 +244,13 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         key.stretchCents = 1200.0 * std::log2 (key.targetFrequency / equalTempered (key.midiNote));
 
         // Unison: trichord offsets around the centre; the exact amount varies per key.
-        // Unisons drift apart after tuning: like the recorded Yamaha, a key's strings end up 1 to 3
-        // cents apart (each outer string 0.5 to 1.5 cents from the centre; the two strings of a
-        // bass bichord a little closer, about 0.75 to 2.3 cents, as wider ones pull its pitch off)
-        // From A4 up the unisons sit closer (half as far apart up to A#5, three quarters to B6,
-        // 0.3 in the top octave, and a quarter from A5 to C#6, where the recorded grand beats slowest;
-        // 0.7 from E2 to G#4, which keeps their shimmer but beats no faster than the recording).
-        // Close strings share the bridge motion strongly: the in-step vibration drains fast and the
-        // out-of-step one is left ringing, which gives the recorded notes there their fast first
-        // drop and long tail
-        const double close = k >= 61 && k <= 66 ? 0.25 : k >= 28 && k < 50 ? 0.45 : k >= 20 && k < 49 ? 0.7 : k >= 49 && k < 63 ? 0.5 : k >= 63 && k < 67 ? 0.75 : k >= 67 && k < 75 ? 0.3 : k >= 75 ? 0.3 : 1.0;
-        double spread = unisonSpreadCents * (1.0 + 0.5 * keyNoise (k, 1)) * close * (k < 43 ? 0.6 : 1.0);
-        // (below D#5 the strings sit 40% closer than before: with the body coupled at its full,
-        // physical strength, wider unisons there drain the long tail twice as fast as the recording)
-        // Treble unisons are tuned by ear and some are left a little loose: on the recorded grand
-        // about one key in four from D#5 up beats 3 to 5 times faster than its neighbours
-        // The rest are a little looser too (Jack's ear: the loose ones sound better)
-        if (k >= 43 && keyNoise (k, 7) > 0.5)
-            spread *= 3.0 + 2.0 * (0.5 + 0.5 * keyNoise (k, 8));
-        else if (k >= 43)
-            spread *= 1.8;
+        // One tuner's rule for the whole keyboard: a careful concert tuning leaves the strings of a
+        // unison a few tenths of a cent either side of the centre. That close, the bridge locks
+        // them together: the in-step motion drains fast (the prompt sound) and the out-of-step
+        // motion rings on as the long tail, which is the treble's double decay (A4-F#5 early
+        // 28 dB/s, late 3.7 against 33 and 3.2 recorded; at 1 cent the early slope was 16 and
+        // the tail 6). No register is tuned closer or looser than another
+        const double spread = unisonSpreadCents * (1.0 + 0.5 * keyNoise (k, 1));
         // Every key's pattern differs: which string is high or low, and by how much
         const double offsets3[3] = { -spread * (1.0 + 0.15 * keyNoise (k, 3)), 0.25 * spread * keyNoise (k, 2),
                                      spread * (1.0 + 0.15 * keyNoise (k, 4)) };
@@ -290,42 +267,76 @@ std::vector<KeySpec> buildConcertGrandScale (double unisonSpreadCents)
         }
 
         const double n = k;
-        key.hammerMass = (11.074 - 0.074 * n + 0.0001 * n * n) * 1e-3;
-        key.feltStiffness = 183.0 * std::exp (0.045 * n);
-        // Hammer voicing for loud playing: a technician hardens or needles each felt so the
-        // fortissimo brightness is even; fitted note by note to the recorded grand (every 3 keys from A0;
-        // A0 to C2 fitted on the loud-against-soft brightness, with the low-end balance in place)
+        // Hammers as measured on a Steinway D (Chabassier & Durufle, Inria RT-425, 2012): the
+        // head's mass falls smoothly from 11 g at A0 to 5.8 g at C8, the felt gets harder
+        // (stiffness K in F = K x^p) and its force law steeper (p from 2.3 to 3.5) up the
+        // keyboard. No per-note voicing here: a technician's work is left to the voicing tables.
+        key.hammerMass = -6.2348e-5 * n + 0.0112;
+        const double pReport = 2.4295e-4 * n * n - 0.007703 * n + 2.337;
+        // Treble felt is harder and more nonlinear than the report's law. The recorded grand's
+        // C6 goes from nothing above 3 kHz at mezzo-forte to a flat shelf of partials out to
+        // 15 kHz at fortissimo (its partials 8-12 only 50-80 dB under the fundamental, and
+        // ringing for a second); with p = 2.8 the blow's spectrum rolls off 25-45 dB below
+        // that by 10 kHz at every stiffness, because the strings' impedance limits the blow in
+        // the treble and the felt only compresses some 15 percent more from mf to ff. A steeper
+        // law gives the contrast: soft blows stay in the soft toe of the curve, hard ones meet
+        // a stiff felt that puts a sharp top on the pulse. p rises from the report's value at
+        // C4 to 4.8 at C6 and stays there (hard, lacquered treble hammers measure p of 4 to 5)
+        const double hardening = std::clamp ((k - 40) / 24.0, 0.0, 1.0);
+        key.feltExponent = std::min (pReport + 2.0 * hardening, 4.8);
+        // The report's stiffness (eq. 4) is a proposal, not a measurement, and with it the felt
+        // hardly compresses: 0.3 mm at C4 fortissimo, where measured hammers give about 1 mm, so
+        // the blow is set by the string's impedance and not by the felt. The force then rises to
+        // its peak within 0.1 ms of contact at every dynamic, the pulse carries far too much
+        // above 2 kHz at pianissimo (the tenor's soft notes sat 17 dB too bright up there
+        // against the recordings) and brightens too little with velocity. A tenth of that
+        // stiffness matched the tenor's content above 2 kHz but was heard as soft and dull
+        // over the whole piano. At three tenths (kFeltScale) the felt is in charge without
+        // going limp: the tenor's loud notes match the recorded grand above 2 kHz within 1 dB,
+        // its soft ones sit 8 dB bright, the brightening with velocity (spectral centroid,
+        // ff over pp) is 1.23 against the recorded 1.28 and the contact durations are 2.2 ms
+        // at C4, 1.5 at C6 and 1.2 at C7 at mezzo-forte (published: 2.0, 1.2 and 0.96).
+        key.feltStiffness = kFeltScale * std::pow (10.0, 5.3097e-2 * n + 7.6425) * std::pow (1.0e-3, pReport);   // K per mm
+        // The steeper law keeps the report's force at the key's own fortissimo compression
+        // (0.5 mm at C4-C5, 0.6 at C6, 1.1 from C7 up, as the engine logs it), so loud blows
+        // keep their peak force and contact time; then the treble felt is twice as stiff,
+        // which sets the fortissimo shelf's level (C6 partials 8-12 within 8 dB of the recording)
         {
-            static constexpr double hardness[30] = { 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.5, 0.5, 0.5, 0.5,
-                                                     0.5, 2.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.67, 0.5,
-                                                     0.5, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
-            const double pos = std::clamp ((k - 1) / 3.0, 0.0, 28.999);
-            const int i = (int) pos;
-            // (a lighter, harder head leaves the string sooner: brighter)
-            key.hammerMass /= hardness[i] + (hardness[i + 1] - hardness[i]) * (pos - i);
+            const double xRef = k <= 64 ? 0.5 + 0.1 * std::max (0.0, (k - 52) / 12.0) : std::min (1.1, 0.6 + 0.5 * (k - 64) / 12.0);
+            key.feltStiffness *= std::pow (1.0 / xRef, key.feltExponent - pReport) * std::pow (2.0, hardening);   // (K is per mm)
         }
-        // The lowest two octaves' hammers are big and soft, so loud bass notes stay round and
-        // full rather than wiry: up to 60% heavier and 30% softer felt at A0, fading out by G#2
-        if (k <= 24)
+        // The top octave's hammers are harder still: small, lacquered heads that a voicer leaves
+        // hard so the shortest strings speak at all. With the law above a C8 fortissimo still
+        // compressed the felt 1.0 mm (measured treble hammers: 0.2-0.4 mm) and a pianissimo blow
+        // sat in the soft toe, where the contact outlasts four periods of the string and the
+        // pulse's spectrum has a null at the fundamental: the recorded grand's C8 fundamental
+        // is 21 dB quieter at pp than at ff, this model's was 52 dB. From F6 to C8 the felt
+        // becomes ten times stiffer at 1 mm and its law nearly quadratic (p 2.5, as hard
+        // felt measures), so the contact barely changes with velocity: C8 compresses 0.3 mm
+        // at ff, its fundamental at pp and ff within 2 dB of the recording.
         {
-            const double w = (24 - k) / 23.0;
-            key.hammerMass *= 1.0 + 0.6 * w;
-            key.feltStiffness *= 1.0 - 0.3 * w;
+            const double top = std::clamp ((k - 70) / 18.0, 0.0, 1.0);
+            key.feltStiffness *= std::pow (10.0, top);
+            key.feltExponent += top * (2.5 - key.feltExponent);
         }
-        key.feltExponent = 2.5 + 1.5 * (n - 1) / 87.0; // softer-curving felt: 2.5 in the bass to 4 in the treble
+        if (key.midiNote >= 84)
+            key.feltStiffness *= kTopVoicing[std::min (24, key.midiNote - 84)];
+        // Felt is not elastic: part of the push depends on how fast it is being squeezed, and
+        // that part is lost as heat (Stulov 1995). RT-425's eq. 5 makes the ratio of the viscous
+        // to the elastic term a time of 3.4 ms at C1, longer than the blow itself: the bass
+        // felt then acts as a dashpot (97% of the force viscous, the force a step at contact
+        // instead of a 4 ms bell) and the blow is linear, so it neither brightens nor shortens
+        // with velocity. Measured hammers (Stulov 1995, Giordano & Millis 2004) show a loading
+        // curve some 30-50% above the unloading one at a fast blow, which the same law gives
+        // with the time cut to a tenth (kFeltHysteresis): 340 us at C1, 3 us at C5. The bass
+        // pulse is then a smooth bell and the treble felt stays nearly elastic.
+        key.feltDamping = kFeltHysteresis * std::pow (10.0, -4.366e-2 * n - 2.294);
         key.outerFeltDepth = lerp (1.0e-3, 0.1e-3, std::pow ((k - 1) / 87.0, 0.7));
-        key.strikeRatio = k <= 40 ? lerp (0.122, 0.115, (k - 1) / 39.0) : lerp (0.115, 0.08, (k - 40) / 48.0);
+        key.strikeRatio = kStrikeDistance[k - 1] / kLength[k - 1];   // about 0.12 of the speaking length on the D, top to bottom
         key.hammerWidth = lerp (12e-3, 5e-3, (k - 1) / 87.0);
         // No two hammers are alike: felt density, shape and wear differ a little from note
         // to note even on a well-voiced piano (which is what a voicer evens out by ear)
         key.hammerMass *= 1.0 + 0.03 * keyNoise (k, 11);
-        // C5 hammers are smaller than concert-grand ones in the bass, to suit the shorter
-        // strings: about 15% lighter at A0, the same as the table from C4 up (estimate).
-        key.hammerMass *= lerp (0.85, 1.0, std::clamp ((k - 1) / 39.0, 0.0, 1.0));
-        // From the tenor up the hammer acts lighter on the string (its felt tip and head move
-        // first, the rest follows through the shank), so the contact is short enough for loud
-        // treble notes to come out as bright as recorded ones (half the mass from B3 up)
-        key.hammerMass *= 1.0 - 0.5 * std::clamp ((k - 27) / 12.0, 0.0, 1.0);
         key.feltStiffness *= 1.0 + 0.12 * keyNoise (k, 12);
         key.feltExponent += 0.08 * keyNoise (k, 13);
         key.outerFeltDepth *= 1.0 + 0.15 * keyNoise (k, 14);

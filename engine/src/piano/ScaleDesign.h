@@ -37,6 +37,7 @@ struct KeySpec
     double outerFeltDepth;           // [m] soft outer felt before the hard core
     double feltStiffness;            // Q0 in F = Q0 * (compression in mm)^p  [N]
     double feltExponent;             // p
+    double feltDamping;              // [s] the felt's loss: F = Q0 (x^p + feltDamping * d(x^p)/dt)
     double strikeRatio;              // Striking point as a fraction of the speaking length
     double hammerWidth;              // Contact width along the string [m]
 

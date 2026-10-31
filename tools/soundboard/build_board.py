@@ -28,7 +28,7 @@ import scipy.sparse.linalg as sla
 from scipy import ndimage
 
 DX = 0.008                     # grid step [m]
-A, B = 1.38, 1.47              # Yamaha C5 board's bounding box: across (treble 0 .. bass A), along the strings (belly rail 0 .. tail B)
+A, B = 1.333, 1.945            # Steinway D board's bounding box (RT-425 Fig. 2c): across (treble 0 .. bass A), along the strings (belly rail 0 .. tail B)
 E_L, E_T, G_LT, NU = 11e9, 0.75e9, 0.7e9, 0.4   # spruce: along / across the grain, shear, Poisson (LT)
 GRAIN = math.radians(35.0)    # the grain runs diagonally, from the treble front towards the bass tail
 RHO = 420.0
@@ -36,21 +36,30 @@ H_MID, H_EDGE = 0.009, 0.006
 RIB_SPACING, RIB_W, RIB_T = 0.13, 0.022, 0.025
 RIB_EI = 2.0 * E_L * RIB_W * RIB_T ** 3 / 12.0     # x2: glued on the plate, the neutral axis moves out
 RIB_M = RHO * RIB_W * RIB_T
-TREBLE_EI, TREBLE_M = 14e9 * 0.030 * 0.030 ** 3 / 12.0, 750.0 * 0.030 * 0.030   # beech bridge
-BASS_EI, BASS_M = 14e9 * 0.035 * 0.035 ** 3 / 12.0, 750.0 * 0.035 * 0.035
+TREBLE_H, BASS_H = 0.036, 0.055            # bridge heights [m]: the D treble bridge is 30 x 36 mm, the bass bridge 38 x 55 mm on its apron
+TREBLE_EI, TREBLE_M = 14e9 * 0.030 * TREBLE_H ** 3 / 12.0, 750.0 * 0.030 * TREBLE_H   # maple bridge, bending up and down
+BASS_EI, BASS_M = 14e9 * 0.038 * BASS_H ** 3 / 12.0, 750.0 * 0.038 * BASS_H
 # The bridges also twist (rocking across their width, under the strings' lengthwise pull) and
 # tilt along their length (under the strings' sideways pull, applied at the bridge top, a lever
 # of about its height above the board). Torsion of a square beech section: GJ = G 0.141 a^4.
 BRIDGE_G = 1.0e9
-TREBLE_W, BASS_W = 0.030, 0.035          # width = height [m]
+TREBLE_W, BASS_W = 0.030, 0.038          # widths [m]
 # The bass bridge stands on an apron, a thin plank glued under its end that carries it out
 # towards the rim: it adds mass and ties the bridge's tail end to the rim through the board edge
 APRON_M, APRON_K = 0.35, 4.0e5           # [kg], [N/m]
 F_TOP = 5000.0
-# The body around the board (a Yamaha C5): the rim it is glued into, the braces under it,
+# The body around the board (a Steinway D): the rim it is glued into, the braces under it,
 # the iron frame bolted on the rim, the legs, and the air in the case above the board.
-RIM_EI = 12e9 * 0.035 * 0.26 ** 3 / 12.0 * 3.0   # laminated maple, 26 cm deep; x3: the bolted iron frame ties it
-RIM_M = 650.0 * 0.035 * 0.26                      # [kg/m]
+RIM_T, RIM_D = 0.0826, 0.33                       # the Steinway D rim: one continuous bent rim of 18 maple laminations, 3 1/4" thick (spec);
+                                                  # 33 cm deep (side photo, scaled on the top-of-key height 71.5 cm and the lid-closed height ~1 m)
+RIM_OUT_T = 0.057                                 # the outer rim, full depth (overhead photo: 5-6 cm of black rim top) ...
+RIM_TOP = 0.14                                    # the board sits this far below the rim top: rim top ~0.98 m, keys 0.715 m, board ~12.5 cm over the keys [m]
+SKIRT = RIM_D - RIM_TOP                           # ... the rim below the board [m]
+# ... and the inner rim inside it (the rest of the 8.26 cm), from the rim's foot up to the board, which is glued on it
+_rs = [(RIM_OUT_T, RIM_D, RIM_D / 2), (RIM_T - RIM_OUT_T, SKIRT, SKIRT / 2)]    # (thickness, height, centroid above the foot)
+_ra = sum(t * h for t, h, _ in _rs); _rz = sum(t * h * z for t, h, z in _rs) / _ra
+RIM_EI = 12e9 * sum(t * h ** 3 / 12.0 + t * h * (z - _rz) ** 2 for t, h, z in _rs)   # laminated maple, bending up and down (the iron frame is solved on its own below)
+RIM_M = 650.0 * _ra                               # [kg/m]
 FRAME_MASS, FRAME_BOLTS = 125.0, 10               # iron frame [kg], spread over its bolts on the rim
 # The board's edge sits glued on the rim liner's ledge, a strip about 2.5 cm wide inside the
 # rim. The joint holds the edge level with the rim (the ring nodes are the rim's); against
@@ -62,11 +71,13 @@ LEDGE_W = float(os.environ.get("LEDGE_W", "0.025"))                      # ledge
 LINER_E = 0.4e9                                                           # maple liner across the grain [Pa]
 EDGE_K = LINER_E * LEDGE_W ** 2 / 12.0 / DX * float(os.environ.get("LEDGE_SCALE", "1"))   # [N/m per node]
 TIE_K = 1.0e8                                     # brace ends let into the rim [N/m]
-BRACE_EI, BRACE_M = 12e9 * 0.09 * 0.11 ** 3 / 12.0, 650.0 * 0.09 * 0.11   # back braces (beech/spruce, 9x11 cm)
+# Back braces: the D's five solid spruce braces hold 66,400 cm3 of wood in all; over their 3.7 m here
+# that is a 180 cm2 section, taken as 12 cm wide by 15 cm deep (spruce along the grain: E 11 GPa, 450 kg/m3)
+BRACE_EI, BRACE_M = 11e9 * 0.12 * 0.15 ** 3 / 12.0, 450.0 * 0.12 * 0.15
 LEG_K = 3.0e6                                     # each leg on its castor [N/m]
-CASE_H = 0.24 + 0.08                              # rim height above the board, plus the open top's end correction [m]
+CASE_H = RIM_TOP + 0.08                           # rim height above the board, plus the open top's end correction [m]
 RHO_AIR, C_AIR = 1.2, 343.0
-FLOOR_GAP = 0.62           # board underside to the floor [m] (the rim skirt hangs ~10 cm below the board, then it is open)
+FLOOR_GAP = 0.84           # board underside to the floor [m] (rim top ~0.98 m less the 14 cm to the board; the rim's foot is 0.65 m up, then it is open)
 # Crown and downbearing. The ribs are planed to an arch (radius about 20 m), so the board is a
 # shallow shell: bending it also stretches it, which stiffens the low modes. The strings press
 # the bridges down (downbearing, about 1.7% of the total string tension, ~3 kN on a C5); that
@@ -79,15 +90,45 @@ DOWNBEARING = 3000.0       # [N], shared along both bridges (a quarter on the ba
 # beech ~0.012, maple ~0.010, cast iron ~0.002, glue lines ~0.05, castor cups on the floor ~0.25.
 ETA = {"along": 0.007, "across": 0.018, "shear": 0.018, "rib": 0.007, "bridge": 0.012, "crown": 0.010,
        "rim": 0.010, "rimtwist": 0.010, "glue": 0.05, "leg": 0.25, "brace": 0.010, "tie": 0.05,
-       "frame": 0.002, "bolt": 0.02, "nose": 0.02, "lid": 0.02, "pinblock": 0.05, "str_damped": float(os.environ.get("ETA_SD", "0.3")), "str_free": float(os.environ.get("ETA_SF", "0.02"))}
+       "frame": 0.002, "bolt": 0.02, "bell": 0.005, "nose": 0.02, "lid": 0.02, "pinblock": 0.05, "str_damped": float(os.environ.get("ETA_SD", "0.3")), "str_free": float(os.environ.get("ETA_SF", "0.02"))}
 PLANK_W, PLANK_SPREAD = 0.12, 0.08   # the board is glued from ~12 cm planks; each plank's stiffness varies ~8%
-RIM_GJ = 1.1e9 * 0.26 * 0.035 ** 3 / 3.0 * 0.92 * 3.0   # rim twisting stiffness (maple, x3 for the bolted frame) [N m^2]
-RIM_IP = 650.0 * 0.035 * 0.26 * (0.035 ** 2 + 0.26 ** 2) / 12.0   # rim rotary inertia per length [kg m]
+RIM_GJ = 1.1e9 * (SKIRT * RIM_T ** 3 / 3.0 * (1.0 - 0.63 * RIM_T / SKIRT) + RIM_TOP * RIM_OUT_T ** 3 / 3.0 * (1.0 - 0.63 * RIM_OUT_T / RIM_TOP))   # rim twisting stiffness (both rims below the board, the outer one above) [N m^2]
+RIM_IP = 650.0 * sum(t * h * ((t ** 2 + h ** 2) / 12.0 + (z - _rz) ** 2) for t, h, z in _rs)   # rim rotary inertia per length [kg m]
+# The front of the case. Across the keyboard end the rim is not a plain rim wall: the belly rail
+# (the rim's section, under the board's front edge) carries the keybed screwed under its foot,
+# a 4.45 cm laminated plank (Steinway D specification) reaching forward to the key slip, with
+# the key frame, keys and action standing on it and the pin block over the rail. Together a
+# T section: the rail is the web, the keybed the flange. Its bending stiffness, twisting
+# stiffness, mass and rotary inertia (the keybed and action sit forward of the rail) replace
+# the rim's along the board's front edge.
+KEYBED_T, KEYBED_E, KEYBED_G, KEYBED_RHO = 0.0445, 10e9, 0.7e9, 450.0
+KEYBED_D = 0.58          # belly rail to the key slip's front [m] (overhead photo; replaced by GEOM front.keybed_depth)
+ACTION_M = 14.0          # keys, key frame and action standing on the keybed, per metre of keyboard [kg/m] (~20 kg over 1.45 m)
+ACTION_X = 0.30          # their centre of mass, forward of the rail [m]
+PINBLOCK_M = 7.0         # the pin block over the rail (laminated maple, 22 x 4.5 cm) [kg/m]
+def front_section(depth=None, back=0.0):
+    """(EI, GJ, mass per length, rotary inertia per length) of the belly rail with the keybed."""
+    d = KEYBED_D if depth is None else depth
+    Ew, Ef = 12e9, KEYBED_E
+    aw, af = RIM_T * RIM_D, d * KEYBED_T
+    zw, zf = KEYBED_T + RIM_D / 2, KEYBED_T / 2            # centroids above the keybed's underside
+    zc = (Ew * aw * zw + Ef * af * zf) / (Ew * aw + Ef * af)
+    EI = Ew * (RIM_T * RIM_D ** 3 / 12 + aw * (zw - zc) ** 2) + Ef * (d * KEYBED_T ** 3 / 12 + af * (zf - zc) ** 2)
+    GJ = RIM_GJ + KEYBED_G * d * KEYBED_T ** 3 / 3.0
+    mw, mf = 650.0 * aw, KEYBED_RHO * af
+    m = mw + mf + ACTION_M + PINBLOCK_M
+    c_ = d / 2 - back                                       # the keybed's centre, forward of the rail
+    IP = RIM_IP + mf * (d ** 2 / 12.0 + c_ ** 2) + ACTION_M * ACTION_X ** 2 + PINBLOCK_M * 0.11 ** 2
+    return EI, GJ, m, IP
 PIN_OFFSET = 0.008          # strings bear on the bridge's front pins, ~8 mm on the speaking-length side of its centre line
 LISTEN = {"L": (1.40, -1.20, 1.00), "R": (0.00, -1.20, 1.00)}     # the player's seat, a stereo pair a little apart
-MICS = {"L": (1.05, 0.55, 0.35), "R": (0.40, 0.25, 0.35)}         # close pair over the strings, near the hammers
+MICS = {"L": (0.80, 0.80, 0.25), "R": (0.35, 0.50, 0.25)}         # close pair 25 cm over the board: bass/tenor strings, and the treble nearer the hammers
+# (Chosen on the case-air field, which the mics hear since they stand under the lid, for the
+# flattest band response per bridge zone from 40 Hz to 4 kHz: 2.3 and 3.1 dB rms, where the
+# free-field choice (0.70, 0.60, 0.35) and (0.40, 0.30, 0.35) gave 2.9 and 3.8. In the case
+# air the position matters little, within 1.5 dB rms over the whole board, because the diffuse
+# field fills the free field's nulls. Both stand under at least 0.3 m of clear air to the lid.)
 LID_ANGLE = math.radians(42.0)   # full stick
-RIM_TOP = 0.24                   # rim top above the board [m]; the lid rests there along the spine
 LID_HINGE_X = A + 0.02           # the hinge line, just outside the spine
 LID_GAP_MIN = 0.10               # the rim-to-lid gap along the bentside counts as open above this [m]
 LID_FRONT = float(os.environ.get("LID_FRONT", "0.40"))   # the main lid's front edge: the front flap is folded back on full stick [m from the belly rail]
@@ -121,6 +162,12 @@ def load_geometry(path):
     for key, name in (("A", "A"), ("B", "B"), ("h_mid", "H_MID"), ("h_edge", "H_EDGE"), ("rib_w", "RIB_W"), ("rib_t", "RIB_T")):
         if key in g: G[name] = float(g[key])
     if "grain_deg" in g: G["GRAIN"] = math.radians(float(g["grain_deg"]))
+    if "A" in g: G["LID_HINGE_X"] = A + 0.02
+    if "B" in g: G["LID_TAIL"] = B + 0.10
+    if "case_outer" in g:
+        co_ = np.asarray(g["case_outer"], float)
+        G["LID_HINGE_X"] = float(co_[:, 0].max())        # hinged on the spine's outer edge
+        G["LID_TAIL"] = float(co_[:, 1].max())           # and as long as the case
     if "rib_w" in g or "rib_t" in g:
         G["RIB_EI"] = 2.0 * E_L * RIB_W * RIB_T ** 3 / 12.0
         G["RIB_M"] = RHO * RIB_W * RIB_T
@@ -167,19 +214,51 @@ def inside(x, y):
     return (y >= 0) & (y <= B) & (x <= A) & (x >= bentside(y))
 
 
-def c5_lengths():
-    """Speaking lengths per key (1..88), the same table the engine uses (ScaleDesign.cpp)."""
+def _poly_area(poly):
+    p = np.asarray(poly, float)
+    return 0.5 * abs(np.sum(p[:, 0] * np.roll(p[:, 1], -1) - np.roll(p[:, 0], -1) * p[:, 1]))
+
+
+def _min_x_crossing(poly, y, default):
+    pts = np.asarray(poly, float)
+    y = np.asarray(y, float)
+    out = np.full(y.shape, default, float)
+    for (x0, y0), (x1, y1) in zip(pts, np.roll(pts, -1, axis=0)):
+        if y0 == y1:
+            continue
+        u = (y - min(y0, y1)) / abs(y1 - y0)
+        hit = (u >= 0) & (u <= 1)
+        xc = x0 + (x1 - x0) * (y - y0) / (y1 - y0)
+        out = np.where(hit, np.minimum(out, xc), out)
+    return out
+
+
+def lid_edge_x(y):
+    """Where the lid's free edge sits over the treble side: the case's outer edge when it is
+    traced (the lid covers the whole case), else 4 cm in from the board edge as before."""
+    if "case_outer" in GEOM:
+        return _min_x_crossing(GEOM["case_outer"], y, A)
+    return np.asarray(bentside(y), float) - 0.04
+
+
+def inside_case(x, y):
+    """Inside the rim's inner face (the air over the board reaches out to it)."""
+    if "case_inner" not in GEOM:
+        return inside(x, y)
+    from matplotlib.path import Path
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    return Path(np.asarray(GEOM["case_inner"], float)).contains_points(np.column_stack([x.ravel(), y.ravel()])).reshape(x.shape) | inside(x, y)
+
+
+def scale_lengths():
+    """Speaking lengths per key (1..88), the same table the engine uses (ScaleDesign.cpp: the Steinway D's)."""
     import re, pathlib
     src = (pathlib.Path(__file__).resolve().parents[2] / "engine/src/piano/ScaleDesign.cpp").read_text()
-    d = [float(v) for v in re.search(r"kSteinwayD\[88\] = \{(.*?)\};", src, re.S).group(1).replace("\n", " ").split(",") if v.strip()]
-    def scale(k):
-        if k >= 40: return 1.0
-        if k > 20: return 0.80 + 0.20 * (k - 21) / 19.0
-        return 0.66 + 0.06 * (k - 1) / 19.0
-    return np.array([d[k - 1] * scale(k) for k in range(1, 89)])
+    d = [float(v) for v in re.search(r"kLength\[88\] = \{(.*?)\};", src, re.S).group(1).replace("\n", " ").split(",") if v.strip()]
+    return np.array(d)
 
 
-LEN = c5_lengths()
+LEN = scale_lengths()
 CAPO_Y = 0.02     # the treble strings' speaking length starts just in front of the belly rail
 FAN = 0.86        # the strings fan out a little towards the tail: along-the-board share of each length
 
@@ -225,18 +304,33 @@ FRAME_A, FRAME_I = 0.0022, 2.6e-6          # bar section [m^2], bending [m^4] (8
 FRONT_Y = -0.05                             # the front bar, just ahead of the belly rail
 BOLT_K = 2.0e7                              # each bolt into the rim [N/m]
 PINBLOCK_K = float(os.environ.get("PINBLOCK_K", "5e7"))   # the pin block under each front-bar node [N/m]
+PINBLOCK_KA = float(os.environ.get("PINBLOCK_KA", "3.3e10"))   # the pin block under the pin-field web, per unit area [N/m^3]
+BELL_Y, BELL_K = 0.45, 1.0e9                # the treble bell's bolt: where along the bentside, and its stiffness (steel bolt through iron) [N/m]
 
 
 def frame_bars():
     """The frame's bar network: stiffness and mass matrices, node coordinates, bolt nodes and
     the front-bar nodes (where the strings end), ordered across."""
-    bars = [
-        [(0.05, FRONT_Y), (1.35, FRONT_Y)],                                   # front bar (capo, agraffes)
-        [(1.35, FRONT_Y), (1.35, 1.40)],                                      # spine flange
-        [(0.98, 1.40), (1.35, 1.40)],                                         # tail rail (hitch pins)
-        [(0.05, FRONT_Y)] + [(float(bentside(y)) + 0.04, float(y)) for y in np.linspace(0.05, 1.40, 12)],  # bentside flange
-        [(0.35, FRONT_Y), (0.98, 1.38)], [(0.75, FRONT_Y), (1.15, 1.40)], [(1.05, FRONT_Y), (1.32, 1.00)],  # struts
-    ]
+    # The plate covers the whole board: its flanges run along the spine and the bentside to the
+    # tail, where the hitch-pin rail crosses, and three struts fan from the front bar to the tail
+    xs_, yt_ = A + 0.02, B - 0.05
+    traced = "frame_bars" in GEOM
+    if traced:
+        # bars traced from a photo of the plate: the first is the front bar (capo, agraffes);
+        # flanges named bentside/tail lie on the rim
+        bars = [[tuple(p) for p in b] for b in GEOM["frame_bars"]]
+        names = GEOM.get("frame_bar_names", [""] * len(bars))
+    else:
+        names = ["front", "spine", "tail", "bentside", "strut", "strut", "strut"]
+        bars = [
+        [(0.05, FRONT_Y), (xs_, FRONT_Y)],                                    # front bar (capo, agraffes)
+        [(xs_, FRONT_Y), (xs_, yt_)],                                         # spine flange
+        [(float(bentside(yt_)) + 0.04, yt_), (xs_, yt_)],                     # tail rail (hitch pins)
+        [(0.05, FRONT_Y)] + [(float(bentside(y)) + 0.04, float(y)) for y in np.linspace(0.05, yt_, 18)],  # bentside flange
+        [(0.35, FRONT_Y), (float(bentside(yt_)) + 0.12, yt_ - 0.02)],         # struts
+        [(0.75, FRONT_Y), (0.5 * (float(bentside(yt_)) + xs_), yt_)],
+        [(1.05, FRONT_Y), (xs_ - 0.03, 0.68 * yt_)],
+        ]
     h = 0.04
     nodes, coords = [], []
     def node_at(x, y):
@@ -247,6 +341,20 @@ def frame_bars():
     chains = []
     for pts_ in bars:
         P_ = np.array(pts_)
+        if traced:
+            # every traced vertex is a node (that is where bars meet), segments split to <= h
+            xs, ys = [P_[0, 0]], [P_[0, 1]]
+            for (x0, y0), (x1, y1) in zip(P_[:-1], P_[1:]):
+                m_ = max(1, int(math.ceil(math.hypot(x1 - x0, y1 - y0) / h)))
+                for j in range(1, m_ + 1):
+                    xs.append(x0 + (x1 - x0) * j / m_); ys.append(y0 + (y1 - y0) * j / m_)
+            ch = []
+            for x, y in zip(xs, ys):
+                k = node_at(x, y)
+                if not ch or ch[-1] != k:
+                    ch.append(k)
+            chains.append((ch, None))
+            continue
         seg = np.hypot(*np.diff(P_, axis=0).T); s_ = np.concatenate([[0], np.cumsum(seg)])
         n_ = max(3, int(s_[-1] / h) + 1)
         si = np.linspace(0, s_[-1], n_)
@@ -254,19 +362,165 @@ def frame_bars():
         chains.append(([node_at(x, y) for x, y in zip(xs, ys)], s_[-1] / (n_ - 1)))
     n = len(coords)
     K = np.zeros((n, n)); Mv = np.zeros(n)
-    for ch, ds in chains:
+    Cn = np.array(coords)
+    for (ch, ds), nm in zip(chains, names):
+        if ds is None:
+            # the flanges on the rim and the hitch-pin rail are flat strips, about half the
+            # section of the 8 cm deep struts and a quarter of their bending stiffness
+            sa, si_ = (0.5, 0.25) if nm in ("bentside", "tail", "spine", "tenor_hitch", "front_edge", "pf_left", "pf_right") else (1.0, 1.0)
+            # uneven spacing: curvature at b from its two neighbours, energy EI k^2 (d1 + d2) / 2
+            for a, b, c in zip(ch[:-2], ch[1:-1], ch[2:]):
+                d1 = float(np.hypot(*(Cn[b] - Cn[a]))); d2 = float(np.hypot(*(Cn[c] - Cn[b])))
+                v = np.zeros(n); v[a] += 2 / (d1 * (d1 + d2)); v[c] += 2 / (d2 * (d1 + d2)); v[b] -= v[a] + v[c]
+                K += np.outer(v, v) * IRON_E * FRAME_I * si_ * (d1 + d2) / 2
+            for a, b in zip(ch[:-1], ch[1:]):
+                d_ = float(np.hypot(*(Cn[b] - Cn[a])))
+                Mv[a] += IRON_RHO * FRAME_A * sa * d_ / 2; Mv[b] += IRON_RHO * FRAME_A * sa * d_ / 2
+            continue
         for a, b, c in zip(ch[:-2], ch[1:-1], ch[2:]):
             v = np.zeros(n); v[a] += 1; v[b] -= 2; v[c] += 1
             K += np.outer(v, v) * IRON_E * FRAME_I / ds ** 3
         for k in ch:
             Mv[k] += IRON_RHO * FRAME_A * ds
+    n_bar = n
+    if traced and GEOM.get("plate_mass"):
+        # The traced bars carry the section of 8 cm deep ribbed struts everywhere, which made
+        # the plate far heavier than published (over 300 lb to about 450 lb for a concert grand).
+        # The cast section is thinner than that: scale the bars' section (area and bending
+        # stiffness together, a thinner rib of the same depth) so the plate with its webs
+        # weighs the target.
+        mweb = 0.0
+        if GEOM.get("plate_webs") and not os.environ.get("NO_WEB"):
+            from matplotlib.path import Path as _P
+            for web in GEOM["plate_webs"]:
+                a_ = _poly_area(web["outline"]) - sum(math.pi * r_ * r_ for _, _, r_ in web.get("holes", [])) \
+                    - sum(_poly_area(w_) for w_ in web.get("windows", []))
+                mweb += IRON_RHO * WEB_T * a_
+        sc_ = (float(GEOM["plate_mass"]) - mweb) / Mv.sum()
+        print(f"plate mass: bars {Mv.sum():.0f} kg traced at full section, scaled x{sc_:.2f} so bars + webs ({mweb:.0f} kg) = {float(GEOM['plate_mass']):.0f} kg")
+        K *= sc_; Mv *= sc_
+    if traced and GEOM.get("plate_webs") and not os.environ.get("NO_WEB"):
+        K, Mv, coords = add_webs(K, Mv, coords)
+    else:
+        K = sp.csr_matrix(K)
     C = np.array(coords)
-    # Bolts: every ~30 cm along the bars that lie on the rim (front ends, spine, bentside, tail)
-    on_rim = (np.abs(C[:, 0] - 1.35) < 0.02) | (C[:, 1] > 1.38) | (np.abs(C[:, 0] - (bentside(C[:, 1]) + 0.04)) < 0.03) | \
-             ((np.abs(C[:, 1] - FRONT_Y) < 0.01) & ((C[:, 0] < 0.1) | (C[:, 0] > 1.3)))
-    bolts = np.flatnonzero(on_rim)[::6]
-    front = sorted([k for k in range(n) if abs(C[k, 1] - FRONT_Y) < 0.01], key=lambda k: C[k, 0])
-    return K, Mv, C, bolts, front
+    FRAME_INFO["rim_nodes"] = sorted({k for (ch, _), nm in zip(chains, names) if nm in ("front", "spine", "tail", "bentside", "front_edge", "pf_left", "pf_right") for k in ch})
+    # the plate's front edge over the pin block (screwed down onto it like the front bar)
+    FRAME_INFO["pin_nodes"] = sorted({k for (ch, _), nm in zip(chains, names) if nm == "front_edge" for k in ch})
+    if traced:
+        # the bolts where the photo shows them (on the flanges and the front corners)
+        bolts = sorted({int(np.argmin(np.hypot(C[:n_bar, 0] - bx, C[:n_bar, 1] - by))) for bx, by in GEOM["frame_bolts"]})
+        front = sorted(chains[0][0], key=lambda k: C[k, 0])
+        on_bent = np.array(chains[names.index("bentside")][0])
+    else:
+        # Bolts: every ~30 cm along the bars that lie on the rim (front ends, spine, bentside, tail)
+        on_rim = (np.abs(C[:, 0] - xs_) < 0.02) | (C[:, 1] > yt_ - 0.02) | (np.abs(C[:, 0] - (bentside(C[:, 1]) + 0.04)) < 0.03) | \
+                 ((np.abs(C[:, 1] - FRONT_Y) < 0.01) & ((C[:, 0] < 0.1) | (C[:, 0] > xs_ - 0.05)))
+        bolts = np.flatnonzero(on_rim)[::6]
+        front = sorted([k for k in range(n) if abs(C[k, 1] - FRONT_Y) < 0.01], key=lambda k: C[k, 0])
+        on_bent = np.flatnonzero(np.abs(C[:, 0] - (bentside(C[:, 1]) + 0.04)) < 0.03)
+    # The treble bell: a cast-iron bell bolted under the rim at the treble bend, with a steel
+    # bolt up through it into the plate's bentside flange. It holds the plate's treble corner
+    # (where the shortest strings pull) hard onto the rim: the flange node at the bend
+    bell = int(on_bent[np.argmin(np.abs(C[on_bent, 1] - BELL_Y))])
+    return K, Mv, C, bolts, front, bell
+
+
+FRAME_INFO = {}
+
+# The plate's webs: the solid cast-iron panels between the struts and flanges (on a D, the big
+# web over the treble side with its round openings, and the bass tail corner), as thin iron
+# plates on a grid. The bars running over and along a web are cast with it: each bar node there
+# is tied to the web under it.
+WEB_T = float(os.environ.get("WEB_T", "0.008"))     # web thickness [m]
+WEB_DX, WEB_NU, WEB_TIE_K = 0.02, 0.26, 1.0e9
+
+
+def add_webs(Kbar, Mbar, coords):
+    from matplotlib.path import Path
+    nb = len(Mbar)
+    coords = list(coords)
+    Cb = np.array(coords)
+    d = WEB_DX
+    Dw = IRON_E * WEB_T ** 3 / (12.0 * (1.0 - WEB_NU ** 2))
+    madd, blocks, ties = [], [], []
+    for web in GEOM["plate_webs"]:
+        poly = np.asarray(web["outline"], float)
+        lo = poly.min(0) - d; hi = poly.max(0) + d
+        xs = np.arange(lo[0], hi[0] + 1e-9, d); ys = np.arange(lo[1], hi[1] + 1e-9, d)
+        X, Y = np.meshgrid(xs, ys, indexing="ij")
+        pts = np.column_stack([X.ravel(), Y.ravel()])
+        m = Path(poly).contains_points(pts)
+        for hx, hy, hr in web.get("holes", []):
+            m &= np.hypot(pts[:, 0] - hx, pts[:, 1] - hy) > hr
+        for w in web.get("windows", []):
+            m &= ~Path(np.asarray(w, float)).contains_points(pts)
+        m = m.reshape(X.shape)
+        inner = ndimage.binary_erosion(m, structure=np.ones((3, 3)))
+        # keep only the nodes some curvature stencil reaches (no loose nodes)
+        foot = np.zeros_like(m)
+        for (i, j) in np.argwhere(inner):
+            for di, dj in ((0, 0), (-1, 0), (1, 0), (0, -1), (0, 1), (1, 1)):
+                foot[i + di, j + dj] = True
+        m &= foot
+        gid = -np.ones(X.shape, int)
+        for (i, j) in np.argwhere(m):
+            gid[i, j] = len(coords); coords.append((float(X[i, j]), float(Y[i, j]))); madd.append(IRON_RHO * WEB_T * d * d)
+        def op(stencil):
+            r, c, v = [], [], []
+            for k, (i, j) in enumerate(np.argwhere(inner)):
+                for (di, dj, w_) in stencil:
+                    r.append(k); c.append(gid[i + di, j + dj]); v.append(w_ / d ** 2)
+            return r, c, v
+        blocks.append((op([(-1, 0, 1), (0, 0, -2), (1, 0, 1)]), op([(0, -1, 1), (0, 0, -2), (0, 1, 1)]),
+                       op([(0, 0, 1), (1, 1, 1), (1, 0, -1), (0, 1, -1)]), int(inner.sum())))
+        # ties: bar nodes over the web (or on its edge) follow the web under them
+        for k in range(nb):
+            fx, fy = (Cb[k, 0] - xs[0]) / d, (Cb[k, 1] - ys[0]) / d
+            i0, j0 = int(math.floor(fx)), int(math.floor(fy))
+            if not (0 <= i0 < len(xs) - 1 and 0 <= j0 < len(ys) - 1):
+                continue
+            corners = [(i0, j0), (i0 + 1, j0), (i0, j0 + 1), (i0 + 1, j0 + 1)]
+            ax_, ay_ = fx - i0, fy - j0
+            wts = [(1 - ax_) * (1 - ay_), ax_ * (1 - ay_), (1 - ax_) * ay_, ax_ * ay_]
+            if all(gid[c_] >= 0 for c_ in corners):
+                ties.append((k, [(int(gid[c_]), w_) for c_, w_ in zip(corners, wts)]))
+            else:
+                near = [(math.hypot(Cb[k, 0] - X[c_], Cb[k, 1] - Y[c_]), int(gid[c_])) for c_ in corners if gid[c_] >= 0]
+                if near and min(near)[0] < 0.75 * d:
+                    ties.append((k, [(min(near)[1], 1.0)]))
+    n = len(coords)
+    K = sp.csr_matrix(Kbar)
+    K = sp.csr_matrix((K.data, K.indices, K.indptr), shape=(nb, nb))
+    K = sp.block_diag([K, sp.csr_matrix((n - nb, n - nb))], format="csr")
+    for (rx, ry, rxy, ni) in blocks:
+        Cxx = sp.csr_matrix((rx[2], (rx[0], rx[1])), shape=(ni, n))
+        Cyy = sp.csr_matrix((ry[2], (ry[0], ry[1])), shape=(ni, n))
+        Cxy = sp.csr_matrix((rxy[2], (rxy[0], rxy[1])), shape=(ni, n))
+        K = K + (Cxx.T @ Cxx + Cyy.T @ Cyy + WEB_NU * (Cxx.T @ Cyy + Cyy.T @ Cxx) + 2.0 * (1.0 - WEB_NU) * Cxy.T @ Cxy) * (Dw * d * d)
+    r, c, v = [], [], []
+    for t_, (k, terms) in enumerate(ties):
+        r.append(t_); c.append(k); v.append(1.0)
+        for (g, w_) in terms:
+            r.append(t_); c.append(g); v.append(-w_)
+    T = sp.csr_matrix((v, (r, c)), shape=(len(ties), n))
+    K = (K + T.T @ T * WEB_TIE_K).tocsr()
+    Mv = np.concatenate([Mbar, np.array(madd)])
+    print(f"plate webs: {n - nb} nodes ({WEB_DX * 100:.0f} cm grid, {WEB_T * 1000:.0f} mm iron), {sum(madd):.0f} kg; "
+          f"{len(ties)} bar nodes cast into them; plate {Mv.sum():.0f} kg in all")
+    FRAME_INFO["web_nodes"] = list(range(nb, n))
+    return K, Mv, coords
+
+
+def string_front(key):
+    """Where a key's strings end on the front bar (agraffe or capo): from the geometry file when
+    it gives the ends (bass A0..E2 and treble F2..C8, by key), else the generic layout."""
+    sf = GEOM.get("string_front")
+    if sf:
+        (a, b), k0, k1 = (sf["bass"], 1, 20) if key <= 20 else (sf["treble"], 21, 88)
+        u = (key - k0) / (k1 - k0)
+        return a[0] + u * (b[0] - a[0]), a[1] + u * (b[1] - a[1])
+    return None
 
 
 def lid_plate(f_top):
@@ -277,7 +531,7 @@ def lid_plate(f_top):
     in space and over the board plane, the node area and each node's distance to the lid's edge."""
     d = 0.03
     ys = np.arange(LID_FRONT, LID_TAIL + 1e-9, d)
-    smax = (LID_HINGE_X - (np.asarray(bentside(np.clip(ys, 0, B)), float) - 0.04)) / math.cos(LID_ANGLE)
+    smax = (LID_HINGE_X - lid_edge_x(np.clip(ys, 0, LID_TAIL))) / math.cos(LID_ANGLE)
     ss = np.arange(0.0, smax.max() + 1e-9, d)
     nsg, nyg = len(ss), len(ys)
     mask = ss[:, None] <= smax[None, :]                                     # (s, y)
@@ -324,7 +578,8 @@ def lid_plate(f_top):
 
 def frame_modes(zone_x, zone_is_bass, f_top):
     """The frame alone on rigid bolts (kept for reference; the body model solves it with the rim)."""
-    K, Mv, C, bolts, front = frame_bars()
+    K, Mv, C, bolts, front, _ = frame_bars()
+    K = K.toarray()
     n = len(Mv); coords = C
     for b in bolts:
         K[b, b] += BOLT_K
@@ -391,7 +646,9 @@ def main():
     P = sp.csr_matrix((np.ones(nf), (np.flatnonzero(free.ravel()), np.arange(nf))), shape=(nx * ny, nf))
 
     # Thickness: 9 mm in the middle, 6 mm at the edge
-    dist = ndimage.distance_transform_edt(board) * DX
+    # (padded with empty nodes all round: the transform does not count the array's own border
+    # as an edge, and the board's straight spine and front edges lie on it)
+    dist = ndimage.distance_transform_edt(np.pad(board, 1)) [1:-1, 1:-1] * DX
     h = H_EDGE + (H_MID - H_EDGE) * np.clip(dist / dist.max(), 0, 1) ** 0.7
     # Planks: strips along the grain, each a little stiffer or softer than its neighbours
     c0, s0 = math.cos(GRAIN), math.sin(GRAIN)
@@ -560,8 +817,18 @@ def main():
     D2r = (sp.eye(nr, k=-1) - 2 * sp.eye(nr) + sp.eye(nr, k=1)).tolil()
     D2r[0, nr - 1] = 1; D2r[nr - 1, 0] = 1                 # closed loop
     Cr = D2r.tocsr() / ds ** 2 @ R
-    K = K + part("rim", Cr.T @ Cr * (RIM_EI * ds))
-    rimMass = np.full(nr, RIM_M * ds)                      # (the iron frame is modelled on its own below)
+    # the front edge (the belly rail with the keybed under it) has its own section
+    frontRing = rp[:, 1] * DX < 1.5 * DX
+    if GEOM.get("front") and not os.environ.get("NO_KEYBED"):
+        fEI, fGJ, fM, fIP = front_section(float(GEOM["front"].get("keybed_depth", KEYBED_D)), float(GEOM["front"].get("keybed_back_y", 0.0)))
+        print(f"front of the case (belly rail + keybed {GEOM['front'].get('keybed_depth', KEYBED_D):.2f} m deep, {KEYBED_T * 100:.2f} cm): "
+              f"EI x{fEI / RIM_EI:.1f}, GJ x{fGJ / RIM_GJ:.1f}, mass {fM:.0f} kg/m (rim {RIM_M:.0f}), rotary inertia x{fIP / RIM_IP:.0f}; {int(frontRing.sum())} ring nodes")
+    else:
+        fEI, fGJ, fM, fIP = RIM_EI, RIM_GJ, RIM_M, RIM_IP
+    rimEI = np.where(frontRing, fEI, RIM_EI); rimGJ = np.where(frontRing & np.roll(frontRing, -1), fGJ, RIM_GJ)
+    rimIP = np.where(frontRing, fIP, RIM_IP)
+    K = K + part("rim", Cr.T @ sp.diags(rimEI * ds) @ Cr)
+    rimMass = np.where(frontRing, fM, RIM_M) * ds          # (the iron frame is modelled on its own below)
     M = M + R.T @ sp.diags(rimMass) @ R
     # The glue joint: the board's edge is glued to the rim's inner face, so its slope there
     # follows the rim's twist (a stiff hinge spring between the edge slope and the twist)
@@ -576,15 +843,28 @@ def main():
         d = np.hypot(rp[:, 0] * DX - x, rp[:, 1] * DX - y)
         return int(np.argmin(d))
     legs = [nearest_ring(A, 0.0), nearest_ring(0.0, 0.0), nearest_ring(0.75, B)]
+    # With the case front modelled, the two front legs stand under the keybed's front corners,
+    # forward of the belly rail: they hold the rail's height and its twist (the keybed's lever)
+    frontLegs = []
+    if GEOM.get("front") and not os.environ.get("NO_KEYBED"):
+        cfx = GEOM["front"]["case_front_x"]
+        legLever = 0.85 * (float(GEOM["front"].get("keybed_depth", KEYBED_D)) - float(GEOM["front"].get("keybed_back_y", 0.0)))
+        frontLegs = [nearest_ring(min(A, cfx[1]), 0.0), nearest_ring(max(0.0, cfx[0]), 0.0)]
+        legs = [nearest_ring(0.75, B)]
     for r_ in legs:
         K = K + part("leg", sp.csr_matrix(([LEG_K], ([rlin[r_]], [rlin[r_]])), shape=(nx * ny, nx * ny)))
 
     # --- Back braces: beams under the board (not touching it) from a hub towards the tail out
     # to the rim, each with its own nodes, the ends pinned onto the rim and the hub shared
-    hub = np.array([0.70, 1.05])
-    ends = [(A, 0.35), (A, 0.95), (0.95, B), (0.35, 1.05), (0.12, 0.45)]
+    hub = np.array(GEOM.get("brace_hub", [0.70, 1.05]), float)
+    ends = [tuple(e) for e in GEOM["brace_ends"]] if "brace_ends" in GEOM else [(A, 0.35), (A, 0.95), (0.95, B), (0.35, 1.05), (0.12, 0.45)]
     nb_nodes = 12
     nbr = len(ends) * nb_nodes + 1                          # + the shared hub node
+    # the spec's brace volume (66,400 cm3 of spruce) over these braces' length, 12 cm wide
+    Ltot_ = sum(float(np.hypot(ex - hub[0], ey - hub[1])) for ex, ey in ends)
+    bd_ = 66400e-6 / (0.12 * Ltot_)
+    BRACE_EI, BRACE_M = 11e9 * 0.12 * bd_ ** 3 / 12.0, 450.0 * 0.12 * bd_
+    print(f"braces: {len(ends)} from the hub at ({hub[0]:.2f}, {hub[1]:.2f}), {Ltot_:.2f} m in all, 12 x {bd_ * 100:.1f} cm")
     Kb = sp.lil_matrix((nbr, nbr)); Mb = np.zeros(nbr)
     tie = []                                                # (brace node, ring index)
     Cbr = np.zeros((nbr, 2)); Cbr[nbr - 1] = hub
@@ -603,7 +883,7 @@ def main():
         tie.append((nodes[-1], nearest_ring(ex, ey)))
     Kb = Kb.tocsr()
     # --- The iron frame, bolted onto the rim (its bars and bolts, see frame_bars)
-    Kfr, Mfr, Cfr, bolts, frontNodes = frame_bars()
+    Kfr, Mfr, Cfr, bolts, frontNodes, bellNode = frame_bars()
     nfr = len(Mfr)
     # Global layout: [board nodes | brace nodes | rim twist (one per ring node) | frame nodes]
     oB, oT, oF = nf, nf + nbr, nf + nbr + nr
@@ -623,7 +903,12 @@ def main():
     gparts["frame"] = emb(Kfr, oF, nfr)
     # Rim twist: GJ between neighbouring ring positions (closed loop)
     tw = spring_rows([[(oT + r_, -1.0 / ds), (oT + (r_ + 1) % nr, 1.0 / ds)] for r_ in range(nr)])
-    gparts["rimtwist"] = tw.T @ tw * (RIM_GJ * ds)
+    gparts["rimtwist"] = tw.T @ sp.diags(rimGJ * ds) @ tw
+    if frontLegs:
+        # a point a lever forward of the rail moves w - lever * twist (the twist is the slope
+        # inwards, towards +y, as the glue joint takes it)
+        lg = spring_rows([[(pos_of[rlin[r_]], 1.0), (oT + r_, -legLever)] for r_ in frontLegs])
+        gparts["leg"] = gparts.get("leg", 0) + lg.T @ lg * LEG_K
     # Glue: edge slope (inner neighbour minus ring node, over DX) follows the rim's twist
     gl = spring_rows([[(pos_of[a], -1.0 / DX), (pos_of[b], 1.0 / DX), (oT + r_, -1.0)] for a, b, r_ in glue])
     gparts["glue"] = gl.T @ gl * (EDGE_K * DX * DX)
@@ -633,15 +918,29 @@ def main():
     # Frame bolts onto the nearest point of the rim
     bo = spring_rows([[(pos_of[rlin[nearest_ring(*Cfr[b_])]], 1.0), (oF + int(b_), -1.0)] for b_ in bolts])
     gparts["bolt"] = bo.T @ bo * BOLT_K
+    if not os.environ.get("NO_BELL"):
+        be = spring_rows([[(pos_of[rlin[nearest_ring(*Cfr[bellNode])]], 1.0), (oF + int(bellNode), -1.0)]])
+        gparts["bell"] = be.T @ be * BELL_K
+        print(f"treble bell at ({Cfr[bellNode, 0]:.2f}, {Cfr[bellNode, 1]:.2f})")
     # Nose bolts: the plate is also held down through the board onto the back braces, by two
     # or three bolts through its web where the struts pass over a brace (a spacer sets the
     # plate's height; the board has a clearance hole and is not touched). They tie the plate's
     # middle, where the struts meet, to the stiff beams instead of leaving it hanging between
     # the rim bolts. NO_NOSE (env) leaves them out for A/B tests.
     nose = []
-    if not os.environ.get("NO_NOSE"):
-        inner = [k_ for k_ in range(nfr) if Cfr[k_, 1] > 0.0 and Cfr[k_, 1] < 1.35 and Cfr[k_, 0] < 1.30
-                 and abs(Cfr[k_, 0] - (float(bentside(Cfr[k_, 1])) + 0.04)) > 0.05]
+    if GEOM.get("nose_bolts") and not os.environ.get("NO_NOSE"):
+        # where the photo shows them: the plate's interior bolts, each down into the brace under it
+        for px_, py_ in GEOM["nose_bolts"]:
+            fn_ = int(np.argmin(np.hypot(Cfr[:, 0] - px_, Cfr[:, 1] - py_)))
+            bn_ = int(np.argmin(np.hypot(Cbr[:, 0] - px_, Cbr[:, 1] - py_)))
+            print(f"nose bolt at ({px_:.2f}, {py_:.2f}): plate node {np.hypot(*(Cfr[fn_] - (px_, py_))) * 100:.0f} cm off, brace node {np.hypot(*(Cbr[bn_] - (px_, py_))) * 100:.0f} cm off")
+            nose.append((fn_, bn_))
+        ns = spring_rows([[(oF + int(fn_), 1.0), (oB + int(bn_), -1.0)] for fn_, bn_ in nose])
+        gparts["nose"] = ns.T @ ns * BOLT_K
+    elif not os.environ.get("NO_NOSE"):
+        rimset = set(FRAME_INFO.get("rim_nodes", []))
+        inner = [k_ for k_ in range(nfr) if Cfr[k_, 1] > 0.0 and Cfr[k_, 1] < B - 0.12 and Cfr[k_, 0] < A - 0.05
+                 and abs(Cfr[k_, 0] - (float(bentside(Cfr[k_, 1])) + 0.04)) > 0.05 and k_ not in rimset]
         cands = []
         for e in range(len(ends)):
             bn = [e * nb_nodes + k for k in range(2, nb_nodes)]
@@ -659,9 +958,28 @@ def main():
     # that the plate's front flange is screwed down onto every few cm. It holds the front bar
     # (and the strings' far ends on it) along its whole length, not just at the end bolts: a
     # stiff, lossy wooden support (screw joints and wood, eta ~0.05)
+    # A point forward of the rail (y < 0) sits on the pin block's lever: it moves w - lever * twist
+    # of the front ring, like the front legs. The plate's pin-field web lies on the pin block over
+    # its whole area (bolted and screwed down through it, the pin holes drilled through both), so
+    # each web node over the block is held by the block's wood under its own patch (laminated
+    # maple across its plies, E ~1.5 GPa over 4.5 cm: PINBLOCK_KA per unit area).
     if not os.environ.get('NO_PINBLOCK'):
-        pb = spring_rows([[(pos_of[rlin[nearest_ring(*Cfr[fn])]], 1.0), (oF + int(fn), -1.0)] for fn in frontNodes])
+        def pin_row(fn):
+            r_ = nearest_ring(Cfr[fn, 0], max(0.0, Cfr[fn, 1]))
+            row = [(pos_of[rlin[r_]], 1.0), (oF + int(fn), -1.0)]
+            if Cfr[fn, 1] < 0 and GEOM.get("front") and not os.environ.get("NO_KEYBED"):
+                row.append((oT + r_, Cfr[fn, 1]))
+            return row
+        pinN = list(frontNodes) + [k_ for k_ in FRAME_INFO.get("pin_nodes", []) if k_ not in set(frontNodes)]
+        pb = spring_rows([pin_row(fn) for fn in pinN])
         gparts["pinblock"] = pb.T @ pb * PINBLOCK_K
+        if GEOM.get("front") and not os.environ.get("NO_PINFIELD"):
+            yF = float(GEOM["front"].get("plate_front_y", -0.33))
+            pf = [k_ for k_ in FRAME_INFO.get("web_nodes", []) if yF - 1e-6 <= Cfr[k_, 1] < -0.5 * WEB_DX and k_ not in set(pinN)]
+            if pf:
+                pw = spring_rows([pin_row(fn) for fn in pf])
+                gparts["pinblock"] = gparts["pinblock"] + pw.T @ pw * (PINBLOCK_KA * WEB_DX * WEB_DX)
+                print(f"pin field: {len(pf)} web nodes held by the pin block ({PINBLOCK_KA * WEB_DX ** 2:.2g} N/m each)")
     # The strings themselves. Every string under tension T is a spring between the bridge and
     # the iron frame: T / L along its speaking length to the agraffe or capo bar on the front bar,
     # and T / Lb along its short back length to the hitch pin on the frame behind the bridge.
@@ -678,7 +996,9 @@ def main():
     n_rim = 0
     for key in range(1, 89):
         ns = 1 if key <= 8 else 2 if key <= 20 else 3
-        T = 1600.0 if key <= 20 else 1100.0 if key <= 30 else 750.0
+        # tensions of the Steinway D (Chabassier & Durufle, RT-425, appendix A): 1.7 kN at the
+        # bottom falling to 740 N at E2, 750-800 N through the tenor, 580 N at the top
+        T = (1722.0 - 981.0 * max(0, key - 4) / 16) if key <= 20 else (770.0 - 190.0 * max(0, key - 40) / 48)
         Lb = 0.14 if key <= 20 else 0.10 if key <= 40 else 0.06
         Ls = LEN[key - 1]
         if os.environ.get('REAL_T'):
@@ -691,10 +1011,20 @@ def main():
         else:
             bx_, by_ = treble_bridge((88 - key) / (88 - 21)); ang = 0.0
         bx_, by_ = float(bx_), float(by_)
+        sfp = string_front(key)
+        if sfp is not None:
+            # the string's own direction, from its end on the front bar to the bridge: the back
+            # length carries on the same way to the hitch pin
+            ang = math.atan2(bx_ - sfp[0], by_ - sfp[1])
         Br = interp_rows(np.array([bx_]), np.array([by_]))
         bterms = [(int(pos_of[c_]), float(v_)) for c_, v_ in zip(Br.indices, Br.data) if pos_of[c_] >= 0]
-        # speaking length: to the front bar, along the string
-        fn_, _ = frame_node_near(bx_ - Ls * math.sin(ang), FRONT_Y, frontNodes)
+        # speaking length: to the front bar. The treble strings run straight ahead of their
+        # bridge point; the cross-strung bass runs forward and towards the spine, to the pins
+        # at the bass end of the pin block (as the frame table's zone ends do)
+        if sfp is not None:
+            fn_, _ = frame_node_near(sfp[0], sfp[1], frontNodes)
+        else:
+            fn_, _ = frame_node_near(1.25 - 0.012 * (key - 1) if key <= 20 else bx_, FRONT_Y, frontNodes)
         # back length: to the frame behind the bridge, or the rim if no bar is near
         hx, hy = bx_ + Lb * math.sin(ang), by_ + Lb * math.cos(ang)
         hn_, hd = frame_node_near(hx, hy)
@@ -714,7 +1044,7 @@ def main():
     Kf = sum(gparts.values())
     # The downbearing's compression along the ribs softens bending (stored energy, no loss of its own)
     Kf = Kf + emb(P.T @ (-Gr.T @ sp.diags(np.full(len(pts), Nc * area)) @ Gr) @ P, 0, nf)
-    Mf = (emb(P.T @ M @ P, 0, nf) + emb(sp.diags(Mb), oB, nbr) + emb(sp.diags(np.full(nr, RIM_IP * ds)), oT, nr)
+    Mf = (emb(P.T @ M @ P, 0, nf) + emb(sp.diags(Mb), oB, nbr) + emb(sp.diags(rimIP * ds), oT, nr)
           + emb(sp.diags(Mfr), oF, nfr))
     Kf = Kf.tocsc(); Mf = Mf.tocsc()
     rimNodes = pos_of[rlin]
@@ -731,7 +1061,7 @@ def main():
     if keep.all():
         print("warning: raise nev, the top of the range is missing")
     # Energy shares of the structural modes (kinetic): rim, braces, frame
-    rimE = np.array([np.sum(rimMass * vecs[rimNodes, i] ** 2) for i in range(vecs.shape[1])]) + RIM_IP * ds * (vecs[oT:oF] ** 2).sum(0)
+    rimE = np.array([np.sum(rimMass * vecs[rimNodes, i] ** 2) for i in range(vecs.shape[1])]) + ((rimIP * ds)[:, None] * vecs[oT:oF] ** 2).sum(0)
     brE = (Mb[:, None] * vecs[oB:oT, :] ** 2).sum(0)
     frE = (Mfr[:, None] * vecs[oF:, :] ** 2).sum(0)
     # Structural loss of each mode: every part's loss factor, weighted by the strain energy it holds
@@ -765,62 +1095,153 @@ def main():
     ringB = ring.ravel()[bi]
     gap = hLid - RIM_TOP                                                     # lid above the rim top
     openB = ringB & ((yb_ < 0.5 * DX) | ((xb_ < A - 0.06) & (gap > LID_GAP_MIN)))
-    if os.environ.get("BOX_AIR"):
+    boxAir = bool(os.environ.get("BOX_AIR"))
+    if boxAir:
         hLid = np.full(nbd, CASE_H); openB = np.zeros(nbd, bool)
+    # The air reaches out past the vibrating board to the rim's inner face (the board's glued
+    # edge runs in under the inner rim, the air above it does not stop there): with the case
+    # traced, the air grid covers everything inside the rim, the board nodes a part of it.
+    # Its open edges are the case's: across the front and along the bentside wherever the
+    # lid stands clear of the rim top.
+    caseAir = ("case_inner" in GEOM) and not boxAir and not os.environ.get("BOARD_AIR")
+    # The openings are not pressure-release planes at the rim: the air just outside them moves
+    # with the mode (the end correction, which lowers the resonances) and only beyond that is
+    # the pressure released. The air grid is the board grid padded outwards, and each open
+    # edge node grows a tongue of outside air END_CORR times the opening's local height,
+    # at that height, released at its far end.
+    END_CORR = float(os.environ.get("END_CORR", "0.6"))
+    lidH = lambda x_: RIM_TOP + np.maximum(0.0, LID_HINGE_X - x_) * math.tan(LID_ANGLE)
+    if caseAir:
+        ci_ = np.asarray(GEOM["case_inner"], float)
+        gmax = float(lidH(ci_[:, 0].min()) - RIM_TOP)
+        fy_ = -float(GEOM["front"]["fallboard_y"]) if GEOM.get("front") and not os.environ.get("NO_KEYBED") else 0.0
+        marg = int(math.ceil(max(0.0, -ci_[:, 0].min(), ci_[:, 0].max() - (nx - 1) * DX, ci_[:, 1].max() - (ny - 1) * DX, fy_) / DX)) + 1
+    else:
+        gmax, marg = float(gap.max()), 0
+    pad = int(math.ceil(max(END_CORR, 0.0) * max(gmax, 0.01) / DX)) + 2 + marg if not boxAir else 1
+    nxa, nya = nx + 2 * pad, ny + 2 * pad
+    maskA = np.zeros((nxa, nya), bool); maskA[pad:pad + nx, pad:pad + ny] = board
+    XA, YA = np.meshgrid((np.arange(nxa) - pad) * DX, (np.arange(nya) - pad) * DX, indexing="ij")
+    yOpen = 0.0
+    if caseAir:
+        maskA |= inside_case(XA, YA) & (YA >= -1e-9)
+        if GEOM.get("front") and not os.environ.get("NO_KEYBED"):
+            # in front of the belly rail the air runs on over the plate's pin field to the
+            # fallboard, between the case's cheeks; that is where it opens to the room
+            yOpen = float(GEOM["front"]["fallboard_y"])
+            c0_ = ci_[ci_[:, 1] < 0.01]
+            maskA |= (YA >= yOpen - 1e-9) & (YA < 0.0) & (XA >= c0_[:, 0].min()) & (XA <= c0_[:, 0].max())
+    hA = np.where(maskA, lidH(XA), 0.0) if not boxAir else np.zeros((nxa, nya))
+    if boxAir:
+        hA[pad:pad + nx, pad:pad + ny].flat[bi] = hLid
+    if caseAir:
+        nb4 = np.zeros_like(maskA)
+        for a, b in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nb4 |= ~np.roll(np.pad(maskA, 1), (a, b), axis=(0, 1))[1:-1, 1:-1]
+        edgeA = maskA & nb4
+        gapA = hA - RIM_TOP
+        openA_m = edgeA & ((YA < yOpen + 0.5 * DX) | ((XA < A - 0.06) & (gapA > LID_GAP_MIN)))
+        openIJ = np.argwhere(openA_m); openGap = gapA[openA_m]
+    else:
+        openIJ = np.argwhere(board)[openB] + pad; openGap = gap[openB]
+    ext = np.zeros((nxa, nya), bool)
+    bij = np.argwhere(board)
+    ri_, rj_ = np.meshgrid(np.arange(-pad, pad + 1), np.arange(-pad, pad + 1), indexing="ij")
+    rr2 = ri_ ** 2 + rj_ ** 2
+    for (i, j), g_ in zip(openIJ, openGap):
+        rad = END_CORR * g_ / DX
+        disc = rr2 <= rad * rad
+        i0_, i1_, j0_, j1_ = max(0, i - pad), min(nxa, i + pad + 1), max(0, j - pad), min(nya, j + pad + 1)
+        sl = (slice(i0_, i1_), slice(j0_, j1_))
+        dsc = disc[i0_ - (i - pad):i1_ - (i - pad), j0_ - (j - pad):j1_ - (j - pad)]
+        grow = dsc & ~maskA[sl]
+        ext[sl] |= grow
+        hA[sl] = np.where(grow, np.maximum(hA[sl], g_), hA[sl])
+    maskA |= ext
+    nOpen = len(openIJ)
+    if caseAir:
+        print(f"case air over the rim's inner face: {int((maskA & ~ext).sum())} nodes ({int(board.sum())} on the board), "
+              f"{(maskA & ~ext).sum() * DX * DX:.2f} m2")
+    print(f"case air: {nOpen} open edge nodes, {int(ext.sum())} outside-air nodes for the end correction")
+    aidx = np.flatnonzero(maskA.ravel()); na = len(aidx)
+    posA = -np.ones(nxa * nya, int); posA[aidx] = np.arange(na)
+    hAv = hA.ravel()[aidx]
+    # Board nodes in air numbering
+    bInA = posA[(bij[:, 0] + pad) * nya + (bij[:, 1] + pad)]
+    # Pressure released at the outer edge of the outside air
+    extv = ext.ravel()[aidx]
+    dirich = np.zeros(na, bool)
+    if END_CORR <= 0.0 and not boxAir:                                       # no end correction: released at the rim itself
+        dirich[posA[openIJ[:, 0] * nya + openIJ[:, 1]]] = True
     lr_, lc_, lv_ = [], [], []
-    for k_, (i, j) in enumerate(np.argwhere(board)):
+    ur_, uc_, uv_ = [], [], []                                               # the plain Laplacian on the board, for the air below
+    aij = np.argwhere(maskA)
+    for k_, (i, j) in enumerate(aij):
+        for a, b in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            ii, jj = i + a, j + b
+            if 0 <= ii < nxa and 0 <= jj < nya and maskA[ii, jj]:
+                q_ = posA[ii * nya + jj]
+                he = 0.5 * (hAv[k_] + hAv[q_])
+                lr_ += [k_, k_]; lc_ += [k_, q_]; lv_ += [he, -he]
+            elif extv[k_] and END_CORR > 0.0:
+                dirich[k_] = True
+    LapA = sp.csr_matrix((lv_, (lr_, lc_)), shape=(na, na)) / DX ** 2       # -div(h grad), Neumann (positive)
+    # The plain Laplacian on the board nodes (the layer under the board has one height)
+    for k_, (i, j) in enumerate(bij):
         for a, b in ((1, 0), (-1, 0), (0, 1), (0, -1)):
             ii, jj = i + a, j + b
             if 0 <= ii < nx and 0 <= jj < ny and board[ii, jj]:
                 q_ = pos[lin(ii, jj)]
-                he = 0.5 * (hLid[k_] + hLid[q_])
-                lr_ += [k_, k_]; lc_ += [k_, q_]; lv_ += [he, -he]
-    Lap = sp.csr_matrix((lv_, (lr_, lc_)), shape=(nbd, nbd)) / DX ** 2      # -div(h grad), Neumann (positive)
-    keepN = np.flatnonzero(~openB)
+                ur_ += [k_, k_]; uc_ += [k_, q_]; uv_ += [1.0, -1.0]
+    Lap = sp.csr_matrix((uv_, (ur_, uc_)), shape=(nbd, nbd)) / DX ** 2
+    keepN = np.flatnonzero(~dirich)
     Abd = nbd * DX * DX
-    aOpen = math.sqrt(max(1e-6, (gap[openB] * DX).sum()) / math.pi)        # the openings' equivalent radius (above the rim)
+    aOpen = math.sqrt(max(1e-6, (openGap * DX).sum()) / math.pi)        # the openings' equivalent radius (above the rim)
     def wedge_family(vertical):
-        """Air modes of one vertical family: shapes at the board (mean square 1), frequencies,
+        """Air modes of one vertical family: shapes at the board (mean square 1 there), frequencies,
         the volume integral of psi^2 (per unit pressure) and the radiation loss out of the openings."""
-        Lh = Lap.tocsr()
+        Lh = LapA.tocsr()
         if vertical:
-            Lh = Lh + sp.diags((math.pi / hLid) ** 2 * hLid)
+            Lh = Lh + sp.diags((math.pi / hAv) ** 2 * hAv)
         Lk = Lh[keepN][:, keepN].tocsc()
-        Mk = sp.diags(hLid[keepN]).tocsc()
+        Mk = sp.diags(hAv[keepN]).tocsc()
         nmode = 40 if not vertical else 30
-        if os.environ.get("BOX_AIR"):
+        if boxAir:
             Lk = Lk + 1e-6 * sp.eye(len(keepN))
         ev, ew = sla.eigsh(Lk, k=nmode, M=Mk, sigma=0, which="LM")
-        psi = np.zeros((nbd, nmode)); psi[keepN] = ew
-        if os.environ.get("BOX_AIR") and not vertical:
+        psiA = np.zeros((na, nmode)); psiA[keepN] = ew
+        if boxAir and not vertical:
             ev = ev + (math.pi / (2 * CASE_H)) ** 2
-        psi = psi / np.sqrt((psi ** 2).sum(0) / nbd)
+        psi = psiA[bInA]
+        scale = np.sqrt((psi ** 2).sum(0) / nbd)
+        psi = psi / scale; psiA = psiA / scale
         fr = C_AIR * np.sqrt(np.maximum(ev, 0)) / (2 * math.pi)
         vfrac = 0.5 if vertical else 1.0
-        lam_ = (psi ** 2 * (hLid * vfrac)[:, None]).sum(0) * DX * DX       # integral of psi^2 over the volume
-        # Loss out of the open faces: the normal velocity there is grad psi / (i omega rho); power
+        lam_ = (psiA ** 2 * (hAv * vfrac)[:, None]).sum(0) * DX * DX       # integral of psi^2 over the volume, outside air included
+        # Loss out of the released edge: the normal velocity there is grad psi / (i omega rho); power
         # rho c R |v|^2 / 2 over the opening's area, against the stored energy lam_ / (2 rho c^2)
         flux = np.zeros(nmode)
-        for k_ in np.flatnonzero(openB):
-            i, j = divmod(int(bi[k_]), ny)
+        for k_ in np.flatnonzero(dirich):
+            i, j = aij[k_]
             for a, b in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 ii, jj = i + a, j + b
-                if 0 <= ii < nx and 0 <= jj < ny and board[ii, jj] and not openB[pos[lin(ii, jj)]]:
-                    flux += (psi[pos[lin(ii, jj)]] / DX) ** 2 * (gap[k_] * vfrac) * DX
+                if 0 <= ii < nxa and 0 <= jj < nya and maskA[ii, jj] and not dirich[posA[ii * nya + jj]]:
+                    flux += (psiA[posA[ii * nya + jj]] / DX) ** 2 * (hAv[k_] * vfrac) * DX
                     break
         om = 2 * math.pi * np.maximum(fr, 1.0)
         R_ = np.minimum(1.0, (om / C_AIR * aOpen) ** 2 / 2.0)
         eta_ = C_AIR ** 3 * R_ * flux / (om ** 3 * lam_)
-        if os.environ.get("BOX_AIR"):                                        # the old open-top box, for A/B
+        if boxAir:                                                           # the old open-top box, for A/B
             eta_ = 2 * np.minimum(1.0, (om / C_AIR * math.sqrt(Abd / math.pi)) ** 2 / 2.0) * C_AIR / (om * CASE_H)
-        return psi, fr, lam_, eta_
-    psi0, fa0, lam0, eta0 = wedge_family(False)
-    psi1, fa1, lam1, eta1 = wedge_family(True)
+        return psi, fr, lam_, eta_, psiA
+    psi0, fa0, lam0, eta0, psiA0 = wedge_family(False)
+    psi1, fa1, lam1, eta1, psiA1 = wedge_family(True)
     aw = np.concatenate([psi0, psi1], 1); fa = np.concatenate([fa0, fa1]); LamV = np.concatenate([lam0, lam1])
     etaA_modes = np.concatenate([eta0, eta1])
     nair = aw.shape[1]
-    print(f"case air (lid at {math.degrees(LID_ANGLE):.0f} deg, {openB.sum()} open edge nodes, opening radius {aOpen:.2f} m): "
-          f"even family from {fa0[:4].round(0)} Hz, half-wave family from {fa1[:3].round(0)} Hz; loss factors median {np.median(etaA_modes):.3f}")
+    print(f"case air (lid at {math.degrees(LID_ANGLE):.0f} deg, {nOpen} open edge nodes, opening radius {aOpen:.2f} m): "
+          f"even family from {fa0[:4].round(0)} Hz (loss {eta0[:4].round(2)}), half-wave family from {fa1[:3].round(0)} Hz (loss {eta1[:3].round(2)}); "
+          f"loss factors median {np.median(etaA_modes):.3f}")
     full_s = P @ vecs
     Cba = (full_s[bi, :].T @ aw) * DX * DX                                   # (structural modes, air modes)
     ns = len(f)
@@ -835,8 +1256,20 @@ def main():
         fl, Vl, P3l, syl, dAl, dEl = np.zeros(0), np.zeros((0, 0)), np.zeros((0, 3)), np.zeros((0, 2)), 1.0, np.zeros(0)
     nl = len(fl)
     psiFull = np.zeros((nx * ny, nair)); psiFull[bi] = aw
-    onb = inside(P3l[:, 0], P3l[:, 1]) if nl else np.zeros(0, bool)
-    Psi_l = interp_rows(np.clip(P3l[:, 0], 0.0, A), np.clip(P3l[:, 1], 0.0, B)) @ psiFull if nl else np.zeros((0, nair))
+    onb = inside_case(P3l[:, 0], P3l[:, 1]) if nl else np.zeros(0, bool)
+    if nl:
+        # the air's shapes under each lid node, bilinear on the air grid (out to the rim)
+        psiAll = np.concatenate([psiA0, psiA1], 1)
+        fxl = P3l[:, 0] / DX + pad; fyl = P3l[:, 1] / DX + pad
+        i0l = np.clip(np.floor(fxl).astype(int), 0, nxa - 2); j0l = np.clip(np.floor(fyl).astype(int), 0, nya - 2)
+        axl, ayl = np.clip(fxl - i0l, 0, 1), np.clip(fyl - j0l, 0, 1)
+        Psi_l = np.zeros((len(P3l), nair))
+        for di, dj, wq in ((0, 0, (1 - axl) * (1 - ayl)), (1, 0, axl * (1 - ayl)), (0, 1, (1 - axl) * ayl), (1, 1, axl * ayl)):
+            qq = posA[(i0l + di) * nya + (j0l + dj)]
+            ok_ = qq >= 0
+            Psi_l[ok_] += wq[ok_, None] * psiAll[qq[ok_]]
+    else:
+        Psi_l = np.zeros((0, nair))
     if nl:
         Psi_l[~onb] = 0.0
         Psi_l[:, len(fa0):] *= -1.0                                          # the half-wave family: cos(pi) at the lid
@@ -847,6 +1280,12 @@ def main():
     # across it and, from about 280 Hz, up and down between board and floor. The board pushes
     # it the opposite way to the air above.
     ii2 = np.flatnonzero(interior.ravel()[bi])                               # interior nodes, in board numbering
+    if GEOM.get("front") and not os.environ.get("NO_KEYBED"):
+        # except along the front: the belly rail runs down under the board's front edge to the
+        # keybed, so the air under the board is walled in there (no release, a hard wall)
+        frontB = (~interior.ravel()[bi]) & (yb_ < 1.5 * DX) & (xb_ > 2 * DX) & (xb_ < A - 2 * DX)
+        ii2 = np.flatnonzero(interior.ravel()[bi] | frontB)
+        print(f"air under the board: walled along the front edge ({int(frontB.sum())} edge nodes), released round the rest of the rim's foot")
     Ld = Lap.tocsr()[ii2][:, ii2]
     nu_ = 40
     uv, uw = sla.eigsh(Ld.tocsc(), k=nu_, sigma=0, which="LM")
@@ -899,17 +1338,45 @@ def main():
     eAir = (lamA[:, None] * (Vc[nsl:nsl + nair] ** 2) * etaA_modes[:, None]).sum(0) + (lamU * (Vc[nsl + nair:] ** 2) * etaU_modes[:, None]).sum(0)
     etaAir = eAir / (eA + eS)                                               # already weighted by the air's share
     etaStruct = etaSc * (1.0 - airE)
-    Q = Q / nq; Ql = Ql / nq                                                 # unit structural modal mass (board, body and lid)
+    # Each coupled mode's modal mass is the whole of its kinetic energy, the air's included:
+    # 2T = w^2 (sum q^2) + sum (w_n / w)^2 Lam_n P_n^2 / (rho c^2) over the air modes (the
+    # velocity in the air is grad p / (i w rho), and grad psi_n integrates to k_n^2 Lam_n).
+    # Normalizing on the structure's share alone made an air-heavy mode answer the bridge
+    # as if the air were weightless, by 1 / (1 - airE): up to 10 dB on the case-air modes.
+    w2a = (2 * math.pi * fa) ** 2; w2u = (2 * math.pi * fu) ** 2
+    tAir = (w2a[:, None] * lamA[:, None] * Vc[nsl:nsl + nair] ** 2).sum(0) + (w2u[:, None] * lamU * Vc[nsl + nair:] ** 2).sum(0)
+    mMode = (Q ** 2).sum(0) + (Ql ** 2).sum(0) + tAir / lam ** 2
+    nm = np.sqrt(mMode); nm[nm == 0] = 1
+    tv = (lam * mMode) / np.maximum(eS + eA, 1e-30)                          # kinetic over potential energy: 1 for a true mode
+    corr = 10 * np.log10(np.maximum(mMode / nq ** 2, 1e-12))
+    print(f"coupled modes' energy balance T/V: median {np.median(tv):.3f}, 10-90% {np.percentile(tv, 10):.3f}-{np.percentile(tv, 90):.3f}; "
+          f"air mass correction: median {np.median(corr):.2f} dB, max {corr.max():.1f} dB, {(corr > 3).sum()} modes over 3 dB")
+    rimShare = ((Q / nq) ** 2 * rimE[:, None]).sum(0)                      # shares of the structural part
+    braceShare = ((Q / nq) ** 2 * brE[:, None]).sum(0)
+    lidShare = ((Ql / nq) ** 2).sum(0)
+    Q = Q / nm; Ql = Ql / nm                                                 # unit modal mass (board, body, lid and the air)
     f = fc_
-    rimShare = (Q ** 2 * rimE[:, None]).sum(0)
-    braceShare = (Q ** 2 * brE[:, None]).sum(0)
-    lidShare = (Ql ** 2).sum(0)
     print(f"coupled body: {len(f)} modes; lowest {f[:6].round(1)}; air modes from {fa[0]:.0f} Hz; "
           f"rim-heavy modes {(rimShare > 0.3).sum()}, air-heavy {(airE > 0.5).sum()}, frame-heavy {(frameShare > 0.5).sum()}, lid-heavy {(lidShare > 0.5).sum()}")
     full = full_s @ Q                                       # (nx*ny, n)
     lidV = Vl @ Ql if nl else np.zeros((0, len(f)))         # lid node motion along its normal, per coupled mode
     frontV = vfront @ Q                                     # frame front bar, per coupled mode
     twistQ = vtwist @ Q                                     # rim twist angle at each ring node, per coupled mode
+    # The case air's own pressure, per coupled mode: the standing waves under the lid that a
+    # microphone inside the case stands in (see pressure_at)
+    Pair = Vc[nsl:nsl + nair] / nm                          # modal pressures (air modes, coupled modes) per unit modal displacement
+    fAirTop = float(min(fa0.max(), fa1.max()))              # the air families' reach
+    def cavity_pressure(pt):
+        """pressure at a point inside the case per unit modal velocity, in the radiation sums' units"""
+        x_, y_, z_ = float(pt[0]), float(pt[1]), float(pt[2])
+        psi_m = np.asarray(interp_rows(np.array([x_]), np.array([y_])) @ psiFull).ravel()
+        h_m = RIM_TOP + max(0.0, LID_HINGE_X - x_) * math.tan(LID_ANGLE)          # lid height over the point
+        prof = np.ones(nair); prof[len(fa0):] = math.cos(math.pi * min(z_, h_m) / h_m)   # the half-wave family's profile
+        pc = (psi_m * prof) @ Pair                                                 # Pa per unit modal displacement
+        # per unit modal velocity (1 / j omega), in the free-field sums' units (which carry the
+        # near field's j rho c / 4 pi): a sealed cavity pushes back with the displacement, the
+        # free near field with the acceleration, so the sign flips
+        return -pc / (2 * math.pi * f) * (4 * math.pi / (RHO_AIR * C_AIR))
 
     # Bridge zone points: the middle of each group of keys along each bridge, on the line of the
     # front bridge pins where the strings actually bear (a little in front of the bridge's
@@ -927,7 +1394,7 @@ def main():
     phi = (Z @ full)                                        # (zones, n)
     # Sideways: the strings' sideways pull acts at the bridge top, one bridge height above the
     # board, and tilts the bridge along its length: the board's slope along the bridge there
-    hz = np.array([BASS_W] * N_BASS + [TREBLE_W] * N_TREBLE) + 0.5 * H_MID
+    hz = np.array([BASS_H] * N_BASS + [TREBLE_H] * N_TREBLE) + 0.5 * H_MID
     ex = 0.012
     phiH = hz[:, None] * ((interp_rows(np.array(zx) + ex, np.array(zy)) - interp_rows(np.array(zx) - ex, np.array(zy))) @ full) / (2 * ex)
     print(f"sideways bridge shapes: {np.abs(phiH).mean() / np.abs(phi).mean() * 100:.1f}% of the up-and-down ones")
@@ -945,6 +1412,18 @@ def main():
     bn = board.ravel()
     bx, by_ = xs[bn], ys[bn]
     dE = dist.ravel()[bn]                                   # distance to the rim [m]
+    if GEOM.get("front") and not os.environ.get("NO_KEYBED"):
+        # The front edge is closed: the belly rail runs down under it and the keybed reaches
+        # forward from the rail's foot to the key slip, so the underside's sound gets out round
+        # the spine, the tail and the bentside, or forward under the whole keybed
+        npad = int(math.ceil(1.0 / DX))
+        frontRow_ = board[:, :3].any(1)                      # the board's extent along its front edge
+        ext_ = np.concatenate([np.repeat(frontRow_[:, None], npad, axis=1), board | (frontRow_[:, None] & (np.arange(ny)[None, :] < 3))], axis=1)
+        dOpen = (ndimage.distance_transform_edt(np.pad(ext_, ((1, 1), (0, 1)))) * DX)[1:-1, npad:-1]
+        kd_ = float(GEOM["front"].get("keybed_depth", KEYBED_D)) - float(GEOM["front"].get("keybed_back_y", 0.0))   # rail to the key slip's front
+        dE = np.minimum(dOpen.ravel()[bn], by_ + kd_)
+        print(f"underside path with the front closed by the belly rail and keybed: distance to an open edge median {np.median(dE):.2f} m "
+              f"(was {np.median(dist.ravel()[bn]):.2f}), front quarter {np.median(dE[by_ < 0.5]):.2f} (was {np.median(dist.ravel()[bn][by_ < 0.5]):.2f})")
     k = 2 * math.pi * f / C_AIR
     hinge = np.array([LID_HINGE_X, 0.0, RIM_TOP])
     nlid = np.array([math.sin(LID_ANGLE), 0.0, math.cos(LID_ANGLE)])
@@ -966,7 +1445,7 @@ def main():
         spec = img_lid + t_[:, None] * (pt[None, :] - img_lid)
         s_ = (spec - hinge) @ tlid                                           # up the lid [m]
         ys_ = spec[:, 1]
-        s_max = (LID_HINGE_X - (np.asarray(bentside(np.clip(ys_, 0, B)), float) - 0.04)) / math.cos(LID_ANGLE)
+        s_max = (LID_HINGE_X - lid_edge_x(np.clip(ys_, 0, LID_TAIL))) / math.cos(LID_ANGLE)
         d_edge = np.minimum.reduce([s_, s_max - s_, ys_ - LID_FRONT, LID_TAIL - ys_])
         r1 = np.linalg.norm(spec - nodes3, axis=1); r2 = np.linalg.norm(pt[None, :] - spec, axis=1)
         return d_edge, r1 * r2 / np.maximum(r1 + r2, 1e-6)
@@ -975,12 +1454,143 @@ def main():
         d_edge, rr = setup
         rF = np.sqrt(C_AIR / max(fi, 1.0) * rr)
         return 0.5 * (1.0 + erf(d_edge * math.sqrt(2.0) / rF))
-    img_floor = np.stack([bx, by_, np.full_like(bx, -2 * (FLOOR_GAP + 0.13))], 1)
-    RIM_H = 0.26
+    img_floor = np.stack([bx, by_, np.full_like(bx, -2 * FLOOR_GAP)], 1)
+    RIM_H = RIM_TOP + SKIRT
     ds_ring = ds
-    ringXY = np.stack([rp[:, 0] * DX, rp[:, 1] * DX, np.full(len(rp), 0.5 * 0.26 - 0.1)], 1)
-    def pressure_at(pt, lid=True, floor=True):
+    ringXY = np.stack([rp[:, 0] * DX, rp[:, 1] * DX, np.full(len(rp), 0.5 * RIM_H - SKIRT)], 1)
+    # Radiation damping: power radiated over the whole sphere, both faces, with the short circuit
+    th = (np.arange(8) + 0.5) / 8 * (math.pi / 2)
+    ph = np.arange(24) / 24 * 2 * math.pi
+    TH, PH = np.meshgrid(th, ph, indexing="ij")
+    dOmega = (math.pi / 2 / 8) * (2 * math.pi / 24) * np.sin(TH).ravel()
+    ux = (np.sin(TH) * np.cos(PH)).ravel(); uy = (np.sin(TH) * np.sin(PH)).ravel()
+    etaRad = np.zeros(len(f))
+    for i in range(len(f)):
+        kk = k[i]
+        w = full[bn, i] * area * (1.0 - np.exp(-1j * kk * dE))
+        W = np.exp(-1j * kk * (np.outer(ux, bx) + np.outer(uy, by_))) @ w
+        omega = 2 * math.pi * f[i]
+        etaRad[i] = 2.0 * omega * RHO_AIR / (2 * math.pi ** 2 * C_AIR) * np.sum(np.abs(W) ** 2 * dOmega) / 2.0
+        if nl:                                                               # the lid radiates too, in its own plane
+            wl = lidV[:, i] * dAl * (1.0 - np.exp(-1j * kk * dEl))
+            Wl = np.exp(-1j * kk * (np.outer(ux, syl[:, 0]) + np.outer(uy, syl[:, 1]))) @ wl
+            etaRad[i] += 2.0 * omega * RHO_AIR / (2 * math.pi ** 2 * C_AIR) * np.sum(np.abs(Wl) ** 2 * dOmega) / 2.0
+    print("radiation loss factor: median %.4f, 10-90%% %.4f-%.4f" % (np.median(etaRad), *np.percentile(etaRad, [10, 90])))
+    # Inside the case the sound is not free: what the board and lid radiate bounces about under
+    # the lid before it leaves through the front and the bentside gap, so a microphone there also
+    # stands in a diffuse field. Per mode and unit modal velocity, the radiated power is
+    # eta_rad omega / 2, and a leaky enclosure with absorbing area A (the openings) holds the
+    # diffuse mean-square pressure 4 rho c P / A (Sabine); as an amplitude, in the free-field
+    # sums' units (4 pi / rho c per unit velocity). It adds to the direct sound in power, with
+    # no phase of its own
+    A_open = math.pi * aOpen ** 2
+    # The lid's first reflection is already in the direct sums, so the diffuse field is what is
+    # left after one bounce: the share that does not leave at once (Eyring), one minus the
+    # openings' share of the enclosure's surface (board, lid, rim walls and openings)
+    S_case = 2.0 * area * len(bx) + RIM_H * ds_ring * len(ringXY) + A_open
+    alphaCase = A_open / S_case
+    # The radiated power is taken from the same sums the mics use, integrated over a far
+    # hemisphere (both faces), so the diffuse field is in their units by construction; the
+    # loss-factor estimate above overstated it by 1.5 dB at 200 Hz rising to 6.5 dB at 2 kHz
+    R_far = 30.0
+    thF = (np.arange(6) + 0.5) / 6 * (math.pi / 2); phF = np.arange(12) / 12 * 2 * math.pi
+    P_rad = np.zeros(len(f))
+    for t_ in thF:
+        for p_ in phF:
+            ptF = np.array([0.5 * A + R_far * math.sin(t_) * math.cos(p_), 0.5 * B + R_far * math.sin(t_) * math.sin(p_), R_far * math.cos(t_)])
+            dSF = R_far * R_far * math.sin(t_) * (math.pi / 2 / 6) * (2 * math.pi / 12)
+            r1F = np.linalg.norm(nodes3 - ptF, axis=1); r2F = r1F + dE + SKIRT + RIM_T
+            for i in range(len(f)):
+                kk = k[i]
+                pF = kk * np.sum(full[bn, i] * area * (np.exp(-1j * kk * r1F) / r1F - np.exp(-1j * kk * r2F) / r2F))
+                P_rad[i] += abs(pF) ** 2 / (2 * RHO_AIR * C_AIR) * dSF
+    P_rad *= 2.0
+    pDiffOld = math.sqrt(2.0 * (1.0 - alphaCase)) * np.sqrt(2.0 * RHO_AIR * C_AIR * etaRad * (2 * math.pi * f) / A_open) * (4 * math.pi / (RHO_AIR * C_AIR))
+    pDiffuse = math.sqrt(2.0 * (1.0 - alphaCase)) * np.sqrt(4.0 * RHO_AIR * C_AIR * P_rad / A_open)
+    print(f"diffuse field under the lid: openings {A_open:.1f} m2 of {S_case:.1f} m2, absorption {alphaCase:.2f}; power from the far field "
+          f"(the loss-factor estimate was {np.median(20 * np.log10(pDiffOld / np.maximum(pDiffuse, 1e-30))):+.1f} dB above it, median)")
+    # The case air at a microphone, driven. The coupled modes above carry the air families as
+    # undamped standing waves (their loss only shortens the coupled mode's ringing), and with
+    # the pressure released at the tongue ends the waves across the open wedge reflect in full,
+    # so a mic in them heard resonances 10 dB above what leaves the case. Here the air under
+    # the lid is solved as driven by each mode's board motion at that mode's frequency, with
+    # the openings' radiation impedance at the tongue ends: resistance rho c R with
+    # R = min(1, (k h)^2 / 2) for the opening's local height h, so long waves see a pressure
+    # release (and the tongue's end correction) and short ones simply leave. Four vertical
+    # families (uniform, and cos(v pi z / h) for v = 1..3) carry the field up to about 1.3
+    # times the air families' reach, where the free field and the diffuse field take over.
+    # Checked against the coupled air below 90 Hz (quasi-static confinement, within 1 dB).
+    # The driven field is the fuller physics (confinement, reverberation and the direct sound
+    # in one solve), so it carries the mics as high as the vertical families reach: six
+    # families hold to about 1 kHz under the tallest part of the lid and 1.7 kHz over the
+    # mics. Checked against the free field plus the diffuse field, which sits 2-5 dB above
+    # it at 616-1250 Hz (the diffuse estimate is the cruder one).
+    fCavLo, fCavHi = 1000.0, 1300.0
+    _cavSel = np.flatnonzero(f < fCavHi)
+    _nfaces = np.zeros(na)
+    for q_, (i_, j_) in enumerate(aij):
+        for a_, b_ in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            ii_, jj_ = i_ + a_, j_ + b_
+            if not (0 <= ii_ < nxa and 0 <= jj_ < nya and maskA[ii_, jj_]): _nfaces[q_] += 1
+    _imp = np.flatnonzero(dirich); _hImp = hAv[_imp]; _nfImp = _nfaces[_imp]
+    _Mair = sp.diags(hAv)
+    # The lid is the cavity's other wall: its motion along its normal (away from the case)
+    # pumps the air too, as volume velocity per unit plan area (the lid is tilted, so its
+    # area over a plan cell is 1 / cos of the lid angle), with the sign of cos(v pi) on the
+    # family's profile at the lid
+    _lr, _lc, _lv = [], [], []
+    for q_ in (np.flatnonzero(onb) if nl else []):
+        fx, fy = P3l[q_, 0] / DX + pad, P3l[q_, 1] / DX + pad; i0, j0 = int(fx), int(fy); ax, ay = fx - i0, fy - j0
+        for di, dj, wq in ((0, 0, (1 - ax) * (1 - ay)), (1, 0, ax * (1 - ay)), (0, 1, (1 - ax) * ay), (1, 1, ax * ay)):
+            qq = posA[(i0 + di) * nya + (j0 + dj)] if 0 <= i0 + di < nxa and 0 <= j0 + dj < nya else -1
+            if qq >= 0: _lr.append(qq); _lc.append(q_); _lv.append(wq * dAl / (DX * DX * math.cos(LID_ANGLE)))
+    _Lmap = sp.csr_matrix((_lv, (_lr, _lc)), shape=(na, max(P3l.shape[0], 1)))
+    _cavCache = {}
+    def driven_air_at(pt):
+        key = tuple(float(v) for v in pt)
+        if key in _cavCache: return _cavCache[key]
+        pts = [key] + [tuple(float(v) for v in q) for q in MICS.values() if tuple(float(v) for v in q) != key]
+        outs = {q: np.zeros(len(f), complex) for q in pts}
+        NV = 6
+        for i in _cavSel:
+            kk = k[i]
+            R_ = np.maximum(np.minimum(1.0, (kk * _hImp) ** 2 / 2.0), 1e-3)
+            dimp = np.zeros(na, complex); dimp[_imp] = 1j * kk * _hImp * _nfImp / (R_ * DX)
+            jwr = 1j * 2 * math.pi * f[i] * RHO_AIR
+            rhs = np.zeros(na, complex); rhs[bInA] = jwr * full[bn, i]
+            lidSrc = jwr * (_Lmap @ lidV[:, i]) if nl else 0.0
+            pv = []
+            for v in range(NV):
+                Aop = LapA.astype(complex) + sp.diags(dimp) - kk ** 2 * _Mair
+                if v > 0: Aop = Aop + sp.diags((v * math.pi / hAv) ** 2 * hAv)
+                pv.append(sla.spsolve(((1.0 if v == 0 else 0.5) * Aop).tocsc(), rhs - (-1.0) ** v * lidSrc))
+            for q in pts:
+                x_, y_, z_ = q
+                fx, fy = x_ / DX + pad, y_ / DX + pad; i0, j0 = int(fx), int(fy); ax, ay = fx - i0, fy - j0
+                h_m = RIM_TOP + max(0.0, LID_HINGE_X - x_) * math.tan(LID_ANGLE)
+                tot = 0j
+                for di, dj, wq in ((0, 0, (1 - ax) * (1 - ay)), (1, 0, ax * (1 - ay)), (0, 1, (1 - ax) * ay), (1, 1, ax * ay)):
+                    qq = posA[(i0 + di) * nya + (j0 + dj)]
+                    if qq >= 0: tot += wq * sum(pv[v][qq] * math.cos(v * math.pi * min(z_, h_m) / h_m) for v in range(NV))
+                outs[q][i] = tot * (4 * math.pi / (RHO_AIR * C_AIR))           # the free-field sums' units
+        for q in pts: _cavCache[q] = outs[q]
+        print(f"case air at the mics, driven: {len(_cavSel)} modes below {fCavHi:.0f} Hz, {len(_imp)} opening nodes, {NV} vertical families")
+        return _cavCache[key]
+    def pressure_at(pt, lid=True, floor=True, cavity=False, diffuse=False):
         pt = np.array(pt)
+        # A microphone inside the case stands in the case air's standing waves: below the air
+        # families' reach it hears the solved air's pressure (the lid's and the board's sound
+        # are in it), above it the free-field sums take over; the sound coming back up from the
+        # underside is added either way
+        inCase = bool(cavity) and float(pt[2]) < RIM_TOP + 0.5 and bool(inside_case(float(pt[0]), float(pt[1])))
+        if inCase:
+            pcav = cavity_pressure(pt) if os.environ.get("OLD_CAVITY") else driven_air_at(pt)
+            blend = np.clip((f - fCavLo) / (fCavHi - fCavLo), 0.0, 1.0)              # 0 = all cavity, 1 = all free field
+        # Sound from the underside gets out under the rim's skirt; to a listener inside or above
+        # the case it then comes back up over the rim top (the mics), to the seat it comes
+        # straight on from under the skirt
+        # (and round the rim's thickness: under its foot, and over its top again to the mics)
+        around = 2 * SKIRT + RIM_TOP + 2 * RIM_T if pt[2] < RIM_TOP + 0.5 else SKIRT + RIM_T
         lidSetup = lid_window_setup(pt)
         # The lid panel's own sound: the listener hears the face turned towards them (its
         # motion is counted along the normal, away from the case), with the other face's
@@ -989,7 +1599,7 @@ def main():
         rl1 = np.linalg.norm(P3l - pt, axis=1) if nl else np.zeros(0); rl2 = rl1 + dEl
         rr1 = np.linalg.norm(ringXY - pt, axis=1)
         r1 = np.linalg.norm(nodes3 - pt, axis=1)
-        r2 = r1 + dE
+        r2 = r1 + dE + around
         r3 = np.linalg.norm(img_floor - pt, axis=1) + 0.5 * dE
         r4 = np.linalg.norm(img_lid - pt, axis=1)
         out = np.zeros(len(f))
@@ -1010,11 +1620,33 @@ def main():
                 wl = lidV[:, i] * dAl
                 p_ += sgnL * np.sum(wl * (np.exp(-1j * kk * rl1) / rl1 - np.exp(-1j * kk * rl2) / rl2))
             p_ *= kk
+            if diffuse:
+                p_ = (-1 if p_.real < 0 else 1) * math.sqrt(abs(p_) ** 2 + pDiffuse[i] ** 2)
+            if inCase:
+                back = -kk * np.sum(w * np.exp(-1j * kk * r2) / r2)                  # the underside's sound, over the rim
+                p_ = blend[i] * p_ + (1.0 - blend[i]) * (pcav[i] + back)
             out[i] = abs(p_) * (-1 if p_.real < 0 else 1)
         return out
     radL, radR = pressure_at(LISTEN["L"]), pressure_at(LISTEN["R"])
-    micL, micR = pressure_at(MICS["L"], floor=False), pressure_at(MICS["R"], floor=False)
+    # The close mics stand in the case air: below the air families' reach they hear the solved
+    # air's pressure (the standing waves under the lid, the lid's and the board's sound in
+    # them); above it the free-field sums with the diffuse field under the lid. NO_MIC_AIR=1
+    # gives the old free-field mics; ALSO_FREEFIELD=1 writes them beside the table for A/B.
+    MIC_AIR = not os.environ.get("NO_MIC_AIR")
+    micL, micR = pressure_at(MICS["L"], floor=False, cavity=MIC_AIR, diffuse=MIC_AIR), pressure_at(MICS["R"], floor=False, cavity=MIC_AIR, diffuse=MIC_AIR)
+    micLff, micRff = (pressure_at(MICS["L"], floor=False), pressure_at(MICS["R"], floor=False)) if MIC_AIR else (micL, micR)
+    if MIC_AIR:
+        for lo_, hi_ in ((60, 250), (250, 616), (616, 1000), (1000, 1300), (1300, 2000), (2000, 5000)):
+            sel_ = (f > lo_) & (f < hi_)
+            print(f"mics in the case air, {lo_:.0f}-{hi_:.0f} Hz: {10 * np.log10(np.mean(micL[sel_] ** 2 + micR[sel_] ** 2) / np.mean(micLff[sel_] ** 2 + micRff[sel_] ** 2)):+.1f} dB on the free field's "
+                  f"(air families reach {fAirTop:.0f} Hz; openings {A_open:.1f} m2)")
     vol = np.array([np.sum(full[bn, i]) for i in range(len(f))])
+    if os.environ.get("DUMP_RAD"):   # the radiation step's inputs, for experiments on the radiation model alone
+        np.savez(os.environ["DUMP_RAD"], f=f, w=full[bn], bx=bx, by=by_, dE=dE, area=area, twistQ=twistQ, ringXY=ringXY, ds_ring=ds_ring,
+                 micL=micL, micR=micR, micLff=micLff, micRff=micRff, Pair=Pair, psiFull=psiFull, nEven=len(fa0), fa=fa, fAirTop=fAirTop, airE=airE, DX=DX, nx=nx, ny=ny,
+                 lidV=lidV, P3l=P3l, dEl=dEl, dAl=dAl, phi=phi, phiH=phiH, etaS=etaS, A=A, B=B, LID_HINGE_X=LID_HINGE_X, LID_TAIL=LID_TAIL, LID_FRONT=LID_FRONT,
+                 RIM_TOP=RIM_TOP, FLOOR_GAP=FLOOR_GAP, LID_ANGLE=LID_ANGLE, outline=np.array(GEOM["outline"]) if GEOM.get("outline") else np.zeros((0, 2)),
+                 LapA_data=LapA.data, LapA_indices=LapA.indices, LapA_indptr=LapA.indptr, hAv=hAv, dirich=dirich, bInA=bInA, aij=aij, pad=pad, nxa=nxa, nya=nya, SKIRT=SKIRT, LID_GAP_MIN=LID_GAP_MIN)
 
     def lit(v):
         t = "%.5g" % v
@@ -1022,24 +1654,6 @@ def main():
             t += ".0"
         return t + "f"
 
-    # Radiation damping: power radiated over the whole sphere, both faces, with the short circuit
-    th = (np.arange(8) + 0.5) / 8 * (math.pi / 2)
-    ph = np.arange(24) / 24 * 2 * math.pi
-    TH, PH = np.meshgrid(th, ph, indexing="ij")
-    dOmega = (math.pi / 2 / 8) * (2 * math.pi / 24) * np.sin(TH).ravel()
-    ux = (np.sin(TH) * np.cos(PH)).ravel(); uy = (np.sin(TH) * np.sin(PH)).ravel()
-    etaRad = np.zeros(len(f))
-    for i in range(len(f)):
-        kk = k[i]
-        w = full[bn, i] * area * (1.0 - np.exp(-1j * kk * dE))
-        W = np.exp(-1j * kk * (np.outer(ux, bx) + np.outer(uy, by_))) @ w
-        omega = 2 * math.pi * f[i]
-        etaRad[i] = 2.0 * omega * RHO_AIR / (2 * math.pi ** 2 * C_AIR) * np.sum(np.abs(W) ** 2 * dOmega) / 2.0
-        if nl:                                                               # the lid radiates too, in its own plane
-            wl = lidV[:, i] * dAl * (1.0 - np.exp(-1j * kk * dEl))
-            Wl = np.exp(-1j * kk * (np.outer(ux, syl[:, 0]) + np.outer(uy, syl[:, 1]))) @ wl
-            etaRad[i] += 2.0 * omega * RHO_AIR / (2 * math.pi ** 2 * C_AIR) * np.sum(np.abs(Wl) ** 2 * dOmega) / 2.0
-    print("radiation loss factor: median %.4f, 10-90%% %.4f-%.4f" % (np.median(etaRad), *np.percentile(etaRad, [10, 90])))
 
     # Modes that mostly move the frame go to the frame table; the rest to the board table
     isFrame = frameShare > 0.5
@@ -1049,30 +1663,60 @@ def main():
     inert = (lidShare > 0.5) & (pnorm < 0.1 * np.median(pnorm))
     keepB = ~isFrame & ~inert
     print(f"lid-only modes left out: {int(inert.sum())}; board table {int(keepB.sum())} modes")
-    with open(args.out, "w") as fo:
-        fo.write("// Generated by tools/soundboard/build_board.py: do not edit by hand.\n")
-        fo.write(f"// Body modes below {F_TOP:.0f} Hz of a Yamaha C5: tapered, ribbed soundboard with bridges, crown and\n")
-        fo.write("// downbearing, coupled to its rim (bending and twist), back braces, legs, iron frame and the air above\n")
-        fo.write("// and below the board, all solved together. Per mode: frequency [Hz]; shape at each bridge zone\n")
-        fo.write("// (front pin line; unit modal mass, 1/sqrt(kg)); sound pressure at the player's seat (left,\n")
-        fo.write("// right) and at a close mic pair (left, right), with the open board's short circuit, the floor\n")
-        fo.write("// and the lid (relative units); net volume; loss factors: radiation, structure (from the\n")
-        fo.write("// materials it strains), air (leaving the open case); and the rim and air shares of the mode.\n")
-        fo.write(f"static constexpr int kBoardModeCount = {int(keepB.sum())};\n")
-        fo.write(f"static constexpr int kBoardZones = {N_BASS + N_TREBLE};\n")
-        fo.write("struct BoardModeData { float f; float phi[%d]; float phiH[%d]; float radLeft, radRight, micLeft, micRight, volume, "
-                 "radiationLoss, structLoss, airLoss, rimShare, airShare; };\n" % (N_BASS + N_TREBLE, N_BASS + N_TREBLE))
-        fo.write("static const BoardModeData kBoardModes[kBoardModeCount] = {\n")
-        for i in np.flatnonzero(keepB):
-            fo.write("    { %.2ff, { %s }, { %s }, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s },\n" % (
-                f[i], ", ".join(lit(v) for v in phi[:, i]), ", ".join(lit(v) for v in phiH[:, i]), lit(radL[i]), lit(radR[i]), lit(micL[i]), lit(micR[i]),
-                lit(vol[i]), lit(etaRad[i]), lit(etaStruct[i]), lit(etaAir[i]), lit(rimShare[i] + braceShare[i]), lit(airE[i])))
-        fo.write("};\n")
-    print("wrote", args.out)
+    def write_board(path, micL, micR):
+        with open(path, "w") as fo:
+          fo.write("// Generated by tools/soundboard/build_board.py: do not edit by hand.\n")
+          fo.write(f"// Body modes below {F_TOP:.0f} Hz of a Steinway D: tapered, ribbed soundboard with bridges, crown and\n")
+          fo.write("// downbearing, coupled to its rim (bending and twist), back braces, legs, iron frame and the air above\n")
+          fo.write("// and below the board, all solved together. Per mode: frequency [Hz]; shape at each bridge zone\n")
+          fo.write("// (front pin line; unit modal mass, 1/sqrt(kg)); sound pressure at the player's seat (left,\n")
+          fo.write("// right) and at a close mic pair (left, right), with the open board's short circuit, the floor\n")
+          fo.write("// and the lid (relative units); net volume; loss factors: radiation, structure (from the\n")
+          fo.write("// materials it strains), air (leaving the open case); and the rim and air shares of the mode.\n")
+          fo.write(f"static constexpr int kBoardModeCount = {int(keepB.sum())};\n")
+          fo.write(f"static constexpr int kBoardZones = {N_BASS + N_TREBLE};\n")
+          fo.write("struct BoardModeData { float f; float phi[%d]; float phiH[%d]; float radLeft, radRight, micLeft, micRight, volume, "
+                   "radiationLoss, structLoss, airLoss, rimShare, airShare; };\n" % (N_BASS + N_TREBLE, N_BASS + N_TREBLE))
+          fo.write("static const BoardModeData kBoardModes[kBoardModeCount] = {\n")
+          for i in np.flatnonzero(keepB):
+              fo.write("    { %.2ff, { %s }, { %s }, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s },\n" % (
+                  f[i], ", ".join(lit(v) for v in phi[:, i]), ", ".join(lit(v) for v in phiH[:, i]), lit(radL[i]), lit(radR[i]), lit(micL[i]), lit(micR[i]),
+                  lit(vol[i]), lit(etaRad[i]), lit(etaStruct[i]), lit(etaAir[i]), lit(rimShare[i] + braceShare[i]), lit(airE[i])))
+          fo.write("};\n")
+        print("wrote", path)
+    write_board(args.out, micL, micR)
+    if MIC_AIR and os.environ.get("ALSO_FREEFIELD"):
+        write_board(args.out + ".freefield", micLff, micRff)      # the same solve with free-field mics, for A/B
     # Frame table: the frame-heavy body modes, their shapes where each zone's strings end
     axz = np.where(np.arange(N_BASS + N_TREBLE) < N_BASS, 1.25 - 0.08 * np.arange(N_BASS + N_TREBLE), np.array(zx))
+    if GEOM.get("string_front"):
+        # each zone's middle key, and where its strings end on the front bar
+        zkeys = [20 - 19 * (2 * (N_BASS - 1 - z) + 1) / (2 * N_BASS) for z in range(N_BASS)] + \
+                [88 - 67 * (2 * (N_TREBLE - 1 - z) + 1) / (2 * N_TREBLE) for z in range(N_TREBLE)]
+        axz = np.array([string_front(int(round(k_)))[0] for k_ in zkeys])
     fidx = np.flatnonzero(isFrame & (f < 3000.0))
     fphi = np.array([[np.interp(x_, frontX, frontV[:, i]) for x_ in axz] for i in fidx]).reshape(len(fidx), N_BASS + N_TREBLE)
+    # The plate's webs bring many panel modes. A string feels its far end through that end's
+    # mobility, beside the bridge's at its other end: a frame mode whose peak mobility where the
+    # zone's strings end (phi^2 / (w eta)) stays well under the bridge's own mobility there (the
+    # board table's |Y| at that zone, averaged over a third octave) changes the string's losses
+    # and pitch by a few percent at most, so the engine leaves it out (FRAME_KEEP, default 0.1)
+    if len(fidx):
+        keepF = float(os.environ.get("FRAME_KEEP", "0.1"))
+        bi_ = np.flatnonzero(keepB); wB = 2 * np.pi * f[bi_]; etB = (etaRad + etaStruct + etaAir)[bi_]
+        def board_Y(z, fq):
+            wq = 2 * np.pi * fq
+            return np.abs(np.sum(1j * wq * phi[z, bi_] ** 2 / (wB ** 2 - wq ** 2 + 1j * etB * wB * wq)))
+        ratio = np.zeros(len(fidx))
+        for k_, i in enumerate(fidx):
+            z = int(np.argmax(fphi[k_] ** 2))
+            Yf = fphi[k_, z] ** 2 / (2 * np.pi * f[i] * max(etaStruct[i], 1e-4))
+            fs_ = f[i] * 2.0 ** np.linspace(-1 / 6, 1 / 6, 15)
+            ratio[k_] = Yf / np.exp(np.mean(np.log([board_Y(z, x_) for x_ in fs_])))
+        live = ratio >= keepF
+        print(f"frame table: {live.sum()} of {len(fidx)} frame modes reach {keepF:g} of the bridge's mobility where the strings end "
+              f"({(ratio >= 1).sum()} above it)")
+        fidx, fphi = fidx[live], fphi[live]
     frad = np.array([radL[i] for i in fidx])
     write_frame(args.frame_out, f[fidx], fphi, frad, etaStruct[fidx])
 
